@@ -1,0 +1,5 @@
+<resources>
+    <color name="trustgate_surface">#F4F1EA</color>
+    <color name="trustgate_ink">#1F2421</color>
+    <color name="trustgate_accent">#205C4C</color>
+</resources>
