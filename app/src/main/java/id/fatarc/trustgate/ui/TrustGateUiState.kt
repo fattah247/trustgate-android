@@ -2,6 +2,7 @@ package id.fatarc.trustgate.ui
 
 import id.fatarc.trustgate.core.storage.SecurityStorageSnapshot
 import id.fatarc.trustgate.domain.events.SecurityEvent
+import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.risk.DeviceRiskReport
 import id.fatarc.trustgate.domain.signing.SignedRequest
 
@@ -17,5 +18,5 @@ data class TrustGateUiState(
     val isAssessingRisk: Boolean = true,
     val isConfirmationRequired: Boolean = false,
     val pinningSummary: String = "",
+    val selectedDemoRiskLevel: DeviceRiskLevel? = null,
 )
-
