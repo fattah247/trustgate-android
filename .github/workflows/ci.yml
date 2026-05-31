@@ -1,5 +1,8 @@
 name: Android CI
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 on:
   push:
     branches:
@@ -59,4 +62,3 @@ jobs:
 
       - name: Run lint
         run: ./gradlew lint --console=plain
-
