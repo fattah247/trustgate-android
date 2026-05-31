@@ -59,3 +59,4 @@ jobs:
 
       - name: Run lint
         run: ./gradlew lint --console=plain
+
