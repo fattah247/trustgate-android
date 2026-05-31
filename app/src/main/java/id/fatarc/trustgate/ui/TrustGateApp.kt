@@ -16,6 +16,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.ui.about.AboutScreen
 import id.fatarc.trustgate.ui.events.SecurityEventLogScreen
 import id.fatarc.trustgate.ui.home.HomeScreen
@@ -46,6 +47,7 @@ fun TrustGateApp(
     onStoreDemoValues: () -> Unit,
     onRefreshStorage: () -> Unit,
     onToggleShowSignalsOnHome: (Boolean) -> Unit,
+    onSetDemoRiskLevel: (DeviceRiskLevel?) -> Unit,
 ) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
@@ -92,6 +94,7 @@ fun TrustGateApp(
                 PaymentActionScreen(
                     uiState = uiState,
                     onAttemptPayment = onAttemptPayment,
+                    onSetDemoRiskLevel = onSetDemoRiskLevel,
                 )
             }
             composable(TrustGateScreen.Signing.route) {

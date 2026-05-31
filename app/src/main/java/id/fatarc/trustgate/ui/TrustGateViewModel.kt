@@ -8,8 +8,12 @@ import id.fatarc.trustgate.core.crypto.PinningConfig
 import id.fatarc.trustgate.core.security.TrustGateSecurityService
 import id.fatarc.trustgate.core.storage.SecureValueStore
 import id.fatarc.trustgate.domain.actiongate.SensitiveActionDecision
+import id.fatarc.trustgate.domain.events.SecurityEvent
 import id.fatarc.trustgate.domain.events.SecurityEventRepository
+import id.fatarc.trustgate.domain.events.SecurityEventType
+import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.risk.DeviceRiskReport
+import id.fatarc.trustgate.domain.risk.demoRiskReport
 import id.fatarc.trustgate.domain.signing.PaymentRequestPayload
 import id.fatarc.trustgate.domain.signing.RequestSigner
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -54,6 +58,18 @@ class TrustGateViewModel(
                     isAssessingRisk = true,
                     errorMessage = null,
                 )
+            }
+            val demoRiskLevel = _uiState.value.selectedDemoRiskLevel
+            if (demoRiskLevel != null) {
+                val report = demoRiskReport(demoRiskLevel)
+                _uiState.update { current ->
+                    current.copy(
+                        riskReport = report,
+                        isAssessingRisk = false,
+                        errorMessage = null,
+                    )
+                }
+                return@launch
             }
             runCatching {
                 securityService.assessDeviceRisk()
@@ -126,6 +142,39 @@ class TrustGateViewModel(
     fun dismissConfirmation() {
         _uiState.update { current ->
             current.copy(isConfirmationRequired = false)
+        }
+    }
+
+    fun setDemoRiskLevel(level: DeviceRiskLevel?) {
+        viewModelScope.launch {
+            _uiState.update { current ->
+                current.copy(
+                    selectedDemoRiskLevel = level,
+                    isConfirmationRequired = false,
+                    errorMessage = null,
+                )
+            }
+            if (level == null) {
+                refreshRisk()
+                return@launch
+            }
+
+            val report = demoRiskReport(level)
+            eventRepository.record(
+                SecurityEvent(
+                    type = SecurityEventType.DEVICE_RISK_ASSESSED,
+                    riskLevel = report.level,
+                    message = "Demo risk state set to ${report.level.name}.",
+                    metadata = mapOf("source" to "demo-selector"),
+                ),
+            )
+            _uiState.update { current ->
+                current.copy(
+                    riskReport = report,
+                    isAssessingRisk = false,
+                    actionMessage = "Demo risk state set to ${report.level.name}.",
+                )
+            }
         }
     }
 
@@ -202,7 +251,14 @@ class TrustGateViewModel(
     }
 
     private suspend fun currentReport(): DeviceRiskReport? {
-        return _uiState.value.riskReport ?: securityService.assessDeviceRisk().also { report ->
+        val selectedDemoRiskLevel = _uiState.value.selectedDemoRiskLevel
+        return _uiState.value.riskReport ?: (
+            if (selectedDemoRiskLevel != null) {
+                demoRiskReport(selectedDemoRiskLevel)
+            } else {
+                securityService.assessDeviceRisk()
+            }
+        ).also { report ->
             _uiState.update { current ->
                 current.copy(
                     riskReport = report,
@@ -235,4 +291,3 @@ class TrustGateViewModelFactory(
         ) as T
     }
 }
-

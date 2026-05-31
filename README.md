@@ -32,7 +32,30 @@ flowchart TD
 
 ## Screenshots
 
-Screenshots are not committed yet. Use [docs/SCREENSHOT_GUIDE.md](docs/SCREENSHOT_GUIDE.md) to capture the expected set without faking output.
+Real screenshots for the app, tests, CI, and repository are committed under [`docs/screenshots`](docs/screenshots). The full capture notes live in [docs/SCREENSHOT_GUIDE.md](docs/SCREENSHOT_GUIDE.md).
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/01-app-overview.png" width="320" alt="Trust overview" /><br />Trust overview</td>
+    <td><img src="docs/screenshots/02-device-risk-details.png" width="320" alt="Device risk details" /><br />Device risk details</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/03-sensitive-action-allowed.png" width="320" alt="Sensitive action allowed" /><br />Sensitive action allowed</td>
+    <td><img src="docs/screenshots/04-sensitive-action-blocked.png" width="320" alt="Sensitive action blocked" /><br />Sensitive action blocked</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/05-request-signing-demo.png" width="320" alt="Request signing demo" /><br />Request signing demo</td>
+    <td><img src="docs/screenshots/06-secure-storage-demo.png" width="320" alt="Secure storage demo" /><br />Secure storage demo</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/07-security-event-log.png" width="320" alt="Security event log" /><br />Security event log</td>
+    <td><img src="docs/screenshots/08-tests-passing.png" width="320" alt="Tests passing" /><br />Fresh `./gradlew test` output</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/09-ci-passing.png" width="320" alt="CI passing" /><br />GitHub Actions run summary</td>
+    <td><img src="docs/screenshots/10-repo-overview.png" width="320" alt="Repository overview" /><br />GitHub branch overview</td>
+  </tr>
+</table>
 
 ## Security Model
 

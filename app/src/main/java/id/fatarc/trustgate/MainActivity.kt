@@ -33,6 +33,7 @@ class MainActivity : ComponentActivity() {
                     onStoreDemoValues = viewModel::storeDemoValues,
                     onRefreshStorage = viewModel::refreshStorage,
                     onToggleShowSignalsOnHome = viewModel::toggleShowSignalsOnHome,
+                    onSetDemoRiskLevel = viewModel::setDemoRiskLevel,
                 )
             }
         }
