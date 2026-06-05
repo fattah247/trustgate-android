@@ -2,6 +2,7 @@ package id.fatarc.trustgate.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -10,8 +11,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -29,10 +29,12 @@ import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 object TrustGateSpacing {
     val screenHorizontal = 20.dp
     val screenVertical = 20.dp
-    val sectionGap = 16.dp
-    val cardPadding = 16.dp
-    val cardGap = 12.dp
+    val sectionGap = 24.dp
+    val blockGap = 16.dp
+    val itemGap = 12.dp
     val compactGap = 8.dp
+    val summaryPadding = 20.dp
+    val insetPadding = 16.dp
 }
 
 enum class CalloutTone {
@@ -65,29 +67,108 @@ fun TrustGateScreen(
 }
 
 @Composable
-fun SectionCard(
+fun SummaryPanel(
+    eyebrow: String,
     title: String,
+    supporting: String,
+    tone: CalloutTone = CalloutTone.NEUTRAL,
     modifier: Modifier = Modifier,
-    content: @Composable () -> Unit,
+    content: @Composable ColumnScope.() -> Unit = {},
 ) {
-    Card(
+    val (containerColor, contentColor) = summaryToneColors(tone)
+    Surface(
         modifier = modifier.fillMaxWidth(),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface,
-        ),
+        color = containerColor,
+        contentColor = contentColor,
+        shape = MaterialTheme.shapes.large,
     ) {
         Column(
-            modifier = Modifier.padding(TrustGateSpacing.cardPadding),
-            verticalArrangement = Arrangement.spacedBy(TrustGateSpacing.cardGap),
+            modifier = Modifier.padding(TrustGateSpacing.summaryPadding),
+            verticalArrangement = Arrangement.spacedBy(TrustGateSpacing.itemGap),
+            content = {
+                Text(
+                    text = eyebrow,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = contentColor.copy(alpha = 0.82f),
+                )
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.headlineMedium,
+                )
+                Text(
+                    text = supporting,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = contentColor.copy(alpha = 0.9f),
+                )
+                content()
+            },
+        )
+    }
+}
+
+@Composable
+fun SectionBlock(
+    title: String,
+    description: String? = null,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(TrustGateSpacing.blockGap),
+    ) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text(
                 text = title,
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleLarge,
             )
-            content()
+            if (description != null) {
+                Text(
+                    text = description,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
+        content()
     }
+}
+
+@Composable
+fun DetailSurface(
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surface,
+        shape = MaterialTheme.shapes.medium,
+    ) {
+        Column(
+            modifier = Modifier.padding(TrustGateSpacing.insetPadding),
+            verticalArrangement = Arrangement.spacedBy(TrustGateSpacing.itemGap),
+            content = content,
+        )
+    }
+}
+
+@Composable
+fun DividerList(
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(TrustGateSpacing.itemGap),
+        content = content,
+    )
+}
+
+@Composable
+fun SectionDivider() {
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
 }
 
 @Composable
@@ -109,7 +190,7 @@ fun StatusCallout(
         shape = MaterialTheme.shapes.medium,
     ) {
         Column(
-            modifier = Modifier.padding(TrustGateSpacing.cardPadding),
+            modifier = Modifier.padding(TrustGateSpacing.insetPadding),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text(
@@ -164,7 +245,7 @@ fun KeyValueRow(
         Text(
             text = label,
             modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(
@@ -174,6 +255,45 @@ fun KeyValueRow(
             style = MaterialTheme.typography.bodyMedium,
             fontFamily = if (monospace) FontFamily.Monospace else null,
         )
+    }
+}
+
+@Composable
+fun EvidenceRow(
+    title: String,
+    summary: String,
+    modifier: Modifier = Modifier,
+    supporting: String? = null,
+    trailing: @Composable (() -> Unit)? = null,
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+            )
+            Text(
+                text = summary,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            if (supporting != null) {
+                Text(
+                    text = supporting,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        if (trailing != null) {
+            trailing()
+        }
     }
 }
 
@@ -242,7 +362,7 @@ fun ToggleRow(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            Text(text = label, style = MaterialTheme.typography.labelLarge)
+            Text(text = label, style = MaterialTheme.typography.titleSmall)
             Text(
                 text = description,
                 style = MaterialTheme.typography.bodySmall,
@@ -287,6 +407,14 @@ fun String.asHumanLabel(): String {
 fun maskToken(token: String?): String {
     if (token.isNullOrBlank()) return "Not stored"
     return if (token.length <= 8) "Stored" else "${token.take(6)}...${token.takeLast(4)}"
+}
+
+@Composable
+private fun summaryToneColors(tone: CalloutTone): Pair<Color, Color> = when (tone) {
+    CalloutTone.NEUTRAL -> MaterialTheme.colorScheme.surface to MaterialTheme.colorScheme.onSurface
+    CalloutTone.SUCCESS -> TrustGateSuccessContainer to TrustGateSuccessContent
+    CalloutTone.WARNING -> TrustGateWarningContainer to TrustGateWarningContent
+    CalloutTone.ERROR -> MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer
 }
 
 private val TrustGateSuccessContainer = Color(0xFFDCEEDF)
