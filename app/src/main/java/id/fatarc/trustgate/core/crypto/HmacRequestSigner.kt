@@ -8,10 +8,15 @@ import java.security.MessageDigest
 import java.util.Base64
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
 class HmacRequestSigner(
     private val demoSecret: String = "trustgate-demo-local-signing-key",
 ) : RequestSigner {
+    private val canonicalJson = Json {
+        encodeDefaults = true
+    }
 
     override fun sign(
         payload: PaymentRequestPayload,
@@ -44,13 +49,7 @@ class HmacRequestSigner(
     }
 
     private fun canonicalize(payload: PaymentRequestPayload): String {
-        return buildString {
-            append("{")
-            append("\"amountMinor\":${payload.amountMinor},")
-            append("\"currency\":\"${payload.currency}\",")
-            append("\"merchantReference\":\"${payload.merchantReference}\"")
-            append("}")
-        }
+        return canonicalJson.encodeToString(payload)
     }
 
     private fun sha256Hex(value: String): String {
@@ -68,4 +67,3 @@ class HmacRequestSigner(
         return Base64.getEncoder().encodeToString(signed)
     }
 }
-

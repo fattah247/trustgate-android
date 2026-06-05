@@ -27,15 +27,13 @@ class TrustGateSecurityService(
                 metadata = mapOf("score" to report.score.toString()),
             ),
         )
+        recordDetectedSignals(report)
+        return report
+    }
 
+    private suspend fun recordDetectedSignals(report: DeviceRiskReport) {
         report.signals.filter { it.detected }.forEach { signal ->
-            val eventType = when (signal.category) {
-                SignalCategory.ROOT -> SecurityEventType.ROOT_SIGNAL_FOUND
-                SignalCategory.EMULATOR -> SecurityEventType.EMULATOR_SIGNAL_FOUND
-                SignalCategory.DEBUGGER -> SecurityEventType.DEBUGGER_ATTACHED
-                SignalCategory.INSTALLER -> null
-            }
-            if (eventType != null) {
+            signal.category.toSecurityEventType()?.let { eventType ->
                 eventRepository.record(
                     SecurityEvent(
                         type = eventType,
@@ -46,44 +44,17 @@ class TrustGateSecurityService(
                 )
             }
         }
-
-        return report
     }
 
     suspend fun evaluateSensitiveAction(report: DeviceRiskReport): SensitiveActionDecision {
-        return when (val decision = actionGate.decide(report.level)) {
-            SensitiveActionDecision.ALLOW -> {
-                eventRepository.record(
-                    SecurityEvent(
-                        type = SecurityEventType.SENSITIVE_ACTION_ALLOWED,
-                        riskLevel = report.level,
-                        message = "Sensitive action allowed for low-risk device state.",
-                    ),
-                )
-                decision
-            }
-
-            SensitiveActionDecision.REQUIRE_CONFIRMATION -> {
-                eventRepository.record(
-                    SecurityEvent(
-                        type = SecurityEventType.SENSITIVE_ACTION_REQUIRES_CONFIRMATION,
-                        riskLevel = report.level,
-                        message = "Sensitive action requires confirmation because of medium-risk signals.",
-                    ),
-                )
-                decision
-            }
-
-            SensitiveActionDecision.BLOCK -> {
-                eventRepository.record(
-                    SecurityEvent(
-                        type = SecurityEventType.SENSITIVE_ACTION_BLOCKED,
-                        riskLevel = report.level,
-                        message = "Sensitive action blocked because the device is high risk.",
-                    ),
-                )
-                decision
-            }
+        return actionGate.decide(report.level).also { decision ->
+            eventRepository.record(
+                SecurityEvent(
+                    type = decision.toSecurityEventType(),
+                    riskLevel = report.level,
+                    message = decision.toAuditMessage(),
+                ),
+            )
         }
     }
 
@@ -119,5 +90,23 @@ class TrustGateSecurityService(
             ),
         )
     }
-}
 
+    private fun SignalCategory.toSecurityEventType(): SecurityEventType? = when (this) {
+        SignalCategory.ROOT -> SecurityEventType.ROOT_SIGNAL_FOUND
+        SignalCategory.EMULATOR -> SecurityEventType.EMULATOR_SIGNAL_FOUND
+        SignalCategory.DEBUGGER -> SecurityEventType.DEBUGGER_ATTACHED
+        SignalCategory.INSTALLER -> null
+    }
+
+    private fun SensitiveActionDecision.toSecurityEventType(): SecurityEventType = when (this) {
+        SensitiveActionDecision.ALLOW -> SecurityEventType.SENSITIVE_ACTION_ALLOWED
+        SensitiveActionDecision.REQUIRE_CONFIRMATION -> SecurityEventType.SENSITIVE_ACTION_REQUIRES_CONFIRMATION
+        SensitiveActionDecision.BLOCK -> SecurityEventType.SENSITIVE_ACTION_BLOCKED
+    }
+
+    private fun SensitiveActionDecision.toAuditMessage(): String = when (this) {
+        SensitiveActionDecision.ALLOW -> "Sensitive action allowed for low-risk device state."
+        SensitiveActionDecision.REQUIRE_CONFIRMATION -> "Sensitive action requires confirmation because of medium-risk signals."
+        SensitiveActionDecision.BLOCK -> "Sensitive action blocked because the device is high risk."
+    }
+}

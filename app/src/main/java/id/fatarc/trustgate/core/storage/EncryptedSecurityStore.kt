@@ -21,7 +21,7 @@ class EncryptedSecurityStore(
     override fun readSnapshot(): SecurityStorageSnapshot {
         return SecurityStorageSnapshot(
             sessionToken = prefs.getString(KEY_SESSION_TOKEN, null),
-            lastRiskLevel = prefs.getString(KEY_LAST_RISK_LEVEL, null)?.let(DeviceRiskLevel::valueOf),
+            lastRiskLevel = prefs.getString(KEY_LAST_RISK_LEVEL, null).toRiskLevelOrNull(),
             showSignalsOnHome = prefs.getBoolean(KEY_SHOW_SIGNALS_ON_HOME, true),
         )
     }
@@ -36,6 +36,10 @@ class EncryptedSecurityStore(
 
     override fun storeShowSignalsOnHome(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_SHOW_SIGNALS_ON_HOME, enabled).apply()
+    }
+
+    private fun String?.toRiskLevelOrNull(): DeviceRiskLevel? {
+        return DeviceRiskLevel.entries.firstOrNull { it.name == this }
     }
 
     private companion object {

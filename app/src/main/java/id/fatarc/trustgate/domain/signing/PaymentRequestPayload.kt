@@ -1,5 +1,8 @@
 package id.fatarc.trustgate.domain.signing
 
+import kotlinx.serialization.Serializable
+
+@Serializable
 data class PaymentRequestPayload(
     val amountMinor: Long,
     val currency: String,
@@ -15,4 +18,3 @@ data class SignedRequest(
     val signature: String,
     val headers: Map<String, String>,
 )
-
