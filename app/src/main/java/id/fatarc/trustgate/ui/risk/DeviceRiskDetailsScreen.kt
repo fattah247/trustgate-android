@@ -1,75 +1,64 @@
 package id.fatarc.trustgate.ui.risk
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.lazy.items
+import id.fatarc.trustgate.ui.CalloutTone
+import id.fatarc.trustgate.ui.KeyValueRow
 import id.fatarc.trustgate.ui.RiskBadge
 import id.fatarc.trustgate.ui.SectionCard
+import id.fatarc.trustgate.ui.StatusCallout
+import id.fatarc.trustgate.ui.StatusCalloutState
+import id.fatarc.trustgate.ui.TrustGateScreen
 import id.fatarc.trustgate.ui.TrustGateUiState
+import id.fatarc.trustgate.ui.asHumanLabel
+import id.fatarc.trustgate.ui.asLabel
 
 @Composable
 fun DeviceRiskDetailsScreen(
     uiState: TrustGateUiState,
 ) {
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
+    val report = uiState.risk.report
+    TrustGateScreen {
         item {
-            SectionCard(
-                title = "Assessment notes",
-                modifier = Modifier.padding(top = 16.dp),
-            ) {
+            SectionCard(title = "Assessment notes") {
                 Text(
-                    text = "These checks are heuristics gathered from the client runtime. They can guide a trust decision, but they are not bypass-proof.",
+                    text = "These client checks are heuristics. They help route sensitive actions, but they are not proof of device integrity.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
-                uiState.riskReport?.let { report ->
+                if (report != null) {
                     RiskBadge(level = report.level)
-                    Text("Score: ${report.score}", style = MaterialTheme.typography.bodyMedium)
+                    KeyValueRow(label = "Risk level", value = report.level.asLabel())
+                    KeyValueRow(label = "Risk score", value = report.score.toString())
+                    KeyValueRow(label = "Assessed at", value = report.assessedAt.toString(), monospace = true)
+                } else {
+                    StatusCallout(
+                        state = StatusCalloutState(
+                            title = "No risk report available",
+                            body = uiState.risk.errorMessage ?: "Run a live assessment from the overview screen first.",
+                            tone = if (uiState.risk.errorMessage == null) CalloutTone.NEUTRAL else CalloutTone.ERROR,
+                        ),
+                    )
                 }
             }
         }
-        val report = uiState.riskReport
-        if (report == null) {
-            item {
-                Text(
-                    text = "No risk report available yet.",
-                    modifier = Modifier.padding(bottom = 24.dp),
-                )
-            }
-        } else {
-            items(report.signals.size) { index ->
-                val signal = report.signals[index]
+
+        if (report != null) {
+            items(report.signals, key = { it.id }) { signal ->
                 SectionCard(title = signal.name) {
-                    Text(
-                        text = if (signal.detected) "Detected" else "Not detected",
-                        color = if (signal.detected) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                    StatusCallout(
+                        state = StatusCalloutState(
+                            title = if (signal.detected) "Signal detected" else "Signal clear",
+                            body = signal.explanation,
+                            tone = if (signal.detected) CalloutTone.WARNING else CalloutTone.SUCCESS,
+                        ),
                     )
-                    Text(
-                        text = "Severity: ${signal.severity.name}",
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    Text(
-                        text = signal.explanation,
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    Text(
-                        text = "Signal id: ${signal.id}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    KeyValueRow(label = "Category", value = signal.category.name.asHumanLabel())
+                    KeyValueRow(label = "Severity", value = signal.severity.name.asHumanLabel())
+                    KeyValueRow(label = "Signal id", value = signal.id, monospace = true)
                 }
             }
         }
     }
 }
-

@@ -42,9 +42,7 @@ class TrustGateViewModel(
     init {
         viewModelScope.launch {
             eventRepository.events.collect { events ->
-                _uiState.update { current ->
-                    current.copy(securityEvents = events)
-                }
+                _uiState.update { current -> current.copy(securityEvents = events) }
             }
         }
         refreshStorage()
@@ -53,41 +51,33 @@ class TrustGateViewModel(
 
     fun refreshRisk() {
         viewModelScope.launch {
-            _uiState.update {
-                it.copy(
-                    isAssessingRisk = true,
-                    errorMessage = null,
+            val selectedDemoRiskLevel = _uiState.value.payment.selectedDemoRiskLevel
+            _uiState.update { current ->
+                current.copy(
+                    risk = current.risk.copy(
+                        isLoading = true,
+                        errorMessage = null,
+                    ),
+                    payment = current.payment.copy(
+                        latestDecision = PaymentDecisionState.Idle,
+                    ),
                 )
             }
-            val demoRiskLevel = _uiState.value.selectedDemoRiskLevel
-            if (demoRiskLevel != null) {
-                val report = demoRiskReport(demoRiskLevel)
-                _uiState.update { current ->
-                    current.copy(
-                        riskReport = report,
-                        isAssessingRisk = false,
-                        errorMessage = null,
-                    )
-                }
+
+            if (selectedDemoRiskLevel != null) {
+                applyRiskReport(
+                    report = demoRiskReport(selectedDemoRiskLevel),
+                    source = RiskReportSource.DEMO,
+                )
                 return@launch
             }
+
             runCatching {
                 securityService.assessDeviceRisk()
             }.onSuccess { report ->
-                _uiState.update { current ->
-                    current.copy(
-                        riskReport = report,
-                        isAssessingRisk = false,
-                        errorMessage = null,
-                    )
-                }
+                applyRiskReport(report = report, source = RiskReportSource.LIVE)
             }.onFailure { error ->
-                _uiState.update { current ->
-                    current.copy(
-                        isAssessingRisk = false,
-                        errorMessage = error.message ?: "Risk assessment failed.",
-                    )
-                }
+                applyRiskFailure(error.message ?: "Risk assessment failed.")
             }
         }
     }
@@ -95,33 +85,13 @@ class TrustGateViewModel(
     fun attemptPayment() {
         viewModelScope.launch {
             val report = currentReport() ?: return@launch
-            when (securityService.evaluateSensitiveAction(report)) {
-                SensitiveActionDecision.ALLOW -> {
-                    _uiState.update { current ->
-                        current.copy(
-                            actionMessage = "Payment-like action allowed for the current device state.",
-                            isConfirmationRequired = false,
-                        )
-                    }
-                }
-
-                SensitiveActionDecision.REQUIRE_CONFIRMATION -> {
-                    _uiState.update { current ->
-                        current.copy(
-                            actionMessage = "Medium-risk state detected. Confirm to continue.",
-                            isConfirmationRequired = true,
-                        )
-                    }
-                }
-
-                SensitiveActionDecision.BLOCK -> {
-                    _uiState.update { current ->
-                        current.copy(
-                            actionMessage = "Payment-like action blocked because the device is high risk.",
-                            isConfirmationRequired = false,
-                        )
-                    }
-                }
+            val decision = securityService.evaluateSensitiveAction(report)
+            _uiState.update { current ->
+                current.copy(
+                    payment = current.payment.copy(
+                        latestDecision = decision.toPaymentDecisionState(report.level),
+                    ),
+                )
             }
         }
     }
@@ -129,19 +99,42 @@ class TrustGateViewModel(
     fun confirmPayment() {
         viewModelScope.launch {
             val report = currentReport() ?: return@launch
-            securityService.confirmSensitiveAction(report)
-            _uiState.update { current ->
-                current.copy(
-                    actionMessage = "Payment-like action allowed after explicit confirmation.",
-                    isConfirmationRequired = false,
-                )
+            runCatching {
+                securityService.confirmSensitiveAction(report)
+            }.onSuccess {
+                _uiState.update { current ->
+                    current.copy(
+                        payment = current.payment.copy(
+                            latestDecision = PaymentDecisionState.Confirmed(report.level),
+                        ),
+                    )
+                }
+            }.onFailure { error ->
+                _uiState.update { current ->
+                    current.copy(
+                        payment = current.payment.copy(
+                            latestDecision = PaymentDecisionState.Cancelled(report.level),
+                        ),
+                        risk = current.risk.copy(
+                            errorMessage = error.message ?: "Unable to confirm the action.",
+                        ),
+                    )
+                }
             }
         }
     }
 
     fun dismissConfirmation() {
         _uiState.update { current ->
-            current.copy(isConfirmationRequired = false)
+            val decision = current.payment.latestDecision
+            val nextDecision = if (decision is PaymentDecisionState.ConfirmationRequired) {
+                PaymentDecisionState.Cancelled(decision.riskLevel)
+            } else {
+                decision
+            }
+            current.copy(
+                payment = current.payment.copy(latestDecision = nextDecision),
+            )
         }
     }
 
@@ -149,9 +142,11 @@ class TrustGateViewModel(
         viewModelScope.launch {
             _uiState.update { current ->
                 current.copy(
-                    selectedDemoRiskLevel = level,
-                    isConfirmationRequired = false,
-                    errorMessage = null,
+                    payment = current.payment.copy(
+                        selectedDemoRiskLevel = level,
+                        latestDecision = PaymentDecisionState.Idle,
+                    ),
+                    risk = current.risk.copy(errorMessage = null),
                 )
             }
             if (level == null) {
@@ -168,104 +163,168 @@ class TrustGateViewModel(
                     metadata = mapOf("source" to "demo-selector"),
                 ),
             )
-            _uiState.update { current ->
-                current.copy(
-                    riskReport = report,
-                    isAssessingRisk = false,
-                    actionMessage = "Demo risk state set to ${report.level.name}.",
-                )
-            }
+            applyRiskReport(report = report, source = RiskReportSource.DEMO)
         }
     }
 
     fun signDemoRequest() {
         viewModelScope.launch {
-            val payload = PaymentRequestPayload(
-                amountMinor = 125_000,
-                currency = "IDR",
-                merchantReference = "TG-${LocalDate.now()}",
-            )
-            val signedRequest = requestSigner.sign(
-                payload = payload,
-                timestamp = Instant.now().toString(),
-                nonce = UUID.randomUUID().toString().replace("-", "").take(16),
-            )
-            securityService.recordSignedRequest(signedRequest)
-            _uiState.update { current ->
-                current.copy(
-                    signedRequest = signedRequest,
-                    signingMessage = "Signed a demo request with deterministic canonicalization and HMAC-SHA256.",
+            runCatching {
+                val payload = PaymentRequestPayload(
+                    amountMinor = 125_000,
+                    currency = "IDR",
+                    merchantReference = "TG-${LocalDate.now()}",
                 )
+                requestSigner.sign(
+                    payload = payload,
+                    timestamp = Instant.now().toString(),
+                    nonce = UUID.randomUUID().toString().replace("-", "").take(16),
+                )
+            }.onSuccess { signedRequest ->
+                securityService.recordSignedRequest(signedRequest)
+                _uiState.update { current ->
+                    current.copy(
+                        signing = current.signing.copy(
+                            signedRequest = signedRequest,
+                            status = SigningStatus.Signed(signedRequest.payload.merchantReference),
+                        ),
+                    )
+                }
+            }.onFailure { error ->
+                _uiState.update { current ->
+                    current.copy(
+                        signing = current.signing.copy(
+                            status = SigningStatus.Failed(
+                                error.message ?: "Unable to sign the demo request.",
+                            ),
+                        ),
+                    )
+                }
             }
         }
     }
 
     fun storeDemoValues() {
         viewModelScope.launch {
-            val report = currentReport()
-            secureValueStore.storeSessionToken("demo-session-${UUID.randomUUID().toString().take(8)}")
-            report?.let { secureValueStore.storeLastRiskLevel(it.level) }
-            secureValueStore.storeShowSignalsOnHome(_uiState.value.storageSnapshot.showSignalsOnHome)
-            securityService.recordSecureValueStored(
-                keys = listOf(
+            runCatching {
+                val report = currentReport()
+                secureValueStore.storeSessionToken("demo-session-${UUID.randomUUID().toString().take(8)}")
+                report?.let { secureValueStore.storeLastRiskLevel(it.level) }
+                secureValueStore.storeShowSignalsOnHome(_uiState.value.storage.snapshot.showSignalsOnHome)
+            }.onSuccess {
+                val storedKeys = listOf(
                     "session_token",
                     "last_risk_level",
                     "show_signals_on_home",
-                ),
-            )
-            loadStorageSnapshot("Stored demo values in encrypted local storage.")
+                )
+                securityService.recordSecureValueStored(keys = storedKeys)
+                loadStorageSnapshot(StorageStatus.Stored(storedKeys.size))
+            }.onFailure { error ->
+                updateStorageFailure(error.message ?: "Unable to write encrypted values.")
+            }
         }
     }
 
     fun refreshStorage() {
-        loadStorageSnapshot("Loaded encrypted local values.")
+        loadStorageSnapshot(StorageStatus.Loaded)
     }
 
     fun toggleShowSignalsOnHome(enabled: Boolean) {
         viewModelScope.launch {
-            secureValueStore.storeShowSignalsOnHome(enabled)
-            loadStorageSnapshot("Updated local display preference.")
+            runCatching {
+                secureValueStore.storeShowSignalsOnHome(enabled)
+            }.onSuccess {
+                loadStorageSnapshot(StorageStatus.PreferenceUpdated(enabled))
+            }.onFailure { error ->
+                updateStorageFailure(error.message ?: "Unable to update the display preference.")
+            }
         }
     }
 
-    private fun loadStorageSnapshot(message: String) {
+    private fun loadStorageSnapshot(status: StorageStatus) {
         viewModelScope.launch {
             runCatching {
                 secureValueStore.readSnapshot()
             }.onSuccess { snapshot ->
                 _uiState.update { current ->
                     current.copy(
-                        storageSnapshot = snapshot,
-                        storageMessage = message,
-                        errorMessage = null,
+                        storage = current.storage.copy(
+                            snapshot = snapshot,
+                            status = status,
+                        ),
                     )
                 }
             }.onFailure { error ->
-                _uiState.update { current ->
-                    current.copy(
-                        errorMessage = error.message ?: "Encrypted storage is unavailable.",
-                    )
-                }
+                updateStorageFailure(error.message ?: "Encrypted storage is unavailable.")
             }
         }
     }
 
     private suspend fun currentReport(): DeviceRiskReport? {
-        val selectedDemoRiskLevel = _uiState.value.selectedDemoRiskLevel
-        return _uiState.value.riskReport ?: (
-            if (selectedDemoRiskLevel != null) {
-                demoRiskReport(selectedDemoRiskLevel)
-            } else {
-                securityService.assessDeviceRisk()
-            }
-        ).also { report ->
-            _uiState.update { current ->
-                current.copy(
-                    riskReport = report,
-                    isAssessingRisk = false,
-                )
-            }
+        _uiState.value.risk.report?.let { return it }
+
+        val selectedDemoRiskLevel = _uiState.value.payment.selectedDemoRiskLevel
+        if (selectedDemoRiskLevel != null) {
+            val report = demoRiskReport(selectedDemoRiskLevel)
+            applyRiskReport(report = report, source = RiskReportSource.DEMO)
+            return report
         }
+
+        return runCatching {
+            securityService.assessDeviceRisk()
+        }.onSuccess { report ->
+            applyRiskReport(report = report, source = RiskReportSource.LIVE)
+        }.onFailure { error ->
+            applyRiskFailure(error.message ?: "Risk assessment failed.")
+        }.getOrNull()
+    }
+
+    private fun applyRiskReport(
+        report: DeviceRiskReport,
+        source: RiskReportSource,
+    ) {
+        _uiState.update { current ->
+            current.copy(
+                risk = current.risk.copy(
+                    report = report,
+                    source = source,
+                    isLoading = false,
+                    errorMessage = null,
+                ),
+                payment = current.payment.copy(
+                    latestDecision = PaymentDecisionState.Idle,
+                ),
+            )
+        }
+    }
+
+    private fun applyRiskFailure(message: String) {
+        _uiState.update { current ->
+            current.copy(
+                risk = current.risk.copy(
+                    isLoading = false,
+                    errorMessage = message,
+                ),
+            )
+        }
+    }
+
+    private fun updateStorageFailure(message: String) {
+        _uiState.update { current ->
+            current.copy(
+                storage = current.storage.copy(
+                    status = StorageStatus.Failed(message),
+                ),
+            )
+        }
+    }
+
+    private fun SensitiveActionDecision.toPaymentDecisionState(
+        riskLevel: DeviceRiskLevel,
+    ): PaymentDecisionState = when (this) {
+        SensitiveActionDecision.ALLOW -> PaymentDecisionState.Allowed(riskLevel)
+        SensitiveActionDecision.REQUIRE_CONFIRMATION -> PaymentDecisionState.ConfirmationRequired(riskLevel)
+        SensitiveActionDecision.BLOCK -> PaymentDecisionState.Blocked(riskLevel)
     }
 
     private fun buildPinningSummary(config: PinningConfig): String {

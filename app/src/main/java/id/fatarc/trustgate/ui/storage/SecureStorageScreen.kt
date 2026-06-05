@@ -1,19 +1,19 @@
 package id.fatarc.trustgate.ui.storage
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
+import id.fatarc.trustgate.ui.BulletLine
+import id.fatarc.trustgate.ui.CalloutTone
 import id.fatarc.trustgate.ui.KeyValueRow
+import id.fatarc.trustgate.ui.PrimaryActionButton
 import id.fatarc.trustgate.ui.SectionCard
+import id.fatarc.trustgate.ui.SecondaryActionButton
+import id.fatarc.trustgate.ui.StatusCallout
+import id.fatarc.trustgate.ui.StatusCalloutState
+import id.fatarc.trustgate.ui.StorageStatus
+import id.fatarc.trustgate.ui.ToggleRow
+import id.fatarc.trustgate.ui.TrustGateScreen
 import id.fatarc.trustgate.ui.TrustGateUiState
 import id.fatarc.trustgate.ui.maskToken
 
@@ -24,64 +24,87 @@ fun SecureStorageScreen(
     onRefreshStorage: () -> Unit,
     onToggleShowSignalsOnHome: (Boolean) -> Unit,
 ) {
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
+    TrustGateScreen {
         item {
-            SectionCard(
-                title = "Encrypted values",
-                modifier = Modifier.padding(top = 16.dp),
-            ) {
+            SectionCard(title = "Encrypted values") {
                 Text(
                     text = "This demo stores a mock session token, the last risk decision, and one harmless UI preference in encrypted local storage.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 KeyValueRow(
                     label = "Session token",
-                    value = maskToken(uiState.storageSnapshot.sessionToken),
+                    value = maskToken(uiState.storage.snapshot.sessionToken),
                 )
                 KeyValueRow(
                     label = "Last risk level",
-                    value = uiState.storageSnapshot.lastRiskLevel?.name ?: "Not stored",
+                    value = uiState.storage.snapshot.lastRiskLevel?.name ?: "Not stored",
                 )
                 KeyValueRow(
-                    label = "Signals visible on home",
-                    value = uiState.storageSnapshot.showSignalsOnHome.toString(),
+                    label = "Signal preview on overview",
+                    value = if (uiState.storage.snapshot.showSignalsOnHome) "Enabled" else "Disabled",
                 )
-                Switch(
-                    checked = uiState.storageSnapshot.showSignalsOnHome,
+                ToggleRow(
+                    label = "Show signal preview on overview",
+                    description = "This toggle changes only a local display preference. It does not affect scoring.",
+                    checked = uiState.storage.snapshot.showSignalsOnHome,
                     onCheckedChange = onToggleShowSignalsOnHome,
                 )
-                Button(
+                PrimaryActionButton(
+                    label = "Store demo values",
                     onClick = onStoreDemoValues,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("Store demo values")
-                }
-                Button(
+                )
+                SecondaryActionButton(
+                    title = "Reload encrypted values",
+                    description = "Read the latest encrypted snapshot without writing new demo data.",
                     onClick = onRefreshStorage,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("Reload stored values")
-                }
-                Text(uiState.storageMessage, style = MaterialTheme.typography.bodyMedium)
+                )
+                StatusCallout(state = storageStateSummary(uiState.storage.status))
             }
         }
 
         item {
-            SectionCard(
-                title = "What is not stored",
-                modifier = Modifier.padding(bottom = 24.dp),
-            ) {
-                Text(
-                    text = "No real card data, payment credentials, or server secrets are stored in the app.",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+            SectionCard(title = "Deliberately not stored") {
+                BulletLine("No real card data or payment credentials are written to this device.")
+                BulletLine("No backend secrets or production signing keys live in app storage.")
+                BulletLine("The stored values are only enough to demonstrate encrypted local persistence.")
             }
         }
     }
 }
 
+private fun storageStateSummary(status: StorageStatus): StatusCalloutState {
+    return when (status) {
+        StorageStatus.Idle -> StatusCalloutState(
+            title = "No writes yet",
+            body = "The screen is showing the default encrypted snapshot.",
+        )
+
+        StorageStatus.Loaded -> StatusCalloutState(
+            title = "Snapshot reloaded",
+            body = "The values shown above were read back from encrypted storage.",
+            tone = CalloutTone.SUCCESS,
+        )
+
+        is StorageStatus.Stored -> StatusCalloutState(
+            title = "Values stored",
+            body = "${status.keyCount} demo values were written to encrypted storage and read back.",
+            tone = CalloutTone.SUCCESS,
+        )
+
+        is StorageStatus.PreferenceUpdated -> StatusCalloutState(
+            title = "Preference updated",
+            body = if (status.showSignalsOnHome) {
+                "Signal previews are now visible on the overview screen."
+            } else {
+                "Signal previews are now hidden on the overview screen."
+            },
+            tone = CalloutTone.SUCCESS,
+        )
+
+        is StorageStatus.Failed -> StatusCalloutState(
+            title = "Encrypted storage failed",
+            body = status.message,
+            tone = CalloutTone.ERROR,
+        )
+    }
+}

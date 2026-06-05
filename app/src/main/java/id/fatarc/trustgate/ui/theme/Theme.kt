@@ -8,20 +8,25 @@ import androidx.compose.runtime.Composable
 
 private val LightColors = lightColorScheme(
     primary = Meadow,
-    secondary = Moss,
+    secondary = Pine,
     tertiary = Clay,
-    background = Sand,
+    background = Linen,
     surface = Sand,
+    surfaceContainerHigh = Linen,
+    outline = Moss,
     onPrimary = Sand,
     onSecondary = Ink,
     onBackground = Ink,
     onSurface = Ink,
+    onSurfaceVariant = Slate,
 )
 
 private val DarkColors = darkColorScheme(
     primary = Moss,
     secondary = Meadow,
     tertiary = Clay,
+    background = Ink,
+    surface = Pine,
 )
 
 @Composable
@@ -34,4 +39,3 @@ fun TrustGateTheme(
         content = content,
     )
 }
-

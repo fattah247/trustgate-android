@@ -3,7 +3,6 @@ package id.fatarc.trustgate.ui
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -27,12 +26,12 @@ import id.fatarc.trustgate.ui.storage.SecureStorageScreen
 
 private enum class TrustGateScreen(val route: String, val title: String) {
     Home("home", "Trust Overview"),
-    Risk("risk", "Device Risk Details"),
-    Payment("payment", "Payment Action Demo"),
-    Signing("signing", "Request Signing Demo"),
-    Storage("storage", "Secure Storage Demo"),
+    Risk("risk", "Risk Signals"),
+    Payment("payment", "Sensitive Action Gate"),
+    Signing("signing", "Request Signing"),
+    Storage("storage", "Secure Storage"),
     Events("events", "Security Event Log"),
-    About("about", "About and Limitations"),
+    About("about", "Scope and Limits"),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -62,8 +61,8 @@ fun TrustGateApp(
                 title = { Text(currentScreen.title) },
                 navigationIcon = {
                     if (currentScreen != TrustGateScreen.Home) {
-                        IconButton(onClick = { navController.popBackStack() }) {
-                            Text("<")
+                        TextButton(onClick = { navController.popBackStack() }) {
+                            Text("Back")
                         }
                     }
                 },
@@ -120,7 +119,7 @@ fun TrustGateApp(
         }
     }
 
-    if (uiState.isConfirmationRequired) {
+    if (uiState.payment.latestDecision is PaymentDecisionState.ConfirmationRequired) {
         AlertDialog(
             onDismissRequest = onDismissConfirmation,
             title = { Text("Confirm medium-risk action") },
