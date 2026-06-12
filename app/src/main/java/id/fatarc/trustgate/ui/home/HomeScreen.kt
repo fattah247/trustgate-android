@@ -5,7 +5,6 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,9 +12,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -62,27 +58,11 @@ import java.time.format.DateTimeFormatter
 fun HomeScreen(
     uiState: TrustGateUiState,
     onRefreshRisk: () -> Unit,
-    onOpenSigningDemo: () -> Unit,
-    onOpenStorageDemo: () -> Unit,
     onOpenEvents: () -> Unit,
 ) {
     val overview = buildOverviewState(uiState)
     val strongestSignals = uiState.risk.report.strongestSignals()
     val recentEvents = uiState.securityEvents.asReversed().take(8)
-    val destinations = listOf(
-        WorkflowDestination(
-            step = "01",
-            screen = "Request Signing",
-            description = "Generate a signed request and inspect the payload fields.",
-            onClick = onOpenSigningDemo,
-        ),
-        WorkflowDestination(
-            step = "02",
-            screen = "Secure Storage",
-            description = "Check the encrypted snapshot stored on this device.",
-            onClick = onOpenStorageDemo,
-        ),
-    )
 
     TrustGateScreen {
         item {
@@ -92,22 +72,6 @@ fun HomeScreen(
                 strongestSignals = strongestSignals,
                 onRefreshRisk = onRefreshRisk,
             )
-        }
-
-        item {
-            SectionBlock(
-                title = "Secondary workflows",
-                description = "Use the bottom bar for main areas. These tools support the gate demo.",
-            ) {
-                DetailSurface {
-                    destinations.forEach { destination ->
-                        WorkflowDestinationRow(destination = destination)
-                        if (destination != destinations.last()) {
-                            SectionDivider()
-                        }
-                    }
-                }
-            }
         }
 
         item {
@@ -191,8 +155,8 @@ private fun AnimatedVerdictPanel(
                 color = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f),
                 shape = MaterialTheme.shapes.large,
             )
-            .padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -223,13 +187,22 @@ private fun AnimatedVerdictPanel(
 
         SectionDivider()
 
-        DividerList {
-            VerdictDataRow(label = "Risk score", value = report?.score?.toString() ?: "--")
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
             VerdictDataRow(
-                label = "Signals found",
+                modifier = Modifier.weight(1f),
+                label = "Score",
+                value = report?.score?.toString() ?: "--",
+            )
+            VerdictDataRow(
+                modifier = Modifier.weight(1f),
+                label = "Signals",
                 value = report?.signals?.count { it.detected }?.toString() ?: "--",
             )
             VerdictDataRow(
+                modifier = Modifier.weight(1f),
                 label = "Protected flow",
                 value = report.actionPolicyLabel(),
                 valueColor = accent,
@@ -280,16 +253,16 @@ private fun AnimatedVerdictPanel(
 private fun VerdictDataRow(
     label: String,
     value: String,
+    modifier: Modifier = Modifier,
     valueColor: Color = MaterialTheme.colorScheme.onSurface,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(
@@ -307,58 +280,6 @@ private fun buildMetaLine(uiState: TrustGateUiState): String {
         RiskReportSource.DEMO -> "Demo profile"
     }
     return "$assessedAt · $source"
-}
-
-@Composable
-private fun WorkflowDestinationRow(destination: WorkflowDestination) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = destination.onClick)
-            .padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = destination.step,
-            modifier = Modifier
-                .width(34.dp),
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary,
-        )
-
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(3.dp),
-        ) {
-            Text(
-                text = destination.screen,
-                style = MaterialTheme.typography.titleSmall,
-            )
-            Text(
-                text = destination.description,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "Open",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-            )
-        }
-    }
 }
 
 @Composable
@@ -500,13 +421,6 @@ private fun buildOverviewState(uiState: TrustGateUiState): OverviewState {
         )
     }
 }
-
-private data class WorkflowDestination(
-    val step: String,
-    val screen: String,
-    val description: String,
-    val onClick: () -> Unit,
-)
 
 private data class OverviewState(
     val title: String,

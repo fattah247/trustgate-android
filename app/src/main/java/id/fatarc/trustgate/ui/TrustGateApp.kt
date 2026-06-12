@@ -1,5 +1,7 @@
 package id.fatarc.trustgate.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -10,6 +12,7 @@ import androidx.compose.material.icons.filled.Payment
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -36,6 +39,7 @@ import androidx.navigation.compose.rememberNavController
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.ui.about.AboutScreen
 import id.fatarc.trustgate.ui.events.SecurityEventLogScreen
+import id.fatarc.trustgate.ui.gate.GateHubScreen
 import id.fatarc.trustgate.ui.home.HomeScreen
 import id.fatarc.trustgate.ui.payment.PaymentActionScreen
 import id.fatarc.trustgate.ui.risk.DeviceRiskDetailsScreen
@@ -45,6 +49,7 @@ import id.fatarc.trustgate.ui.storage.SecureStorageScreen
 private enum class TrustGateScreen(val route: String, val title: String) {
     Home("home", "TrustGate"),
     Risk("risk", "Risk Signals"),
+    Gate("gate", "Gate"),
     Payment("payment", "Sensitive Action Gate"),
     Signing("signing", "Request Signing"),
     Storage("storage", "Secure Storage"),
@@ -61,7 +66,7 @@ private data class TopLevelDestination(
 private val TopLevelDestinations = listOf(
     TopLevelDestination(TrustGateScreen.Home, "Overview", Icons.Filled.Home),
     TopLevelDestination(TrustGateScreen.Risk, "Signals", Icons.Filled.Security),
-    TopLevelDestination(TrustGateScreen.Payment, "Gate", Icons.Filled.Payment),
+    TopLevelDestination(TrustGateScreen.Gate, "Gate", Icons.Filled.Payment),
     TopLevelDestination(TrustGateScreen.Events, "Log", Icons.Filled.History),
     TopLevelDestination(TrustGateScreen.About, "Info", Icons.Filled.Info),
 )
@@ -93,60 +98,70 @@ fun TrustGateApp(
             containerColor = Color.Transparent,
             contentColor = MaterialTheme.colorScheme.onSurface,
             topBar = {
-                TopAppBar(
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.background.copy(alpha = 0.72f),
-                        scrolledContainerColor = MaterialTheme.colorScheme.background.copy(alpha = 0.86f),
-                        titleContentColor = androidx.compose.material3.MaterialTheme.colorScheme.onBackground,
-                    ),
-                    title = { Text(currentScreen.title) },
-                    navigationIcon = {
-                        if (currentScreen != selectedTopLevelScreen) {
-                            IconButton(onClick = { navController.popBackStack() }) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                    contentDescription = "Back",
-                                    tint = MaterialTheme.colorScheme.onBackground,
-                                )
+                Column(
+                    modifier = Modifier.background(MaterialTheme.colorScheme.background.copy(alpha = 0.68f)),
+                ) {
+                    TopAppBar(
+                        colors = TopAppBarDefaults.topAppBarColors(
+                            containerColor = Color.Transparent,
+                            scrolledContainerColor = Color.Transparent,
+                            titleContentColor = MaterialTheme.colorScheme.onBackground,
+                        ),
+                        title = { Text(currentScreen.title) },
+                        navigationIcon = {
+                            if (currentScreen != selectedTopLevelScreen) {
+                                IconButton(onClick = { navController.popBackStack() }) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                        contentDescription = "Back",
+                                        tint = MaterialTheme.colorScheme.onBackground,
+                                    )
+                                }
                             }
-                        }
-                    },
-                )
+                        },
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.22f))
+                }
             },
             bottomBar = {
-                NavigationBar(
-                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
-                    contentColor = MaterialTheme.colorScheme.onSurface,
-                    tonalElevation = 0.dp,
+                Column(
+                    modifier = Modifier.background(MaterialTheme.colorScheme.surface.copy(alpha = 0.74f)),
                 ) {
-                    TopLevelDestinations.forEach { destination ->
-                        val selected = currentScreen == destination.screen
-                        NavigationBarItem(
-                            selected = selected,
-                            onClick = {
-                                navController.navigate(destination.screen.route) {
-                                    popUpTo(navController.graph.findStartDestination().id) {
-                                        saveState = true
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.28f))
+                    NavigationBar(
+                        containerColor = Color.Transparent,
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                        tonalElevation = 0.dp,
+                    ) {
+                        TopLevelDestinations.forEach { destination ->
+                            val selected = currentScreen == destination.screen
+                            NavigationBarItem(
+                                selected = selected,
+                                onClick = {
+                                    navController.navigate(destination.screen.route) {
+                                        popUpTo(navController.graph.findStartDestination().id) {
+                                            saveState = true
+                                        }
+                                        launchSingleTop = true
+                                        restoreState = currentScreen == selectedTopLevelScreen
                                     }
-                                    launchSingleTop = true
-                                    restoreState = currentScreen == selectedTopLevelScreen
-                                }
-                            },
-                            icon = {
-                                Icon(
-                                    imageVector = destination.icon,
-                                    contentDescription = null,
-                                )
-                            },
-                            label = { Text(destination.label) },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = MaterialTheme.colorScheme.primary,
-                                selectedTextColor = MaterialTheme.colorScheme.primary,
-                                indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
-                                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                            ),
-                        )
+                                },
+                                icon = {
+                                    Icon(
+                                        imageVector = destination.icon,
+                                        contentDescription = null,
+                                    )
+                                },
+                                label = { Text(destination.label) },
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = MaterialTheme.colorScheme.primary,
+                                    selectedTextColor = MaterialTheme.colorScheme.primary,
+                                    indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                ),
+                            )
+                        }
                     }
                 }
             },
@@ -160,13 +175,19 @@ fun TrustGateApp(
                     HomeScreen(
                         uiState = uiState,
                         onRefreshRisk = onRefreshRisk,
-                        onOpenSigningDemo = { navController.navigate(TrustGateScreen.Signing.route) },
-                        onOpenStorageDemo = { navController.navigate(TrustGateScreen.Storage.route) },
                         onOpenEvents = { navController.navigate(TrustGateScreen.Events.route) },
                     )
                 }
                 composable(TrustGateScreen.Risk.route) {
                     DeviceRiskDetailsScreen(uiState = uiState)
+                }
+                composable(TrustGateScreen.Gate.route) {
+                    GateHubScreen(
+                        uiState = uiState,
+                        onOpenPaymentAction = { navController.navigate(TrustGateScreen.Payment.route) },
+                        onOpenSigning = { navController.navigate(TrustGateScreen.Signing.route) },
+                        onOpenStorage = { navController.navigate(TrustGateScreen.Storage.route) },
+                    )
                 }
                 composable(TrustGateScreen.Payment.route) {
                     PaymentActionScreen(
@@ -221,9 +242,10 @@ fun TrustGateApp(
 }
 
 private fun TrustGateScreen.asTopLevelScreen(): TrustGateScreen = when (this) {
+    TrustGateScreen.Payment,
     TrustGateScreen.Signing,
     TrustGateScreen.Storage,
-    -> TrustGateScreen.Payment
+    -> TrustGateScreen.Gate
 
     else -> this
 }
