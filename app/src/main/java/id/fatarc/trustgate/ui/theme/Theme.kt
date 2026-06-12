@@ -1,32 +1,37 @@
 package id.fatarc.trustgate.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-
-private val LightColors = lightColorScheme(
-    primary = Meadow,
-    secondary = Pine,
-    tertiary = Clay,
-    background = Linen,
-    surface = Sand,
-    surfaceContainerHigh = Linen,
-    outline = Moss,
-    onPrimary = Sand,
-    onSecondary = Ink,
-    onBackground = Ink,
-    onSurface = Ink,
-    onSurfaceVariant = Slate,
-)
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 
 private val DarkColors = darkColorScheme(
-    primary = Moss,
-    secondary = Meadow,
-    tertiary = Clay,
-    background = Ink,
-    surface = Pine,
+    primary = AppPrimary,
+    secondary = AppSecondary,
+    tertiary = AppWarning,
+    background = AppBackground,
+    surface = AppSurface,
+    surfaceContainerHigh = AppSurfaceHigh,
+    outline = Color(0xFF444048),
+    error = AppError,
+    errorContainer = AppError.copy(alpha = 0.18f),
+    onErrorContainer = AppText,
+    onPrimary = AppBackground,
+    onSecondary = AppText,
+    onBackground = AppText,
+    onSurface = AppText,
+    onSurfaceVariant = AppTextMuted,
+)
+
+private val TrustGateShapes = Shapes(
+    extraSmall = RoundedCornerShape(4.dp),
+    small = RoundedCornerShape(6.dp),
+    medium = RoundedCornerShape(8.dp),
+    large = RoundedCornerShape(8.dp),
+    extraLarge = RoundedCornerShape(8.dp),
 )
 
 @Composable
@@ -34,8 +39,9 @@ fun TrustGateTheme(
     content: @Composable () -> Unit,
 ) {
     MaterialTheme(
-        colorScheme = if (isSystemInDarkTheme()) DarkColors else LightColors,
+        colorScheme = DarkColors,
         typography = TrustGateTypography,
+        shapes = TrustGateShapes,
         content = content,
     )
 }

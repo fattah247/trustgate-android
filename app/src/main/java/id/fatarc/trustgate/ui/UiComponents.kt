@@ -1,10 +1,14 @@
 package id.fatarc.trustgate.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -14,27 +18,32 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.BorderStroke
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 object TrustGateSpacing {
     val screenHorizontal = 20.dp
     val screenVertical = 20.dp
-    val sectionGap = 24.dp
-    val blockGap = 16.dp
-    val itemGap = 12.dp
+    val sectionGap = 28.dp
+    val blockGap = 18.dp
+    val itemGap = 14.dp
     val compactGap = 8.dp
-    val summaryPadding = 20.dp
-    val insetPadding = 16.dp
+    val summaryPadding = 22.dp
+    val insetPadding = 18.dp
 }
 
 enum class CalloutTone {
@@ -49,6 +58,19 @@ data class StatusCalloutState(
     val body: String,
     val tone: CalloutTone = CalloutTone.NEUTRAL,
 )
+
+@Composable
+fun TrustGateBackdrop(
+    content: @Composable () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background),
+    ) {
+        content()
+    }
+}
 
 @Composable
 fun TrustGateScreen(
@@ -75,34 +97,26 @@ fun SummaryPanel(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit = {},
 ) {
-    val (containerColor, contentColor) = summaryToneColors(tone)
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        color = containerColor,
-        contentColor = contentColor,
-        shape = MaterialTheme.shapes.large,
+    val accentColor = toneAccentColor(tone)
+    SurfacePanel(
+        modifier = modifier,
+        contentPadding = TrustGateSpacing.summaryPadding,
     ) {
-        Column(
-            modifier = Modifier.padding(TrustGateSpacing.summaryPadding),
-            verticalArrangement = Arrangement.spacedBy(TrustGateSpacing.itemGap),
-            content = {
-                Text(
-                    text = eyebrow,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = contentColor.copy(alpha = 0.82f),
-                )
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.headlineMedium,
-                )
-                Text(
-                    text = supporting,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = contentColor.copy(alpha = 0.9f),
-                )
-                content()
-            },
+        Text(
+            text = eyebrow.uppercase(),
+            style = MaterialTheme.typography.labelMedium,
+            color = accentColor,
         )
+        Text(
+            text = title,
+            style = MaterialTheme.typography.headlineLarge,
+        )
+        Text(
+            text = supporting,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.95f),
+        )
+        content()
     }
 }
 
@@ -118,11 +132,11 @@ fun SectionBlock(
         verticalArrangement = Arrangement.spacedBy(TrustGateSpacing.blockGap),
     ) {
         Column(
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Text(
                 text = title,
-                style = MaterialTheme.typography.titleLarge,
+                style = MaterialTheme.typography.headlineSmall,
             )
             if (description != null) {
                 Text(
@@ -141,17 +155,11 @@ fun DetailSurface(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface,
-        shape = MaterialTheme.shapes.medium,
-    ) {
-        Column(
-            modifier = Modifier.padding(TrustGateSpacing.insetPadding),
-            verticalArrangement = Arrangement.spacedBy(TrustGateSpacing.itemGap),
-            content = content,
-        )
-    }
+    SurfacePanel(
+        modifier = modifier,
+        contentPadding = TrustGateSpacing.insetPadding,
+        content = content,
+    )
 }
 
 @Composable
@@ -168,7 +176,7 @@ fun DividerList(
 
 @Composable
 fun SectionDivider() {
-    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
+    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.38f))
 }
 
 @Composable
@@ -176,57 +184,46 @@ fun StatusCallout(
     state: StatusCalloutState,
     modifier: Modifier = Modifier,
 ) {
-    val (containerColor, contentColor) = when (state.tone) {
-        CalloutTone.NEUTRAL -> MaterialTheme.colorScheme.surfaceContainerHigh to MaterialTheme.colorScheme.onSurface
-        CalloutTone.SUCCESS -> TrustGateSuccessContainer to TrustGateSuccessContent
-        CalloutTone.WARNING -> TrustGateWarningContainer to TrustGateWarningContent
-        CalloutTone.ERROR -> MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer
-    }
-
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        color = containerColor,
-        contentColor = contentColor,
-        shape = MaterialTheme.shapes.medium,
+    val tone = state.tone
+    val accent = toneAccentColor(tone)
+    SurfacePanel(
+        modifier = modifier,
+        contentPadding = TrustGateSpacing.insetPadding,
     ) {
-        Column(
-            modifier = Modifier.padding(TrustGateSpacing.insetPadding),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Text(
-                text = state.title,
-                style = MaterialTheme.typography.labelLarge,
-            )
-            Text(
-                text = state.body,
-                style = MaterialTheme.typography.bodyMedium,
-            )
-        }
+        Text(
+            text = state.title,
+            style = MaterialTheme.typography.titleSmall,
+            color = accent.copy(alpha = 0.98f),
+        )
+        Text(
+            text = state.body,
+            style = MaterialTheme.typography.bodyMedium,
+        )
     }
 }
 
 @Composable
 fun RiskBadge(level: DeviceRiskLevel) {
-    val containerColor = when (level) {
-        DeviceRiskLevel.LOW -> TrustGateSuccessContainer
-        DeviceRiskLevel.MEDIUM -> TrustGateWarningContainer
-        DeviceRiskLevel.HIGH -> MaterialTheme.colorScheme.errorContainer
+    val accentColor = when (level) {
+        DeviceRiskLevel.LOW -> Color(0xFF76C98E)
+        DeviceRiskLevel.MEDIUM -> Color(0xFFF18F7E)
+        DeviceRiskLevel.HIGH -> Color(0xFFE96F63)
     }
-    val contentColor = when (level) {
-        DeviceRiskLevel.LOW -> TrustGateSuccessContent
-        DeviceRiskLevel.MEDIUM -> TrustGateWarningContent
-        DeviceRiskLevel.HIGH -> MaterialTheme.colorScheme.onErrorContainer
-    }
-
-    Surface(
-        color = containerColor,
-        contentColor = contentColor,
-        shape = MaterialTheme.shapes.small,
+    Box(
+        modifier = Modifier
+            .clip(MaterialTheme.shapes.small)
+            .background(accentColor.copy(alpha = 0.16f))
+            .border(
+                width = 1.dp,
+                color = accentColor.copy(alpha = 0.32f),
+                shape = MaterialTheme.shapes.small,
+            )
+            .padding(horizontal = 10.dp, vertical = 6.dp),
     ) {
         Text(
             text = level.asLabel(),
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
             style = MaterialTheme.typography.labelLarge,
+            color = accentColor,
         )
     }
 }
@@ -250,7 +247,7 @@ fun KeyValueRow(
         )
         Text(
             text = value,
-            modifier = Modifier.weight(1.2f),
+            modifier = Modifier.weight(1.25f),
             textAlign = TextAlign.End,
             style = MaterialTheme.typography.bodyMedium,
             fontFamily = if (monospace) FontFamily.Monospace else null,
@@ -282,6 +279,7 @@ fun EvidenceRow(
             Text(
                 text = summary,
                 style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.95f),
             )
             if (supporting != null) {
                 Text(
@@ -308,6 +306,13 @@ fun PrimaryActionButton(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
         enabled = enabled,
+        shape = MaterialTheme.shapes.medium,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.primary,
+            contentColor = MaterialTheme.colorScheme.onPrimary,
+            disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        ),
     ) {
         Text(label)
     }
@@ -323,8 +328,13 @@ fun SecondaryActionButton(
     OutlinedButton(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
         colors = ButtonDefaults.outlinedButtonColors(
             contentColor = MaterialTheme.colorScheme.onSurface,
+        ),
+        border = BorderStroke(
+            width = 1.dp,
+            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f),
         ),
     ) {
         Column(
@@ -372,6 +382,10 @@ fun ToggleRow(
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = MaterialTheme.colorScheme.primary,
+                checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
+            ),
         )
     }
 }
@@ -386,7 +400,7 @@ fun BulletLine(text: String) {
 
 fun DeviceRiskLevel.asLabel(): String = when (this) {
     DeviceRiskLevel.LOW -> "Low risk"
-    DeviceRiskLevel.MEDIUM -> "Medium risk"
+    DeviceRiskLevel.MEDIUM -> "Needs review"
     DeviceRiskLevel.HIGH -> "High risk"
 }
 
@@ -409,15 +423,47 @@ fun maskToken(token: String?): String {
     return if (token.length <= 8) "Stored" else "${token.take(6)}...${token.takeLast(4)}"
 }
 
-@Composable
-private fun summaryToneColors(tone: CalloutTone): Pair<Color, Color> = when (tone) {
-    CalloutTone.NEUTRAL -> MaterialTheme.colorScheme.surface to MaterialTheme.colorScheme.onSurface
-    CalloutTone.SUCCESS -> TrustGateSuccessContainer to TrustGateSuccessContent
-    CalloutTone.WARNING -> TrustGateWarningContainer to TrustGateWarningContent
-    CalloutTone.ERROR -> MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer
+fun formatAuditTimestamp(rawTimestamp: String): String {
+    return runCatching {
+        Instant.parse(rawTimestamp)
+            .atZone(ZoneId.systemDefault())
+            .format(AuditTimestampFormatter)
+    }.getOrDefault(rawTimestamp)
 }
 
-private val TrustGateSuccessContainer = Color(0xFFDCEEDF)
-private val TrustGateSuccessContent = Color(0xFF1E5D31)
-private val TrustGateWarningContainer = Color(0xFFF6E1B7)
-private val TrustGateWarningContent = Color(0xFF6A4A00)
+private val AuditTimestampFormatter: DateTimeFormatter =
+    DateTimeFormatter.ofPattern("dd MMM yyyy \u00b7 HH:mm")
+
+@Composable
+private fun SurfacePanel(
+    modifier: Modifier = Modifier,
+    contentPadding: androidx.compose.ui.unit.Dp,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.large)
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .border(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f),
+                shape = MaterialTheme.shapes.large,
+            )
+            .padding(contentPadding),
+    ) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(TrustGateSpacing.itemGap),
+        ) {
+            content()
+        }
+    }
+}
+
+@Composable
+private fun toneAccentColor(tone: CalloutTone): Color = when (tone) {
+    CalloutTone.NEUTRAL -> MaterialTheme.colorScheme.primary
+    CalloutTone.SUCCESS -> Color(0xFF76C98E)
+    CalloutTone.WARNING -> Color(0xFFF18F7E)
+    CalloutTone.ERROR -> Color(0xFFE96F63)
+}
