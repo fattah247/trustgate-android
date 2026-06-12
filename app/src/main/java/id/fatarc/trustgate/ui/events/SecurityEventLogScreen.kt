@@ -19,6 +19,7 @@ import id.fatarc.trustgate.ui.SummaryPanel
 import id.fatarc.trustgate.ui.TrustGateScreen
 import id.fatarc.trustgate.ui.TrustGateUiState
 import id.fatarc.trustgate.ui.asHumanLabel
+import id.fatarc.trustgate.ui.formatAuditTimestamp
 
 @Composable
 fun SecurityEventLogScreen(
@@ -76,13 +77,14 @@ private fun EventRow(event: SecurityEvent) {
         EvidenceRow(
             title = event.type.name.asHumanLabel(),
             summary = event.message,
+            supporting = eventHistoryLabel(event),
             trailing = {
                 event.riskLevel?.let { riskLevel ->
                     RiskBadge(level = riskLevel)
                 }
             },
         )
-        KeyValueRow(label = "Recorded at", value = event.timestamp, monospace = true)
+        KeyValueRow(label = "Recorded at", value = formatAuditTimestamp(event.timestamp), monospace = false)
         event.metadata.toSortedMap().forEach { (key, value) ->
             KeyValueRow(
                 label = key.asHumanLabel(),
@@ -91,4 +93,21 @@ private fun EventRow(event: SecurityEvent) {
             )
         }
     }
+}
+
+private fun eventHistoryLabel(event: SecurityEvent): String = when (event.type) {
+    id.fatarc.trustgate.domain.events.SecurityEventType.DEVICE_RISK_ASSESSED,
+    id.fatarc.trustgate.domain.events.SecurityEventType.ROOT_SIGNAL_FOUND,
+    id.fatarc.trustgate.domain.events.SecurityEventType.EMULATOR_SIGNAL_FOUND,
+    id.fatarc.trustgate.domain.events.SecurityEventType.DEBUGGER_ATTACHED,
+    -> "Assessment history"
+
+    id.fatarc.trustgate.domain.events.SecurityEventType.SENSITIVE_ACTION_ALLOWED,
+    id.fatarc.trustgate.domain.events.SecurityEventType.SENSITIVE_ACTION_REQUIRES_CONFIRMATION,
+    id.fatarc.trustgate.domain.events.SecurityEventType.SENSITIVE_ACTION_ALLOWED_AFTER_CONFIRMATION,
+    id.fatarc.trustgate.domain.events.SecurityEventType.SENSITIVE_ACTION_BLOCKED,
+    -> "Protected action history"
+
+    id.fatarc.trustgate.domain.events.SecurityEventType.REQUEST_SIGNED -> "Signing history"
+    id.fatarc.trustgate.domain.events.SecurityEventType.SECURE_VALUE_STORED -> "Storage history"
 }

@@ -1,20 +1,44 @@
 package id.fatarc.trustgate.ui.home
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import id.fatarc.trustgate.domain.events.SecurityEvent
+import id.fatarc.trustgate.domain.events.SecurityEventType
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.risk.DeviceRiskReport
 import id.fatarc.trustgate.domain.risk.RiskSignal
 import id.fatarc.trustgate.domain.risk.SignalCategory
-import id.fatarc.trustgate.domain.risk.SignalSeverity
 import id.fatarc.trustgate.ui.CalloutTone
 import id.fatarc.trustgate.ui.DetailSurface
 import id.fatarc.trustgate.ui.DividerList
 import id.fatarc.trustgate.ui.EvidenceRow
-import id.fatarc.trustgate.ui.KeyValueRow
 import id.fatarc.trustgate.ui.PaymentDecisionState
 import id.fatarc.trustgate.ui.PrimaryActionButton
 import id.fatarc.trustgate.ui.RiskBadge
@@ -26,91 +50,60 @@ import id.fatarc.trustgate.ui.SigningStatus
 import id.fatarc.trustgate.ui.StatusCallout
 import id.fatarc.trustgate.ui.StatusCalloutState
 import id.fatarc.trustgate.ui.StorageStatus
-import id.fatarc.trustgate.ui.SummaryPanel
 import id.fatarc.trustgate.ui.TrustGateScreen
-import id.fatarc.trustgate.ui.TrustGateSpacing
 import id.fatarc.trustgate.ui.TrustGateUiState
-import id.fatarc.trustgate.ui.asHumanLabel
 import id.fatarc.trustgate.ui.asLabel
+import id.fatarc.trustgate.ui.formatAuditTimestamp
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 @Composable
 fun HomeScreen(
     uiState: TrustGateUiState,
     onRefreshRisk: () -> Unit,
-    onOpenRiskDetails: () -> Unit,
-    onOpenPaymentDemo: () -> Unit,
     onOpenSigningDemo: () -> Unit,
     onOpenStorageDemo: () -> Unit,
     onOpenEvents: () -> Unit,
-    onOpenAbout: () -> Unit,
 ) {
     val overview = buildOverviewState(uiState)
     val strongestSignals = uiState.risk.report.strongestSignals()
+    val recentEvents = uiState.securityEvents.asReversed().take(8)
+    val destinations = listOf(
+        WorkflowDestination(
+            step = "01",
+            screen = "Request Signing",
+            description = "Generate a signed request and inspect the payload fields.",
+            onClick = onOpenSigningDemo,
+        ),
+        WorkflowDestination(
+            step = "02",
+            screen = "Secure Storage",
+            description = "Check the encrypted snapshot stored on this device.",
+            onClick = onOpenStorageDemo,
+        ),
+    )
 
     TrustGateScreen {
         item {
-            SummaryPanel(
-                eyebrow = "Current verdict",
-                title = overview.title,
-                supporting = overview.body,
-                tone = overview.tone,
-            ) {
-                uiState.risk.report?.let { report ->
-                    RiskBadge(level = report.level)
-                    KeyValueRow(label = "Risk level", value = report.level.asLabel())
-                    KeyValueRow(label = "Risk score", value = report.score.toString())
-                    KeyValueRow(
-                        label = "Assessment source",
-                        value = when (uiState.risk.source) {
-                            RiskReportSource.LIVE -> "Live device checks"
-                            RiskReportSource.DEMO -> "Sample risk profile"
-                        },
-                    )
-                    KeyValueRow(
-                        label = "Assessed at",
-                        value = report.assessedAt.toString(),
-                        monospace = true,
-                    )
-                }
-                PrimaryActionButton(
-                    label = if (uiState.risk.isLoading) "Running device checks" else "Run device checks again",
-                    onClick = onRefreshRisk,
-                    enabled = !uiState.risk.isLoading,
-                )
-                uiState.risk.errorMessage?.let { message ->
-                    StatusCallout(
-                        state = StatusCalloutState(
-                            title = "Assessment error",
-                            body = message,
-                            tone = CalloutTone.ERROR,
-                        ),
-                    )
-                }
-            }
+            AnimatedVerdictPanel(
+                uiState = uiState,
+                overview = overview,
+                strongestSignals = strongestSignals,
+                onRefreshRisk = onRefreshRisk,
+            )
         }
 
         item {
             SectionBlock(
-                title = "Strongest reasons",
-                description = "The overview focuses on the signals that most affect the current verdict.",
+                title = "Secondary workflows",
+                description = "Use the bottom bar for main areas. These tools support the gate demo.",
             ) {
                 DetailSurface {
-                    if (strongestSignals.isEmpty()) {
-                        StatusCallout(
-                            state = StatusCalloutState(
-                                title = "No strong indicators detected",
-                                body = "The current result does not show root, emulator, or debugger signals strong enough to raise the trust level.",
-                                tone = CalloutTone.SUCCESS,
-                            ),
-                        )
-                    } else {
-                        DividerList {
-                            strongestSignals.forEachIndexed { index, signal ->
-                                SignalRow(signal = signal)
-                                if (index != strongestSignals.lastIndex) {
-                                    SectionDivider()
-                                }
-                            }
+                    destinations.forEach { destination ->
+                        WorkflowDestinationRow(destination = destination)
+                        if (destination != destinations.last()) {
+                            SectionDivider()
                         }
                     }
                 }
@@ -119,40 +112,29 @@ fun HomeScreen(
 
         item {
             SectionBlock(
-                title = "What to do next",
-                description = "The next step depends on whether this result is acceptable for the policy you are testing.",
+                title = "Audit log",
+                description = "Latest events recorded on this device.",
             ) {
-                StatusCallout(state = nextStepState(uiState))
-                DividerList {
-                    DemoDestinationButton(
-                        title = "Inspect risk signals",
-                        description = "Review every check grouped by root, emulator, debugger, and installer context.",
-                        onClick = onOpenRiskDetails,
+                if (recentEvents.isEmpty()) {
+                    StatusCallout(
+                        state = StatusCalloutState(
+                            title = "No local history yet",
+                            body = "Run the device checks or complete one of the workflows to populate the local audit timeline.",
+                        ),
                     )
-                    DemoDestinationButton(
-                        title = "Run the sensitive action gate",
-                        description = "Exercise the allow, confirm, and block paths against the current risk result.",
-                        onClick = onOpenPaymentDemo,
-                    )
-                    DemoDestinationButton(
-                        title = "Review request signing",
-                        description = "Generate a deterministic request and inspect the canonical payload and headers.",
-                        onClick = onOpenSigningDemo,
-                    )
-                    DemoDestinationButton(
-                        title = "Inspect secure storage",
-                        description = "Confirm which demo values are written locally and which are deliberately omitted.",
-                        onClick = onOpenStorageDemo,
-                    )
-                    DemoDestinationButton(
-                        title = "Read the security event log",
-                        description = "See the local audit trail for assessments and action outcomes.",
+                } else {
+                    DetailSurface {
+                        recentEvents.take(4).forEachIndexed { index, event ->
+                            ActivityHistoryRow(event = event)
+                            if (index != recentEvents.take(4).lastIndex) {
+                                SectionDivider()
+                            }
+                        }
+                    }
+                    SecondaryActionButton(
+                        title = "Open full event history",
+                        description = "Go to the dedicated Security Event Log screen for the complete audit trail.",
                         onClick = onOpenEvents,
-                    )
-                    DemoDestinationButton(
-                        title = "Read scope and limits",
-                        description = "Review what the app demonstrates and where server-side controls are still required.",
-                        onClick = onOpenAbout,
                     )
                 }
             }
@@ -160,8 +142,8 @@ fun HomeScreen(
 
         item {
             SectionBlock(
-                title = "Recent activity",
-                description = "These summaries show the last meaningful outcomes from the supporting demo workflows.",
+                title = "Workflow status",
+                description = "Last known result from the demo workflows.",
             ) {
                 DetailSurface {
                     DividerList {
@@ -170,11 +152,6 @@ fun HomeScreen(
                         ActivityRow(state = signingSummary(uiState))
                         SectionDivider()
                         ActivityRow(state = storageSummary(uiState))
-                        SectionDivider()
-                        KeyValueRow(
-                            label = "Recorded security events",
-                            value = uiState.securityEvents.size.toString(),
-                        )
                     }
                 }
             }
@@ -183,27 +160,265 @@ fun HomeScreen(
 }
 
 @Composable
-private fun SignalRow(signal: RiskSignal) {
-    EvidenceRow(
-        title = signal.name,
-        summary = if (signal.detected) {
-            signal.explanation
-        } else {
-            "This indicator is currently clear."
-        },
-        supporting = "${signal.category.name.asHumanLabel()} \u00b7 ${signal.severity.name.asHumanLabel()} severity",
-        trailing = {
-            Text(
-                text = if (signal.detected) "Detected" else "Clear",
-                style = MaterialTheme.typography.labelLarge,
-                color = if (signal.detected) {
-                    MaterialTheme.colorScheme.error
-                } else {
-                    MaterialTheme.colorScheme.primary
-                },
+private fun AnimatedVerdictPanel(
+    uiState: TrustGateUiState,
+    overview: OverviewState,
+    strongestSignals: List<RiskSignal>,
+    onRefreshRisk: () -> Unit,
+) {
+    val report = uiState.risk.report
+    val accent = toneAccentColor(overview.tone)
+    val reveal = remember { Animatable(0f) }
+
+    LaunchedEffect(uiState.risk.isLoading, report?.assessedAt, uiState.risk.errorMessage) {
+        reveal.snapTo(0f)
+        reveal.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(durationMillis = 520, easing = FastOutSlowInEasing),
+        )
+    }
+
+    Column(
+        modifier = Modifier.graphicsLayer {
+            alpha = reveal.value
+            translationY = (1f - reveal.value) * 24f
+        }
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.large)
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .border(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f),
+                shape = MaterialTheme.shapes.large,
             )
-        },
-    )
+            .padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Top,
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = "Device status",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = accent,
+                )
+                Text(
+                    text = overview.title,
+                    style = MaterialTheme.typography.titleLarge,
+                )
+                Text(
+                    text = overview.body,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            report?.let { RiskBadge(level = it.level) }
+        }
+
+        SectionDivider()
+
+        DividerList {
+            VerdictDataRow(label = "Risk score", value = report?.score?.toString() ?: "--")
+            VerdictDataRow(
+                label = "Signals found",
+                value = report?.signals?.count { it.detected }?.toString() ?: "--",
+            )
+            VerdictDataRow(
+                label = "Protected flow",
+                value = report.actionPolicyLabel(),
+                valueColor = accent,
+            )
+        }
+
+        if (uiState.risk.isLoading) {
+            LinearProgressIndicator(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(4.dp)
+                    .clip(MaterialTheme.shapes.small),
+                color = accent,
+                trackColor = accent.copy(alpha = 0.18f),
+            )
+        } else {
+            Text(
+                text = buildMetaLine(uiState),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        if (strongestSignals.isNotEmpty()) {
+            SectionDivider()
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = "Risk indicators",
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    text = strongestSignals.joinToString(separator = ", ") { it.name },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        PrimaryActionButton(
+            label = if (uiState.risk.isLoading) "Running device checks" else "Run device checks again",
+            onClick = onRefreshRisk,
+            enabled = !uiState.risk.isLoading,
+        )
+    }
+}
+
+@Composable
+private fun VerdictDataRow(
+    label: String,
+    value: String,
+    valueColor: Color = MaterialTheme.colorScheme.onSurface,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleMedium,
+            color = valueColor,
+        )
+    }
+}
+
+private fun buildMetaLine(uiState: TrustGateUiState): String {
+    val assessedAt = uiState.risk.report?.assessedAt?.toString()?.let(::formatAuditTimestamp) ?: "No result yet"
+    val source = when (uiState.risk.source) {
+        RiskReportSource.LIVE -> "Live device checks"
+        RiskReportSource.DEMO -> "Demo profile"
+    }
+    return "$assessedAt · $source"
+}
+
+@Composable
+private fun WorkflowDestinationRow(destination: WorkflowDestination) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = destination.onClick)
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = destination.step,
+            modifier = Modifier
+                .width(34.dp),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+        )
+
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            Text(
+                text = destination.screen,
+                style = MaterialTheme.typography.titleSmall,
+            )
+            Text(
+                text = destination.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "Open",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ActivityHistoryRow(event: SecurityEvent) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Column(
+            modifier = Modifier.width(54.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = event.dateStamp(),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = event.timeStamp(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top,
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    Text(
+                        text = event.historyLabel(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = event.headline(),
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                }
+                event.riskLevel?.let { RiskBadge(level = it) }
+            }
+            Text(
+                text = event.message,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
 }
 
 @Composable
@@ -215,32 +430,14 @@ private fun ActivityRow(state: StatusCalloutState) {
             Text(
                 text = when (state.tone) {
                     CalloutTone.NEUTRAL -> "Info"
-                    CalloutTone.SUCCESS -> "OK"
+                    CalloutTone.SUCCESS -> "Ready"
                     CalloutTone.WARNING -> "Review"
                     CalloutTone.ERROR -> "Blocked"
                 },
                 style = MaterialTheme.typography.labelLarge,
-                color = when (state.tone) {
-                    CalloutTone.NEUTRAL -> MaterialTheme.colorScheme.onSurfaceVariant
-                    CalloutTone.SUCCESS -> MaterialTheme.colorScheme.primary
-                    CalloutTone.WARNING -> MaterialTheme.colorScheme.tertiary
-                    CalloutTone.ERROR -> MaterialTheme.colorScheme.error
-                },
+                color = toneAccentColor(state.tone),
             )
         },
-    )
-}
-
-@Composable
-private fun DemoDestinationButton(
-    title: String,
-    description: String,
-    onClick: () -> Unit,
-) {
-    SecondaryActionButton(
-        title = title,
-        description = description,
-        onClick = onClick,
     )
 }
 
@@ -252,7 +449,7 @@ private fun DeviceRiskReport?.strongestSignals(): List<RiskSignal> {
                 .thenBy { categoryPriority(it.category) }
                 .thenBy { it.name },
         )
-        ?.take(3)
+        ?.take(2)
         .orEmpty()
 }
 
@@ -267,76 +464,49 @@ private fun buildOverviewState(uiState: TrustGateUiState): OverviewState {
     val report = uiState.risk.report
     return when {
         uiState.risk.isLoading && report == null -> OverviewState(
-            title = "Running device checks",
-            body = "The app is collecting device signals and building the current trust result.",
+            title = "Checking this device",
+            body = "Collecting local signals before deciding whether protected actions can run.",
             tone = CalloutTone.NEUTRAL,
         )
 
         report == null && uiState.risk.errorMessage != null -> OverviewState(
-            title = "Assessment unavailable",
-            body = "The last attempt did not complete. Review the error and retry the device checks.",
+            title = "Check failed",
+            body = "The last attempt did not complete. Review the error and run the checks again.",
             tone = CalloutTone.ERROR,
         )
 
         report == null -> OverviewState(
-            title = "No current result",
-            body = "Run the device checks to produce a trust verdict and supporting evidence.",
+            title = "No device result",
+            body = "Run the checks to evaluate this device before using protected workflows.",
             tone = CalloutTone.NEUTRAL,
         )
 
         report.level == DeviceRiskLevel.LOW -> OverviewState(
-            title = "Device currently meets this policy",
-            body = "No strong root, emulator, or debugger signals were detected in the current assessment.",
+            title = "Device trusted",
+            body = "No strong root, emulator, or debugger signals were found in this check.",
             tone = CalloutTone.SUCCESS,
         )
 
         report.level == DeviceRiskLevel.MEDIUM -> OverviewState(
-            title = "Device needs review before protected actions",
-            body = "Some signals were detected. The app would require explicit confirmation before allowing the protected demo action.",
+            title = "Review required",
+            body = "Some signals were found. Sensitive actions should ask for confirmation.",
             tone = CalloutTone.WARNING,
         )
 
         else -> OverviewState(
-            title = "Device does not meet this policy",
-            body = "The current signal set is strong enough to block the protected demo action until the environment is reviewed.",
+            title = "High risk device",
+            body = "Detected signals are strong enough to block protected actions.",
             tone = CalloutTone.ERROR,
         )
     }
 }
 
-private fun nextStepState(uiState: TrustGateUiState): StatusCalloutState {
-    val report = uiState.risk.report
-    if (report == null) {
-        return StatusCalloutState(
-            title = "Run a fresh assessment",
-            body = "The app needs a current result before it can explain whether the device should be trusted.",
-        )
-    }
-
-    return when (report.level) {
-        DeviceRiskLevel.LOW -> StatusCalloutState(
-            title = "Proceed with validation",
-            body = if (uiState.risk.source == RiskReportSource.DEMO) {
-                "Switch back to live device checks when you are ready to validate the actual environment."
-            } else {
-                "If you are validating a production-like path, the current device result is suitable for the protected demo flow."
-            },
-            tone = CalloutTone.SUCCESS,
-        )
-
-        DeviceRiskLevel.MEDIUM -> StatusCalloutState(
-            title = "Review the detected signals",
-            body = "Check whether the result is expected for this test environment, then use the gate screen to confirm the medium-risk path.",
-            tone = CalloutTone.WARNING,
-        )
-
-        DeviceRiskLevel.HIGH -> StatusCalloutState(
-            title = "Investigate before continuing",
-            body = "A high-risk result usually means root, debugger, or equivalent signals are present. Resolve those conditions or keep the device limited to non-protected flows.",
-            tone = CalloutTone.ERROR,
-        )
-    }
-}
+private data class WorkflowDestination(
+    val step: String,
+    val screen: String,
+    val description: String,
+    val onClick: () -> Unit,
+)
 
 private data class OverviewState(
     val title: String,
@@ -344,22 +514,95 @@ private data class OverviewState(
     val tone: CalloutTone,
 )
 
+private fun DeviceRiskReport?.actionPolicyLabel(): String = when (this?.level) {
+    DeviceRiskLevel.LOW -> "Allow"
+    DeviceRiskLevel.MEDIUM -> "Confirm"
+    DeviceRiskLevel.HIGH -> "Block"
+    null -> "--"
+}
+
+private fun SecurityEvent.historyLabel(): String = when (type) {
+    SecurityEventType.DEVICE_RISK_ASSESSED,
+    SecurityEventType.ROOT_SIGNAL_FOUND,
+    SecurityEventType.EMULATOR_SIGNAL_FOUND,
+    SecurityEventType.DEBUGGER_ATTACHED,
+    -> "Assessment history"
+
+    SecurityEventType.SENSITIVE_ACTION_ALLOWED,
+    SecurityEventType.SENSITIVE_ACTION_REQUIRES_CONFIRMATION,
+    SecurityEventType.SENSITIVE_ACTION_ALLOWED_AFTER_CONFIRMATION,
+    SecurityEventType.SENSITIVE_ACTION_BLOCKED,
+    -> "Protected action history"
+
+    SecurityEventType.REQUEST_SIGNED -> "Signing history"
+    SecurityEventType.SECURE_VALUE_STORED -> "Storage history"
+}
+
+private fun SecurityEvent.headline(): String = when (type) {
+    SecurityEventType.DEVICE_RISK_ASSESSED -> "Device assessment completed"
+    SecurityEventType.ROOT_SIGNAL_FOUND -> "Root signal detected"
+    SecurityEventType.EMULATOR_SIGNAL_FOUND -> "Emulator signal detected"
+    SecurityEventType.DEBUGGER_ATTACHED -> "Debugger attached"
+    SecurityEventType.SENSITIVE_ACTION_ALLOWED -> "Protected action allowed"
+    SecurityEventType.SENSITIVE_ACTION_REQUIRES_CONFIRMATION -> "Protected action paused for confirmation"
+    SecurityEventType.SENSITIVE_ACTION_ALLOWED_AFTER_CONFIRMATION -> "Protected action allowed after confirmation"
+    SecurityEventType.SENSITIVE_ACTION_BLOCKED -> "Protected action blocked"
+    SecurityEventType.REQUEST_SIGNED -> "Request signed locally"
+    SecurityEventType.SECURE_VALUE_STORED -> "Encrypted values stored"
+}
+
+private fun SecurityEvent.calloutTone(): CalloutTone = when (type) {
+    SecurityEventType.SENSITIVE_ACTION_BLOCKED -> CalloutTone.ERROR
+    SecurityEventType.SENSITIVE_ACTION_REQUIRES_CONFIRMATION -> CalloutTone.WARNING
+    SecurityEventType.ROOT_SIGNAL_FOUND,
+    SecurityEventType.EMULATOR_SIGNAL_FOUND,
+    SecurityEventType.DEBUGGER_ATTACHED,
+    -> if (riskLevel == DeviceRiskLevel.HIGH) CalloutTone.ERROR else CalloutTone.WARNING
+
+    else -> CalloutTone.SUCCESS
+}
+
+private fun toneAccentColor(tone: CalloutTone): Color = when (tone) {
+    CalloutTone.NEUTRAL -> Color(0xFFE06E98)
+    CalloutTone.SUCCESS -> Color(0xFF76C98E)
+    CalloutTone.WARNING -> Color(0xFFF18F7E)
+    CalloutTone.ERROR -> Color(0xFFE96F63)
+}
+
+private fun SecurityEvent.dateStamp(): String = formatInstantPart(timestamp, DateFormatter)
+
+private fun SecurityEvent.timeStamp(): String = formatInstantPart(timestamp, TimeFormatter)
+
+private fun formatInstantPart(
+    rawTimestamp: String,
+    formatter: DateTimeFormatter,
+): String {
+    return runCatching {
+        Instant.parse(rawTimestamp)
+            .atZone(ZoneId.systemDefault())
+            .format(formatter)
+    }.getOrDefault("--")
+}
+
+private val DateFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("dd MMM")
+private val TimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
+
 private fun paymentSummary(uiState: TrustGateUiState): StatusCalloutState {
     return when (val decision = uiState.payment.latestDecision) {
         PaymentDecisionState.Idle -> StatusCalloutState(
-            title = "Sensitive action not attempted",
-            body = "Open the gate screen to test the current trust result against the protected action policy.",
+            title = "No protected action attempted",
+            body = "The gate screen has not been used since the current trust result was loaded.",
         )
 
         is PaymentDecisionState.Allowed -> StatusCalloutState(
             title = "Protected action allowed",
-            body = "The last payment-like action was allowed because the device evaluated as ${decision.riskLevel.asLabel()}.",
+            body = "The current trust result allowed the protected action because the device evaluated as ${decision.riskLevel.asLabel()}.",
             tone = CalloutTone.SUCCESS,
         )
 
         is PaymentDecisionState.ConfirmationRequired -> StatusCalloutState(
             title = "Confirmation required",
-            body = "The app paused because the current trust result requires explicit operator confirmation.",
+            body = "The current trust result paused the action for explicit operator confirmation.",
             tone = CalloutTone.WARNING,
         )
 
@@ -371,13 +614,13 @@ private fun paymentSummary(uiState: TrustGateUiState): StatusCalloutState {
 
         is PaymentDecisionState.Blocked -> StatusCalloutState(
             title = "Protected action blocked",
-            body = "The last payment-like action was blocked because the device evaluated as ${decision.riskLevel.asLabel()}.",
+            body = "The current trust result blocked the action because the device evaluated as ${decision.riskLevel.asLabel()}.",
             tone = CalloutTone.ERROR,
         )
 
         is PaymentDecisionState.Cancelled -> StatusCalloutState(
-            title = "Confirmation dismissed",
-            body = "The pending medium-risk action was cancelled instead of being forced through.",
+            title = "Protected action cancelled",
+            body = "The confirmation step was dismissed, so the protected action did not continue.",
         )
     }
 }
@@ -386,7 +629,7 @@ private fun signingSummary(uiState: TrustGateUiState): StatusCalloutState {
     return when (val status = uiState.signing.status) {
         SigningStatus.Idle -> StatusCalloutState(
             title = "No request signed yet",
-            body = "Generate a demo request to inspect the canonical payload, hash, and signature headers.",
+            body = "The signing screen has not generated a request since the current session began.",
         )
 
         is SigningStatus.Signed -> StatusCalloutState(
@@ -406,19 +649,19 @@ private fun signingSummary(uiState: TrustGateUiState): StatusCalloutState {
 private fun storageSummary(uiState: TrustGateUiState): StatusCalloutState {
     return when (val status = uiState.storage.status) {
         StorageStatus.Idle -> StatusCalloutState(
-            title = "Encrypted storage untouched",
-            body = "No demo values have been written or reloaded yet.",
+            title = "No encrypted write yet",
+            body = "The storage workflow has not written or reloaded demo values in this session.",
         )
 
         StorageStatus.Loaded -> StatusCalloutState(
             title = "Encrypted snapshot reloaded",
-            body = "The current screen reflects the latest values read back from encrypted storage.",
+            body = "The storage screen last read back the current encrypted values from local storage.",
             tone = CalloutTone.SUCCESS,
         )
 
         is StorageStatus.Stored -> StatusCalloutState(
             title = "Encrypted values stored",
-            body = "${status.keyCount} demo values were written to encrypted local storage.",
+            body = "${status.keyCount} demo values were written to local encrypted storage.",
             tone = CalloutTone.SUCCESS,
         )
 
