@@ -2,7 +2,7 @@
 
 ## What the app protects
 
-TrustGate Android protects a payment-like action from being treated the same on every device state. The app also protects a few mock local values from plain-text storage.
+TrustGate Android protects a payment-like action from being treated the same on every device state. The app also protects a few reference local values from plain-text storage.
 
 ## Attacker assumptions
 
@@ -39,4 +39,3 @@ TrustGate Android protects a payment-like action from being treated the same on 
 ## Why client-side checks are only signals
 
 The app can inspect its own environment, but it cannot prove that the environment is honest. A determined attacker can hide or bypass many checks. That is why TrustGate Android uses risk levels and layered controls instead of claiming absolute enforcement.
-

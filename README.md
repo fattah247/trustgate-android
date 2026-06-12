@@ -10,7 +10,7 @@ It is not a banking app and it is not bypass-proof security. It is a public-safe
 - Risk-based gating for a payment-like action
 - Local security event logging that explains decisions taken by the app
 - HMAC request signing shape with deterministic tests
-- Encrypted local storage for mock session and risk state
+- Encrypted local storage for reference session and risk state
 - Certificate pinning example code that stays disabled by default
 - Kotlin-first Android structure with unit tests and CI
 
@@ -20,14 +20,19 @@ It is not a banking app and it is not bypass-proof security. It is a public-safe
 flowchart TD
     A[App Launch] --> B[Assess Device Risk]
     B --> C[Show Trust State]
-    C --> D[Sensitive Action]
-    D --> E[Risk Gate]
-    E --> F[Allow]
-    E --> G[Require Confirmation]
-    E --> H[Block]
-    F --> I[Security Event Log]
-    G --> I
-    H --> I
+    C --> D[Bottom Navigation]
+    D --> E[Signals]
+    D --> F[Gate Hub]
+    D --> G[Security Event Log]
+    F --> H[Sensitive Action Gate]
+    F --> I[Request Signing]
+    F --> J[Secure Storage]
+    H --> K[Allow]
+    H --> L[Require Confirmation]
+    H --> M[Block]
+    K --> G
+    L --> G
+    M --> G
 ```
 
 ## Screenshots
@@ -44,8 +49,8 @@ Real screenshots for the app, tests, CI, and repository are committed under [`do
     <td><img src="docs/screenshots/04-sensitive-action-blocked.png" width="320" alt="Sensitive action blocked" /><br />Sensitive action blocked</td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/05-request-signing-demo.png" width="320" alt="Request signing demo" /><br />Request signing demo</td>
-    <td><img src="docs/screenshots/06-secure-storage-demo.png" width="320" alt="Secure storage demo" /><br />Secure storage demo</td>
+    <td><img src="docs/screenshots/05-request-signing-reference.png" width="320" alt="Request signing reference flow" /><br />Request signing reference flow</td>
+    <td><img src="docs/screenshots/06-secure-storage-reference.png" width="320" alt="Secure storage reference values" /><br />Secure storage reference values</td>
   </tr>
   <tr>
     <td><img src="docs/screenshots/07-security-event-log.png" width="320" alt="Security event log" /><br />Security event log</td>
@@ -61,9 +66,9 @@ Real screenshots for the app, tests, CI, and repository are committed under [`do
 
 The app treats client-side checks as risk signals. A rooted, emulated, or debug-exposed environment does not prove malicious behavior, but it does justify more caution before allowing a sensitive action.
 
-The request-signing flow demonstrates canonical request construction, body hashing, timestamp and nonce headers, and an HMAC signature. The demo key is intentionally local and hardcoded so the limitation is explicit.
+The request-signing flow shows canonical request construction, body hashing, timestamp and nonce headers, and an HMAC signature. The reference key is intentionally local and hardcoded so the limitation is explicit.
 
-Encrypted local storage keeps a mock session token, the last assessed risk level, and a small UI preference away from plain shared preferences.
+Encrypted local storage keeps a reference session token, the last assessed risk level, and a small UI preference away from plain shared preferences.
 
 ## Run Locally
 
@@ -111,6 +116,7 @@ app/src/main/java/id/fatarc/trustgate/
 └── ui/
     ├── about/
     ├── events/
+    ├── gate/
     ├── home/
     ├── payment/
     ├── risk/
