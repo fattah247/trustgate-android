@@ -32,7 +32,7 @@ fun SecurityEventLogScreen(
                 eyebrow = "Local audit trail",
                 title = if (events.isEmpty()) "No events recorded yet" else "${events.size} events recorded locally",
                 supporting = if (events.isEmpty()) {
-                    "Run a device assessment or complete one of the demo flows to populate the local event trail."
+                    "Run a device assessment or complete one of the gate workflows to populate the local event trail."
                 } else {
                     "Each entry explains what the app assessed or allowed, and when that result was recorded on this device."
                 },

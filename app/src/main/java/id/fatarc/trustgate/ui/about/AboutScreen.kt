@@ -19,19 +19,19 @@ fun AboutScreen(
             SummaryPanel(
                 eyebrow = "Scope",
                 title = "A device-integrity lab, not a full trust platform",
-                supporting = "TrustGate Android demonstrates how client-side checks, protected actions, request signing, and local audit output fit together. It does not replace server-side enforcement.",
+                supporting = "TrustGate Android connects client-side checks, protected actions, request signing, and local audit output. It does not replace server-side enforcement.",
             )
         }
 
         item {
             SectionBlock(
-                title = "What this app demonstrates",
+                title = "What this app covers",
                 description = "The current build focuses on a small set of mobile security workflows that can be reviewed end to end.",
             ) {
                 DetailSurface {
                     BulletLine("Collect runtime signals that suggest root access, emulation, debugging, or unusual install context.")
                     BulletLine("Map those signals to a simple trust result that can guide protected app behavior.")
-                    BulletLine("Record local events so test runs and device states can be reviewed later.")
+                    BulletLine("Record local events so assessments and device states can be reviewed later.")
                     BulletLine("Show how request signing and encrypted local storage fit into the same client security story.")
                 }
             }
@@ -44,8 +44,8 @@ fun AboutScreen(
             ) {
                 DetailSurface {
                     BulletLine("Client-side checks are signals, not guarantees of trustworthiness.")
-                    BulletLine("The signing key is hardcoded because this screen demonstrates request shape, not production key custody.")
-                    BulletLine("There is no real payment processor, fraud engine, or server-side adjudication behind the demo flow.")
+                    BulletLine("The signing key is hardcoded because this build focuses on request shape, not production key custody.")
+                    BulletLine("There is no real payment processor, fraud engine, or server-side adjudication behind the reference flow.")
                     BulletLine("Advanced bypass frameworks and kernel-level compromise remain out of scope.")
                 }
             }

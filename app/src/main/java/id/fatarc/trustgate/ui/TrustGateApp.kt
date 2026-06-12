@@ -1,6 +1,7 @@
 package id.fatarc.trustgate.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -27,8 +28,10 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -79,11 +82,11 @@ fun TrustGateApp(
     onAttemptPayment: () -> Unit,
     onConfirmPayment: () -> Unit,
     onDismissConfirmation: () -> Unit,
-    onSignDemoRequest: () -> Unit,
-    onStoreDemoValues: () -> Unit,
+    onSignReferenceRequest: () -> Unit,
+    onStoreReferenceValues: () -> Unit,
     onRefreshStorage: () -> Unit,
     onToggleShowSignalsOnHome: (Boolean) -> Unit,
-    onSetDemoRiskLevel: (DeviceRiskLevel?) -> Unit,
+    onSetScenarioRiskLevel: (DeviceRiskLevel?) -> Unit,
 ) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
@@ -99,7 +102,15 @@ fun TrustGateApp(
             contentColor = MaterialTheme.colorScheme.onSurface,
             topBar = {
                 Column(
-                    modifier = Modifier.background(MaterialTheme.colorScheme.background.copy(alpha = 0.68f)),
+                    modifier = Modifier.background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                MaterialTheme.colorScheme.background.copy(alpha = 0.94f),
+                                MaterialTheme.colorScheme.background.copy(alpha = 0.88f),
+                                MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
+                            ),
+                        ),
+                    ),
                 ) {
                     TopAppBar(
                         colors = TopAppBarDefaults.topAppBarColors(
@@ -125,42 +136,63 @@ fun TrustGateApp(
             },
             bottomBar = {
                 Column(
-                    modifier = Modifier.background(MaterialTheme.colorScheme.surface.copy(alpha = 0.74f)),
+                    modifier = Modifier.background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                MaterialTheme.colorScheme.surface.copy(alpha = 0.84f),
+                                MaterialTheme.colorScheme.background.copy(alpha = 0.9f),
+                            ),
+                        ),
+                    ),
                 ) {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.28f))
-                    NavigationBar(
-                        containerColor = Color.Transparent,
-                        contentColor = MaterialTheme.colorScheme.onSurface,
-                        tonalElevation = 0.dp,
-                    ) {
-                        TopLevelDestinations.forEach { destination ->
-                            val selected = currentScreen == destination.screen
-                            NavigationBarItem(
-                                selected = selected,
-                                onClick = {
-                                    navController.navigate(destination.screen.route) {
-                                        popUpTo(navController.graph.findStartDestination().id) {
-                                            saveState = true
+                    BoxWithConstraints {
+                        val compactNav = maxWidth < 390.dp
+                        NavigationBar(
+                            containerColor = Color.Transparent,
+                            contentColor = MaterialTheme.colorScheme.onSurface,
+                            tonalElevation = 0.dp,
+                        ) {
+                            TopLevelDestinations.forEach { destination ->
+                                val selected = currentScreen == destination.screen
+                                NavigationBarItem(
+                                    selected = selected,
+                                    alwaysShowLabel = !compactNav,
+                                    onClick = {
+                                        navController.navigate(destination.screen.route) {
+                                            popUpTo(navController.graph.findStartDestination().id) {
+                                                saveState = true
+                                            }
+                                            launchSingleTop = true
+                                            restoreState = currentScreen == selectedTopLevelScreen
                                         }
-                                        launchSingleTop = true
-                                        restoreState = currentScreen == selectedTopLevelScreen
-                                    }
-                                },
-                                icon = {
-                                    Icon(
-                                        imageVector = destination.icon,
-                                        contentDescription = null,
-                                    )
-                                },
-                                label = { Text(destination.label) },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = MaterialTheme.colorScheme.primary,
-                                    selectedTextColor = MaterialTheme.colorScheme.primary,
-                                    indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
-                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                ),
-                            )
+                                    },
+                                    icon = {
+                                        Icon(
+                                            imageVector = destination.icon,
+                                            contentDescription = destination.label,
+                                        )
+                                    },
+                                    label = if (!compactNav || selected) {
+                                        {
+                                            Text(
+                                                text = destination.label,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        }
+                                    } else {
+                                        null
+                                    },
+                                    colors = NavigationBarItemDefaults.colors(
+                                        selectedIconColor = MaterialTheme.colorScheme.primary,
+                                        selectedTextColor = MaterialTheme.colorScheme.primary,
+                                        indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    ),
+                                )
+                            }
                         }
                     }
                 }
@@ -193,19 +225,19 @@ fun TrustGateApp(
                     PaymentActionScreen(
                         uiState = uiState,
                         onAttemptPayment = onAttemptPayment,
-                        onSetDemoRiskLevel = onSetDemoRiskLevel,
+                        onSetScenarioRiskLevel = onSetScenarioRiskLevel,
                     )
                 }
                 composable(TrustGateScreen.Signing.route) {
                     RequestSigningScreen(
                         uiState = uiState,
-                        onSignDemoRequest = onSignDemoRequest,
+                        onSignReferenceRequest = onSignReferenceRequest,
                     )
                 }
                 composable(TrustGateScreen.Storage.route) {
                     SecureStorageScreen(
                         uiState = uiState,
-                        onStoreDemoValues = onStoreDemoValues,
+                        onStoreReferenceValues = onStoreReferenceValues,
                         onRefreshStorage = onRefreshStorage,
                         onToggleShowSignalsOnHome = onToggleShowSignalsOnHome,
                     )
@@ -225,7 +257,7 @@ fun TrustGateApp(
             onDismissRequest = onDismissConfirmation,
             title = { Text("Confirm medium-risk action") },
             text = {
-                Text("The app treats this device state as medium risk. Continue only for this demo action.")
+                Text("The current device state requires review before this protected action can continue.")
             },
             confirmButton = {
                 TextButton(onClick = onConfirmPayment) {

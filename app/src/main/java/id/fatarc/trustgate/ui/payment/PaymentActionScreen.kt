@@ -2,7 +2,8 @@ package id.fatarc.trustgate.ui.payment
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -22,20 +23,20 @@ import id.fatarc.trustgate.ui.SectionBlock
 import id.fatarc.trustgate.ui.SectionDivider
 import id.fatarc.trustgate.ui.StatusCallout
 import id.fatarc.trustgate.ui.StatusCalloutState
-import id.fatarc.trustgate.ui.SummaryPanel
 import id.fatarc.trustgate.ui.TrustGateScreen
 import id.fatarc.trustgate.ui.TrustGateUiState
+import id.fatarc.trustgate.ui.WorkflowSummaryPanel
 import id.fatarc.trustgate.ui.asLabel
 
 @Composable
 fun PaymentActionScreen(
     uiState: TrustGateUiState,
     onAttemptPayment: () -> Unit,
-    onSetDemoRiskLevel: (DeviceRiskLevel?) -> Unit,
+    onSetScenarioRiskLevel: (DeviceRiskLevel?) -> Unit,
 ) {
     TrustGateScreen {
         item {
-            SummaryPanel(
+            WorkflowSummaryPanel(
                 eyebrow = "Protected action",
                 title = latestDecisionSummary(uiState.payment.latestDecision).title,
                 supporting = latestDecisionSummary(uiState.payment.latestDecision).body,
@@ -48,7 +49,7 @@ fun PaymentActionScreen(
                         label = "Risk source",
                         value = when (uiState.risk.source) {
                             RiskReportSource.LIVE -> "Live assessment"
-                            RiskReportSource.DEMO -> "Demo profile"
+                            RiskReportSource.SCENARIO -> "Scenario profile"
                         },
                     )
                 }
@@ -88,11 +89,11 @@ fun PaymentActionScreen(
         item {
             SectionBlock(
                 title = "Risk source",
-                description = "Use live device checks for real validation or a sample profile to exercise a specific path on demand.",
+                description = "Use live device checks for validation, or choose a scenario profile to verify a specific policy path.",
             ) {
-                DemoRiskSelector(
-                    selectedLevel = uiState.payment.selectedDemoRiskLevel,
-                    onSelectLevel = onSetDemoRiskLevel,
+                ScenarioRiskSelector(
+                    selectedLevel = uiState.payment.selectedScenarioRiskLevel,
+                    onSelectLevel = onSetScenarioRiskLevel,
                 )
                 uiState.risk.errorMessage?.let { message ->
                     StatusCallout(
@@ -119,15 +120,19 @@ private fun PolicyRow(
     )
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun DemoRiskSelector(
+private fun ScenarioRiskSelector(
     selectedLevel: DeviceRiskLevel?,
     onSelectLevel: (DeviceRiskLevel?) -> Unit,
 ) {
     Column(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             FilterChip(
                 selected = selectedLevel == null,
                 onClick = { onSelectLevel(null) },
@@ -138,8 +143,6 @@ private fun DemoRiskSelector(
                 onClick = { onSelectLevel(DeviceRiskLevel.LOW) },
                 label = { Text("Low risk") },
             )
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(
                 selected = selectedLevel == DeviceRiskLevel.MEDIUM,
                 onClick = { onSelectLevel(DeviceRiskLevel.MEDIUM) },

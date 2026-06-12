@@ -121,6 +121,38 @@ fun SummaryPanel(
 }
 
 @Composable
+fun WorkflowSummaryPanel(
+    eyebrow: String,
+    title: String,
+    supporting: String,
+    tone: CalloutTone = CalloutTone.NEUTRAL,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit = {},
+) {
+    val accentColor = toneAccentColor(tone)
+    SurfacePanel(
+        modifier = modifier,
+        contentPadding = 16.dp,
+    ) {
+        Text(
+            text = eyebrow.uppercase(),
+            style = MaterialTheme.typography.labelMedium,
+            color = accentColor,
+        )
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleLarge,
+        )
+        Text(
+            text = supporting,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.95f),
+        )
+        content()
+    }
+}
+
+@Composable
 fun SectionBlock(
     title: String,
     description: String? = null,

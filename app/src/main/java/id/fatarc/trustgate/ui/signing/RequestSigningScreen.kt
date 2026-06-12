@@ -13,27 +13,27 @@ import id.fatarc.trustgate.ui.SectionBlock
 import id.fatarc.trustgate.ui.SectionDivider
 import id.fatarc.trustgate.ui.SigningStatus
 import id.fatarc.trustgate.ui.StatusCalloutState
-import id.fatarc.trustgate.ui.SummaryPanel
 import id.fatarc.trustgate.ui.TrustGateScreen
 import id.fatarc.trustgate.ui.TrustGateUiState
+import id.fatarc.trustgate.ui.WorkflowSummaryPanel
 
 @Composable
 fun RequestSigningScreen(
     uiState: TrustGateUiState,
-    onSignDemoRequest: () -> Unit,
+    onSignReferenceRequest: () -> Unit,
 ) {
     val signingState = signingStateSummary(uiState.signing.status)
     TrustGateScreen {
         item {
-            SummaryPanel(
+            WorkflowSummaryPanel(
                 eyebrow = "Request signing",
                 title = signingState.title,
                 supporting = signingState.body,
                 tone = signingState.tone,
             ) {
                 PrimaryActionButton(
-                    label = "Sign demo request",
-                    onClick = onSignDemoRequest,
+                    label = "Sign reference request",
+                    onClick = onSignReferenceRequest,
                 )
             }
         }
@@ -41,7 +41,7 @@ fun RequestSigningScreen(
         item {
             SectionBlock(
                 title = "Signing model",
-                description = "The client signs a demo request with a local HMAC key to show canonicalization, hashing, and header shape. It does not represent production key custody.",
+                description = "The client signs a reference request with a local HMAC key to show canonicalization, hashing, and header shape. Production deployments should use managed key custody.",
             ) {
                 DetailSurface {
                     Text(
@@ -101,7 +101,7 @@ private fun signingStateSummary(status: SigningStatus): StatusCalloutState {
     return when (status) {
         SigningStatus.Idle -> StatusCalloutState(
             title = "No request signed yet",
-            body = "Generate a demo request to inspect the canonical payload, body hash, and derived headers.",
+            body = "Generate a reference request to inspect the canonical payload, body hash, and derived headers.",
         )
 
         is SigningStatus.Signed -> StatusCalloutState(

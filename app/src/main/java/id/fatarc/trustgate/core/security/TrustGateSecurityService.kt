@@ -85,7 +85,7 @@ class TrustGateSecurityService(
         eventRepository.record(
             SecurityEvent(
                 type = SecurityEventType.SECURE_VALUE_STORED,
-                message = "Stored demo values in encrypted local storage.",
+                message = "Stored reference values in encrypted local storage.",
                 metadata = mapOf("keys" to keys.joinToString(",")),
             ),
         )

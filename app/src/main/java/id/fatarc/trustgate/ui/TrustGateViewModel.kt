@@ -13,7 +13,7 @@ import id.fatarc.trustgate.domain.events.SecurityEventRepository
 import id.fatarc.trustgate.domain.events.SecurityEventType
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.risk.DeviceRiskReport
-import id.fatarc.trustgate.domain.risk.demoRiskReport
+import id.fatarc.trustgate.domain.risk.scenarioRiskReport
 import id.fatarc.trustgate.domain.signing.PaymentRequestPayload
 import id.fatarc.trustgate.domain.signing.RequestSigner
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -51,7 +51,7 @@ class TrustGateViewModel(
 
     fun refreshRisk() {
         viewModelScope.launch {
-            val selectedDemoRiskLevel = _uiState.value.payment.selectedDemoRiskLevel
+            val selectedScenarioRiskLevel = _uiState.value.payment.selectedScenarioRiskLevel
             _uiState.update { current ->
                 current.copy(
                     risk = current.risk.copy(
@@ -64,10 +64,10 @@ class TrustGateViewModel(
                 )
             }
 
-            if (selectedDemoRiskLevel != null) {
+            if (selectedScenarioRiskLevel != null) {
                 applyRiskReport(
-                    report = demoRiskReport(selectedDemoRiskLevel),
-                    source = RiskReportSource.DEMO,
+                    report = scenarioRiskReport(selectedScenarioRiskLevel),
+                    source = RiskReportSource.SCENARIO,
                 )
                 return@launch
             }
@@ -138,12 +138,12 @@ class TrustGateViewModel(
         }
     }
 
-    fun setDemoRiskLevel(level: DeviceRiskLevel?) {
+    fun setScenarioRiskLevel(level: DeviceRiskLevel?) {
         viewModelScope.launch {
             _uiState.update { current ->
                 current.copy(
                     payment = current.payment.copy(
-                        selectedDemoRiskLevel = level,
+                        selectedScenarioRiskLevel = level,
                         latestDecision = PaymentDecisionState.Idle,
                     ),
                     risk = current.risk.copy(errorMessage = null),
@@ -154,20 +154,20 @@ class TrustGateViewModel(
                 return@launch
             }
 
-            val report = demoRiskReport(level)
+            val report = scenarioRiskReport(level)
             eventRepository.record(
                 SecurityEvent(
                     type = SecurityEventType.DEVICE_RISK_ASSESSED,
                     riskLevel = report.level,
-                    message = "Demo risk state set to ${report.level.name}.",
-                    metadata = mapOf("source" to "demo-selector"),
+                    message = "Scenario risk state set to ${report.level.name}.",
+                    metadata = mapOf("source" to "scenario-selector"),
                 ),
             )
-            applyRiskReport(report = report, source = RiskReportSource.DEMO)
+            applyRiskReport(report = report, source = RiskReportSource.SCENARIO)
         }
     }
 
-    fun signDemoRequest() {
+    fun signReferenceRequest() {
         viewModelScope.launch {
             runCatching {
                 val payload = PaymentRequestPayload(
@@ -195,7 +195,7 @@ class TrustGateViewModel(
                     current.copy(
                         signing = current.signing.copy(
                             status = SigningStatus.Failed(
-                                error.message ?: "Unable to sign the demo request.",
+                                error.message ?: "Unable to sign the reference request.",
                             ),
                         ),
                     )
@@ -204,11 +204,11 @@ class TrustGateViewModel(
         }
     }
 
-    fun storeDemoValues() {
+    fun storeReferenceValues() {
         viewModelScope.launch {
             runCatching {
                 val report = currentReport()
-                secureValueStore.storeSessionToken("demo-session-${UUID.randomUUID().toString().take(8)}")
+                secureValueStore.storeSessionToken("tg-session-${UUID.randomUUID().toString().take(8)}")
                 report?.let { secureValueStore.storeLastRiskLevel(it.level) }
                 secureValueStore.storeShowSignalsOnHome(_uiState.value.storage.snapshot.showSignalsOnHome)
             }.onSuccess {
@@ -263,10 +263,10 @@ class TrustGateViewModel(
     private suspend fun currentReport(): DeviceRiskReport? {
         _uiState.value.risk.report?.let { return it }
 
-        val selectedDemoRiskLevel = _uiState.value.payment.selectedDemoRiskLevel
-        if (selectedDemoRiskLevel != null) {
-            val report = demoRiskReport(selectedDemoRiskLevel)
-            applyRiskReport(report = report, source = RiskReportSource.DEMO)
+        val selectedScenarioRiskLevel = _uiState.value.payment.selectedScenarioRiskLevel
+        if (selectedScenarioRiskLevel != null) {
+            val report = scenarioRiskReport(selectedScenarioRiskLevel)
+            applyRiskReport(report = report, source = RiskReportSource.SCENARIO)
             return report
         }
 
@@ -331,7 +331,7 @@ class TrustGateViewModel(
         return if (config.enabled) {
             "Certificate pinning is enabled for ${config.host}. Real deployments still need rotation planning."
         } else {
-            "Certificate pinning is implemented as an example for ${config.host}, but disabled by default so the demo app stays usable."
+            "Certificate pinning is implemented for ${config.host}, but disabled by default so this build remains usable without a pinned endpoint."
         }
     }
 }

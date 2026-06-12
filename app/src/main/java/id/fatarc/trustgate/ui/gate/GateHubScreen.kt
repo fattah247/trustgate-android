@@ -26,9 +26,9 @@ import id.fatarc.trustgate.ui.SectionDivider
 import id.fatarc.trustgate.ui.SigningStatus
 import id.fatarc.trustgate.ui.StatusCalloutState
 import id.fatarc.trustgate.ui.StorageStatus
-import id.fatarc.trustgate.ui.SummaryPanel
 import id.fatarc.trustgate.ui.TrustGateScreen
 import id.fatarc.trustgate.ui.TrustGateUiState
+import id.fatarc.trustgate.ui.WorkflowSummaryPanel
 
 @Composable
 fun GateHubScreen(
@@ -41,7 +41,7 @@ fun GateHubScreen(
 
     TrustGateScreen {
         item {
-            SummaryPanel(
+            WorkflowSummaryPanel(
                 eyebrow = "Gate",
                 title = gateState.title,
                 supporting = gateState.body,
@@ -72,7 +72,7 @@ fun GateHubScreen(
                         SectionDivider()
                         GateWorkflowRow(
                             title = "Secure Storage",
-                            summary = "Review encrypted values stored locally for the demo session.",
+                            summary = "Review encrypted values stored locally for the current session.",
                             state = storageStateLabel(uiState.storage.status),
                             onClick = onOpenStorage,
                         )
@@ -177,7 +177,7 @@ private fun gateSummary(uiState: TrustGateUiState): StatusCalloutState {
 
         else -> StatusCalloutState(
             title = "Gate ready",
-            body = "Choose a workflow to test protected action policy, signing, or encrypted storage.",
+            body = "Choose a workflow to run protected action policy, signing, or encrypted storage.",
         )
     }
 }

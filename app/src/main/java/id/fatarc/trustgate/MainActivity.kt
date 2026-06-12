@@ -29,11 +29,11 @@ class MainActivity : ComponentActivity() {
                     onAttemptPayment = viewModel::attemptPayment,
                     onConfirmPayment = viewModel::confirmPayment,
                     onDismissConfirmation = viewModel::dismissConfirmation,
-                    onSignDemoRequest = viewModel::signDemoRequest,
-                    onStoreDemoValues = viewModel::storeDemoValues,
+                    onSignReferenceRequest = viewModel::signReferenceRequest,
+                    onStoreReferenceValues = viewModel::storeReferenceValues,
                     onRefreshStorage = viewModel::refreshStorage,
                     onToggleShowSignalsOnHome = viewModel::toggleShowSignalsOnHome,
-                    onSetDemoRiskLevel = viewModel::setDemoRiskLevel,
+                    onSetScenarioRiskLevel = viewModel::setScenarioRiskLevel,
                 )
             }
         }

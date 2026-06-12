@@ -12,7 +12,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 class HmacRequestSigner(
-    private val demoSecret: String = "trustgate-demo-local-signing-key",
+    private val referenceSecret: String = "trustgate-reference-local-signing-key",
 ) : RequestSigner {
     private val canonicalJson = Json {
         encodeDefaults = true
@@ -27,7 +27,7 @@ class HmacRequestSigner(
         val bodyHash = sha256Hex(canonicalBody)
         val signingInput = listOf(
             "POST",
-            "/payments/demo",
+            "/payments/reference",
             timestamp,
             nonce,
             bodyHash,
@@ -61,7 +61,7 @@ class HmacRequestSigner(
 
     private fun hmacSha256Base64(value: String): String {
         val mac = Mac.getInstance("HmacSHA256")
-        val secretKey = SecretKeySpec(demoSecret.toByteArray(StandardCharsets.UTF_8), "HmacSHA256")
+        val secretKey = SecretKeySpec(referenceSecret.toByteArray(StandardCharsets.UTF_8), "HmacSHA256")
         mac.init(secretKey)
         val signed = mac.doFinal(value.toByteArray(StandardCharsets.UTF_8))
         return Base64.getEncoder().encodeToString(signed)

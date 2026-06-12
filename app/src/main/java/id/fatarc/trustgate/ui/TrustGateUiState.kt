@@ -25,11 +25,11 @@ data class RiskUiState(
 
 enum class RiskReportSource {
     LIVE,
-    DEMO,
+    SCENARIO,
 }
 
 data class PaymentUiState(
-    val selectedDemoRiskLevel: DeviceRiskLevel? = null,
+    val selectedScenarioRiskLevel: DeviceRiskLevel? = null,
     val latestDecision: PaymentDecisionState = PaymentDecisionState.Idle,
 )
 

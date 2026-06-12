@@ -107,7 +107,7 @@ fun HomeScreen(
         item {
             SectionBlock(
                 title = "Workflow status",
-                description = "Last known result from the demo workflows.",
+                description = "Last known result from each gate workflow.",
             ) {
                 DetailSurface {
                     DividerList {
@@ -277,7 +277,7 @@ private fun buildMetaLine(uiState: TrustGateUiState): String {
     val assessedAt = uiState.risk.report?.assessedAt?.toString()?.let(::formatAuditTimestamp) ?: "No result yet"
     val source = when (uiState.risk.source) {
         RiskReportSource.LIVE -> "Live device checks"
-        RiskReportSource.DEMO -> "Demo profile"
+        RiskReportSource.SCENARIO -> "Scenario profile"
     }
     return "$assessedAt · $source"
 }
@@ -564,7 +564,7 @@ private fun storageSummary(uiState: TrustGateUiState): StatusCalloutState {
     return when (val status = uiState.storage.status) {
         StorageStatus.Idle -> StatusCalloutState(
             title = "No encrypted write yet",
-            body = "The storage workflow has not written or reloaded demo values in this session.",
+            body = "The storage workflow has not written or reloaded reference values in this session.",
         )
 
         StorageStatus.Loaded -> StatusCalloutState(
@@ -575,7 +575,7 @@ private fun storageSummary(uiState: TrustGateUiState): StatusCalloutState {
 
         is StorageStatus.Stored -> StatusCalloutState(
             title = "Encrypted values stored",
-            body = "${status.keyCount} demo values were written to local encrypted storage.",
+            body = "${status.keyCount} reference values were written to local encrypted storage.",
             tone = CalloutTone.SUCCESS,
         )
 

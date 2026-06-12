@@ -1,33 +1,33 @@
 package id.fatarc.trustgate.domain.risk
 
-fun demoRiskReport(level: DeviceRiskLevel): DeviceRiskReport {
+fun scenarioRiskReport(level: DeviceRiskLevel): DeviceRiskReport {
     val signals = when (level) {
         DeviceRiskLevel.LOW -> listOf(
-            demoSignal(
+            scenarioSignal(
                 id = "installer_known",
                 name = "Known installer source",
                 severity = SignalSeverity.LOW,
                 detected = false,
-                explanation = "This sample profile keeps the gate open to show the allowed path.",
+                explanation = "This scenario profile keeps the gate open to show the allowed path.",
             ),
-            demoSignal(
+            scenarioSignal(
                 id = "debugger_connected",
                 name = "Debugger attached",
                 severity = SignalSeverity.HIGH,
                 detected = false,
-                explanation = "No debugger signal is active in the low-risk sample profile.",
+                explanation = "No debugger signal is active in the low-risk scenario profile.",
             ),
         )
 
         DeviceRiskLevel.MEDIUM -> listOf(
-            demoSignal(
+            scenarioSignal(
                 id = "test_keys",
                 name = "Test-keys build tags",
                 severity = SignalSeverity.MEDIUM,
                 detected = true,
-                explanation = "This sample profile shows a moderate trust decision without a hard block.",
+                explanation = "This scenario profile shows a moderate trust decision without a hard block.",
             ),
-            demoSignal(
+            scenarioSignal(
                 id = "installer_unknown",
                 name = "Installer source unknown",
                 severity = SignalSeverity.LOW,
@@ -37,19 +37,19 @@ fun demoRiskReport(level: DeviceRiskLevel): DeviceRiskReport {
         )
 
         DeviceRiskLevel.HIGH -> listOf(
-            demoSignal(
+            scenarioSignal(
                 id = "root_package",
                 name = "Root management package",
                 severity = SignalSeverity.HIGH,
                 detected = true,
-                explanation = "This sample profile shows how the app blocks a sensitive action on high risk.",
+                explanation = "This scenario profile shows how the app blocks a sensitive action on high risk.",
             ),
-            demoSignal(
+            scenarioSignal(
                 id = "debugger_connected",
                 name = "Debugger attached",
                 severity = SignalSeverity.HIGH,
                 detected = true,
-                explanation = "A connected debugger is treated as a strong signal in the blocked path sample.",
+                explanation = "A connected debugger is treated as a strong signal in the blocked path scenario.",
             ),
         )
     }
@@ -61,7 +61,7 @@ fun demoRiskReport(level: DeviceRiskLevel): DeviceRiskReport {
     )
 }
 
-private fun demoSignal(
+private fun scenarioSignal(
     id: String,
     name: String,
     severity: SignalSeverity,
@@ -82,4 +82,3 @@ private fun demoSignal(
         explanation = explanation,
     )
 }
-
