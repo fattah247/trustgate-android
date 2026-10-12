@@ -49,22 +49,22 @@ Real screenshots for the app, tests, CI, and repository are committed under [`do
 <table>
   <tr>
     <td><img src="docs/screenshots/01-app-overview.png" width="320" alt="Trust overview" /><br />Trust overview</td>
-    <td><img src="docs/screenshots/02-device-risk-details.png" width="320" alt="Device risk details" /><br />Device risk details</td>
+    <td><img src="docs/screenshots/02-device-risk-details.png" width="320" alt="Risk signals with the reason for the verdict" /><br />Risk signals and why they add up</td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/03-sensitive-action-allowed.png" width="320" alt="Sensitive action allowed" /><br />Sensitive action allowed</td>
-    <td><img src="docs/screenshots/04-sensitive-action-blocked.png" width="320" alt="Sensitive action blocked" /><br />Sensitive action blocked</td>
+    <td><img src="docs/screenshots/03-sensitive-action-allowed.png" width="320" alt="Sensitive action allowed and its request verified" /><br />Allowed, signed, and verified</td>
+    <td><img src="docs/screenshots/04-sensitive-action-blocked.png" width="320" alt="Sensitive action blocked" /><br />Blocked, nothing signed</td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/05-request-signing-reference.png" width="320" alt="Request signing reference flow" /><br />Request signing reference flow</td>
+    <td><img src="docs/screenshots/05-request-signing-reference.png" width="320" alt="Verifier accepting a signed request and rejecting replayed, edited, and late ones" /><br />Verifier responses to genuine and tampered requests</td>
     <td><img src="docs/screenshots/06-secure-storage-reference.png" width="320" alt="Secure storage reference values" /><br />Secure storage reference values</td>
   </tr>
   <tr>
     <td><img src="docs/screenshots/07-security-event-log.png" width="320" alt="Activity log" /><br />Activity log</td>
-    <td><img src="docs/screenshots/08-tests-passing.png" width="320" alt="Tests passing" /><br />Fresh `./gradlew test` output</td>
+    <td><img src="docs/screenshots/08-tests-passing.png" width="320" alt="Tests passing" /><br />Fresh <code>./gradlew test</code> output</td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/09-ci-passing.png" width="320" alt="CI passing" /><br />GitHub Actions run summary</td>
+    <td><img src="docs/screenshots/09-ci-passing.png" width="320" alt="CI passing" /><br />GitHub Actions run summary on <code>main</code></td>
     <td><img src="docs/screenshots/10-repo-overview.png" width="320" alt="Repository overview" /><br />GitHub branch overview</td>
   </tr>
 </table>
