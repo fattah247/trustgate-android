@@ -1,283 +1,341 @@
 package id.fatarc.trustgate.ui
 
-import androidx.compose.foundation.background
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.AnimatedContentTransitionScope.SlideDirection
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Payment
-import androidx.compose.material.icons.filled.Security
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material.icons.filled.Radar
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Radar
+import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.dropUnlessResumed
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.navigation
 import androidx.navigation.compose.rememberNavController
+import id.fatarc.trustgate.core.security.ConfirmationMethod
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.ui.about.AboutScreen
 import id.fatarc.trustgate.ui.events.SecurityEventLogScreen
 import id.fatarc.trustgate.ui.gate.GateHubScreen
 import id.fatarc.trustgate.ui.home.HomeScreen
 import id.fatarc.trustgate.ui.payment.PaymentActionScreen
+import id.fatarc.trustgate.ui.payment.StepUpConfirmation
 import id.fatarc.trustgate.ui.risk.DeviceRiskDetailsScreen
 import id.fatarc.trustgate.ui.signing.RequestSigningScreen
 import id.fatarc.trustgate.ui.storage.SecureStorageScreen
 
-private enum class TrustGateScreen(val route: String, val title: String) {
-    Home("home", "TrustGate"),
-    Risk("risk", "Risk Signals"),
-    Gate("gate", "Gate"),
-    Payment("payment", "Sensitive Action Gate"),
-    Signing("signing", "Request Signing"),
-    Storage("storage", "Secure Storage"),
-    Events("events", "Security Event Log"),
-    About("about", "Scope and Limits"),
+private object Routes {
+    const val OVERVIEW = "overview"
+    const val ABOUT = "overview/about"
+    const val SIGNALS = "signals"
+    const val GATE = "gate"
+    const val SENSITIVE_ACTION = "gate/sensitive-action"
+    const val SIGNING = "gate/signing"
+    const val STORAGE = "gate/storage"
+    const val GATE_SIGNALS = "gate/signals"
+    const val ACTIVITY = "activity"
 }
 
-private data class TopLevelDestination(
-    val screen: TrustGateScreen,
+/** Each tab owns a nested graph so its back stack survives switching tabs. */
+private enum class Tab(
+    val graphRoute: String,
+    val startRoute: String,
     val label: String,
-    val icon: ImageVector,
-)
+    val selectedIcon: ImageVector,
+    val unselectedIcon: ImageVector,
+) {
+    Overview("overview-tab", Routes.OVERVIEW, "Overview", Icons.Filled.Home, Icons.Outlined.Home),
+    Signals("signals-tab", Routes.SIGNALS, "Signals", Icons.Filled.Radar, Icons.Outlined.Radar),
+    Gate("gate-tab", Routes.GATE, "Gate", Icons.Filled.Shield, Icons.Outlined.Shield),
+    Activity("activity-tab", Routes.ACTIVITY, "Activity", Icons.Filled.History, Icons.Outlined.History),
+}
 
-private val TopLevelDestinations = listOf(
-    TopLevelDestination(TrustGateScreen.Home, "Overview", Icons.Filled.Home),
-    TopLevelDestination(TrustGateScreen.Risk, "Signals", Icons.Filled.Security),
-    TopLevelDestination(TrustGateScreen.Gate, "Gate", Icons.Filled.Payment),
-    TopLevelDestination(TrustGateScreen.Events, "Log", Icons.Filled.History),
-    TopLevelDestination(TrustGateScreen.About, "Info", Icons.Filled.Info),
-)
-
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TrustGateApp(
     uiState: TrustGateUiState,
     onRefreshRisk: () -> Unit,
     onAttemptPayment: () -> Unit,
-    onConfirmPayment: () -> Unit,
-    onDismissConfirmation: () -> Unit,
+    onConfirmPayment: (ConfirmationMethod) -> Unit,
+    onDismissConfirmation: (problem: String?) -> Unit,
     onSignReferenceRequest: () -> Unit,
     onStoreReferenceValues: () -> Unit,
     onRefreshStorage: () -> Unit,
     onToggleShowSignalsOnHome: (Boolean) -> Unit,
     onSetScenarioRiskLevel: (DeviceRiskLevel?) -> Unit,
+    onClearEvents: () -> Unit,
+    onVerifyRequest: (VerificationAttempt) -> Unit,
+    onExportEvents: () -> String,
+    onAppResumed: () -> Unit,
+    onUserMessageShown: (Long) -> Unit,
 ) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
-    val currentDestination = backStackEntry?.destination
-    val currentScreen = TrustGateScreen.entries.firstOrNull { screen ->
-        currentDestination?.hierarchy?.any { it.route == screen.route } == true
-    } ?: TrustGateScreen.Home
-    val selectedTopLevelScreen = currentScreen.asTopLevelScreen()
+    val selectedTab = backStackEntry?.tab() ?: Tab.Overview
+    val snackbarHostState = remember { SnackbarHostState() }
 
-    TrustGateBackdrop {
-        Scaffold(
-            containerColor = Color.Transparent,
-            contentColor = MaterialTheme.colorScheme.onSurface,
-            topBar = {
-                Column(
-                    modifier = Modifier.background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                MaterialTheme.colorScheme.background.copy(alpha = 0.94f),
-                                MaterialTheme.colorScheme.background.copy(alpha = 0.88f),
-                                MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
-                            ),
-                        ),
-                    ),
-                ) {
-                    TopAppBar(
-                        colors = TopAppBarDefaults.topAppBarColors(
-                            containerColor = Color.Transparent,
-                            scrolledContainerColor = Color.Transparent,
-                            titleContentColor = MaterialTheme.colorScheme.onBackground,
-                        ),
-                        title = { Text(currentScreen.title) },
-                        navigationIcon = {
-                            if (currentScreen != selectedTopLevelScreen) {
-                                IconButton(onClick = { navController.popBackStack() }) {
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                        contentDescription = "Back",
-                                        tint = MaterialTheme.colorScheme.onBackground,
-                                    )
-                                }
-                            }
-                        },
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.22f))
-                }
-            },
-            bottomBar = {
-                Column(
-                    modifier = Modifier.background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                MaterialTheme.colorScheme.surface.copy(alpha = 0.84f),
-                                MaterialTheme.colorScheme.background.copy(alpha = 0.9f),
-                            ),
-                        ),
-                    ),
-                ) {
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.28f))
-                    BoxWithConstraints {
-                        val compactNav = maxWidth < 390.dp
-                        NavigationBar(
-                            containerColor = Color.Transparent,
-                            contentColor = MaterialTheme.colorScheme.onSurface,
-                            tonalElevation = 0.dp,
+    uiState.userMessage?.let { message ->
+        LaunchedEffect(message.id) {
+            snackbarHostState.showSnackbar(message.text)
+            onUserMessageShown(message.id)
+        }
+    }
+
+    // Coming back to the app re-checks a stale verdict so nothing old is presented as current.
+    LifecycleResumeEffect(Unit) {
+        onAppResumed()
+        onPauseOrDispose { }
+    }
+
+    val selectTab: (Tab) -> Unit = { tab ->
+        if (tab == selectedTab) {
+            // Re-selecting the current tab returns to its first screen.
+            navController.popBackStack(tab.startRoute, inclusive = false)
+        } else {
+            navController.navigateToTab(tab)
+        }
+    }
+    val resumeLiveChecks: () -> Unit = { onSetScenarioRiskLevel(null) }
+
+    CompositionLocalProvider(LocalSnackbarHostState provides snackbarHostState) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background,
+        ) {
+            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                val useRail = maxWidth >= 600.dp
+                Row(modifier = Modifier.fillMaxSize()) {
+                    if (useRail) {
+                        NavigationRail(
+                            windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Vertical + WindowInsetsSides.Start),
                         ) {
-                            TopLevelDestinations.forEach { destination ->
-                                val selected = currentScreen == destination.screen
-                                NavigationBarItem(
+                            Tab.entries.forEach { tab ->
+                                val selected = tab == selectedTab
+                                NavigationRailItem(
                                     selected = selected,
-                                    alwaysShowLabel = !compactNav,
-                                    onClick = {
-                                        navController.navigate(destination.screen.route) {
-                                            popUpTo(navController.graph.findStartDestination().id) {
-                                                saveState = true
-                                            }
-                                            launchSingleTop = true
-                                            restoreState = currentScreen == selectedTopLevelScreen
-                                        }
-                                    },
-                                    icon = {
-                                        Icon(
-                                            imageVector = destination.icon,
-                                            contentDescription = destination.label,
-                                        )
-                                    },
-                                    label = if (!compactNav || selected) {
-                                        {
-                                            Text(
-                                                text = destination.label,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis,
-                                            )
-                                        }
-                                    } else {
-                                        null
-                                    },
-                                    colors = NavigationBarItemDefaults.colors(
-                                        selectedIconColor = MaterialTheme.colorScheme.primary,
-                                        selectedTextColor = MaterialTheme.colorScheme.primary,
-                                        indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
-                                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    ),
+                                    onClick = { selectTab(tab) },
+                                    icon = { Icon(tab.icon(selected), contentDescription = null) },
+                                    label = { Text(tab.label) },
                                 )
                             }
                         }
                     }
-                }
-            },
-        ) { innerPadding ->
-            NavHost(
-                navController = navController,
-                startDestination = TrustGateScreen.Home.route,
-                modifier = Modifier.padding(innerPadding),
-            ) {
-                composable(TrustGateScreen.Home.route) {
-                    HomeScreen(
-                        uiState = uiState,
-                        onRefreshRisk = onRefreshRisk,
-                        onOpenEvents = { navController.navigate(TrustGateScreen.Events.route) },
-                    )
-                }
-                composable(TrustGateScreen.Risk.route) {
-                    DeviceRiskDetailsScreen(uiState = uiState)
-                }
-                composable(TrustGateScreen.Gate.route) {
-                    GateHubScreen(
-                        uiState = uiState,
-                        onOpenPaymentAction = { navController.navigate(TrustGateScreen.Payment.route) },
-                        onOpenSigning = { navController.navigate(TrustGateScreen.Signing.route) },
-                        onOpenStorage = { navController.navigate(TrustGateScreen.Storage.route) },
-                    )
-                }
-                composable(TrustGateScreen.Payment.route) {
-                    PaymentActionScreen(
-                        uiState = uiState,
-                        onAttemptPayment = onAttemptPayment,
-                        onSetScenarioRiskLevel = onSetScenarioRiskLevel,
-                    )
-                }
-                composable(TrustGateScreen.Signing.route) {
-                    RequestSigningScreen(
-                        uiState = uiState,
-                        onSignReferenceRequest = onSignReferenceRequest,
-                    )
-                }
-                composable(TrustGateScreen.Storage.route) {
-                    SecureStorageScreen(
-                        uiState = uiState,
-                        onStoreReferenceValues = onStoreReferenceValues,
-                        onRefreshStorage = onRefreshStorage,
-                        onToggleShowSignalsOnHome = onToggleShowSignalsOnHome,
-                    )
-                }
-                composable(TrustGateScreen.Events.route) {
-                    SecurityEventLogScreen(uiState = uiState)
-                }
-                composable(TrustGateScreen.About.route) {
-                    AboutScreen(uiState = uiState)
+                    Scaffold(
+                        modifier = if (useRail) {
+                            Modifier.consumeWindowInsets(WindowInsets.safeDrawing.only(WindowInsetsSides.Start))
+                        } else {
+                            Modifier
+                        },
+                        containerColor = MaterialTheme.colorScheme.background,
+                        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+                        snackbarHost = {
+                            SnackbarHost(
+                                hostState = snackbarHostState,
+                                modifier = if (useRail) Modifier.navigationBarsPadding() else Modifier,
+                            )
+                        },
+                        bottomBar = {
+                            if (!useRail) {
+                                NavigationBar {
+                                    Tab.entries.forEach { tab ->
+                                        val selected = tab == selectedTab
+                                        NavigationBarItem(
+                                            selected = selected,
+                                            onClick = { selectTab(tab) },
+                                            icon = { Icon(tab.icon(selected), contentDescription = null) },
+                                            label = { Text(tab.label) },
+                                        )
+                                    }
+                                }
+                            }
+                        },
+                    ) { innerPadding ->
+                        NavHost(
+                            navController = navController,
+                            startDestination = Tab.Overview.graphRoute,
+                            modifier = Modifier
+                                .padding(innerPadding)
+                                .consumeWindowInsets(innerPadding),
+                            enterTransition = { if (isTabSwitch()) FadeThroughIn else pushEnter(SlideDirection.Start) },
+                            exitTransition = { if (isTabSwitch()) FadeThroughOut else pushExit(SlideDirection.Start) },
+                            popEnterTransition = { if (isTabSwitch()) FadeThroughIn else pushEnter(SlideDirection.End) },
+                            popExitTransition = { if (isTabSwitch()) FadeThroughOut else pushExit(SlideDirection.End) },
+                        ) {
+                            navigation(startDestination = Routes.OVERVIEW, route = Tab.Overview.graphRoute) {
+                                composable(Routes.OVERVIEW) {
+                                    HomeScreen(
+                                        uiState = uiState,
+                                        onRefreshRisk = onRefreshRisk,
+                                        onResumeLiveChecks = resumeLiveChecks,
+                                        onOpenSignals = dropUnlessResumed { navController.navigateToTab(Tab.Signals) },
+                                        onOpenActivity = dropUnlessResumed { navController.navigateToTab(Tab.Activity) },
+                                        onOpenAbout = dropUnlessResumed { navController.navigate(Routes.ABOUT) },
+                                    )
+                                }
+                                composable(Routes.ABOUT) {
+                                    AboutScreen(
+                                        uiState = uiState,
+                                        onNavigateUp = dropUnlessResumed { navController.navigateUp() },
+                                    )
+                                }
+                            }
+                            navigation(startDestination = Routes.SIGNALS, route = Tab.Signals.graphRoute) {
+                                composable(Routes.SIGNALS) {
+                                    DeviceRiskDetailsScreen(
+                                        uiState = uiState,
+                                        onRefreshRisk = onRefreshRisk,
+                                        onResumeLiveChecks = resumeLiveChecks,
+                                    )
+                                }
+                            }
+                            navigation(startDestination = Routes.GATE, route = Tab.Gate.graphRoute) {
+                                composable(Routes.GATE) {
+                                    GateHubScreen(
+                                        uiState = uiState,
+                                        onResumeLiveChecks = resumeLiveChecks,
+                                        onOpenPaymentAction = dropUnlessResumed { navController.navigate(Routes.SENSITIVE_ACTION) },
+                                        onOpenSigning = dropUnlessResumed { navController.navigate(Routes.SIGNING) },
+                                        onOpenStorage = dropUnlessResumed { navController.navigate(Routes.STORAGE) },
+                                    )
+                                }
+                                composable(Routes.SENSITIVE_ACTION) {
+                                    PaymentActionScreen(
+                                        uiState = uiState,
+                                        onNavigateUp = dropUnlessResumed { navController.navigateUp() },
+                                        onAttemptPayment = onAttemptPayment,
+                                        onSetScenarioRiskLevel = onSetScenarioRiskLevel,
+                                        // Pushed within Gate so back returns to the action, not Overview.
+                                        onOpenSignals = dropUnlessResumed { navController.navigate(Routes.GATE_SIGNALS) },
+                                        onInspectRequest = dropUnlessResumed { navController.navigate(Routes.SIGNING) },
+                                    )
+                                }
+                                composable(Routes.GATE_SIGNALS) {
+                                    DeviceRiskDetailsScreen(
+                                        uiState = uiState,
+                                        onRefreshRisk = onRefreshRisk,
+                                        onResumeLiveChecks = resumeLiveChecks,
+                                        onNavigateUp = dropUnlessResumed { navController.navigateUp() },
+                                    )
+                                }
+                                composable(Routes.SIGNING) {
+                                    RequestSigningScreen(
+                                        uiState = uiState,
+                                        onNavigateUp = dropUnlessResumed { navController.navigateUp() },
+                                        onSignReferenceRequest = onSignReferenceRequest,
+                                        onVerifyRequest = onVerifyRequest,
+                                    )
+                                }
+                                composable(Routes.STORAGE) {
+                                    SecureStorageScreen(
+                                        uiState = uiState,
+                                        onNavigateUp = dropUnlessResumed { navController.navigateUp() },
+                                        onStoreReferenceValues = onStoreReferenceValues,
+                                        onRefreshStorage = onRefreshStorage,
+                                        onToggleShowSignalsOnHome = onToggleShowSignalsOnHome,
+                                    )
+                                }
+                            }
+                            navigation(startDestination = Routes.ACTIVITY, route = Tab.Activity.graphRoute) {
+                                composable(Routes.ACTIVITY) {
+                                    SecurityEventLogScreen(
+                                        uiState = uiState,
+                                        onClearEvents = onClearEvents,
+                                        onExportEvents = onExportEvents,
+                                        onCheckDevice = onRefreshRisk,
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
-    }
 
-    if (uiState.payment.latestDecision is PaymentDecisionState.ConfirmationRequired) {
-        AlertDialog(
-            onDismissRequest = onDismissConfirmation,
-            title = { Text("Confirm medium-risk action") },
-            text = {
-                Text("The current device state requires review before this protected action can continue.")
-            },
-            confirmButton = {
-                TextButton(onClick = onConfirmPayment) {
-                    Text("Continue")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = onDismissConfirmation) {
-                    Text("Cancel")
-                }
-            },
-        )
+        if (uiState.payment.latestDecision is PaymentDecisionState.ConfirmationRequired) {
+            StepUpConfirmation(
+                requestedAt = uiState.payment.decidedAt,
+                signalNames = uiState.risk.report?.flaggedSignals().orEmpty().map { it.name },
+                onConfirm = onConfirmPayment,
+                onDismiss = onDismissConfirmation,
+            )
+        }
     }
 }
 
-private fun TrustGateScreen.asTopLevelScreen(): TrustGateScreen = when (this) {
-    TrustGateScreen.Payment,
-    TrustGateScreen.Signing,
-    TrustGateScreen.Storage,
-    -> TrustGateScreen.Gate
 
-    else -> this
+private fun Tab.icon(selected: Boolean): ImageVector = if (selected) selectedIcon else unselectedIcon
+
+private fun NavBackStackEntry.tab(): Tab? = Tab.entries.firstOrNull { tab ->
+    destination.hierarchy.any { it.route == tab.graphRoute }
 }
+
+private fun NavHostController.navigateToTab(tab: Tab) {
+    navigate(tab.graphRoute) {
+        popUpTo(graph.findStartDestination().id) {
+            saveState = true
+        }
+        launchSingleTop = true
+        restoreState = true
+    }
+}
+
+// Motion follows the Material patterns: fade through between tabs, a short shared-axis slide
+// for screens pushed within a tab. Pop transitions also drive the predictive back preview.
+private val EmphasizedDecelerate = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
+private val FadeThroughIn = fadeIn(tween(durationMillis = 210, delayMillis = 90))
+private val FadeThroughOut = fadeOut(tween(durationMillis = 90))
+
+private fun AnimatedContentTransitionScope<NavBackStackEntry>.isTabSwitch(): Boolean =
+    initialState.tab() != targetState.tab()
+
+private fun AnimatedContentTransitionScope<NavBackStackEntry>.pushEnter(towards: SlideDirection): EnterTransition =
+    slideIntoContainer(towards, tween(durationMillis = 300, easing = EmphasizedDecelerate)) { it / 8 } +
+        fadeIn(tween(durationMillis = 210, delayMillis = 60))
+
+private fun AnimatedContentTransitionScope<NavBackStackEntry>.pushExit(towards: SlideDirection): ExitTransition =
+    slideOutOfContainer(towards, tween(durationMillis = 300, easing = EmphasizedDecelerate)) { it / 8 } +
+        fadeOut(tween(durationMillis = 90))

@@ -10,6 +10,8 @@ data class PaymentRequestPayload(
 )
 
 data class SignedRequest(
+    val method: String,
+    val path: String,
     val payload: PaymentRequestPayload,
     val canonicalBody: String,
     val bodyHash: String,

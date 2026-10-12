@@ -1,135 +1,137 @@
 package id.fatarc.trustgate.ui.storage
 
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import id.fatarc.trustgate.ui.BulletLine
-import id.fatarc.trustgate.ui.CalloutTone
-import id.fatarc.trustgate.ui.DetailSurface
-import id.fatarc.trustgate.ui.DividerList
-import id.fatarc.trustgate.ui.KeyValueRow
-import id.fatarc.trustgate.ui.PrimaryActionButton
-import id.fatarc.trustgate.ui.SectionBlock
-import id.fatarc.trustgate.ui.SectionDivider
-import id.fatarc.trustgate.ui.SecondaryActionButton
-import id.fatarc.trustgate.ui.StatusCalloutState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import id.fatarc.trustgate.ui.GroupedSurface
+import id.fatarc.trustgate.ui.InfoRow
+import id.fatarc.trustgate.ui.NoticeCard
+import id.fatarc.trustgate.ui.RowDivider
+import id.fatarc.trustgate.ui.ScreenScaffold
+import id.fatarc.trustgate.ui.Section
+import id.fatarc.trustgate.ui.SectionFooter
 import id.fatarc.trustgate.ui.StorageStatus
-import id.fatarc.trustgate.ui.ToggleRow
-import id.fatarc.trustgate.ui.TrustGateScreen
+import id.fatarc.trustgate.ui.SwitchRow
+import id.fatarc.trustgate.ui.Tone
 import id.fatarc.trustgate.ui.TrustGateUiState
-import id.fatarc.trustgate.ui.WorkflowSummaryPanel
-import id.fatarc.trustgate.ui.asLabel
+import id.fatarc.trustgate.ui.label
 import id.fatarc.trustgate.ui.maskToken
 
 @Composable
 fun SecureStorageScreen(
     uiState: TrustGateUiState,
+    onNavigateUp: () -> Unit,
     onStoreReferenceValues: () -> Unit,
     onRefreshStorage: () -> Unit,
     onToggleShowSignalsOnHome: (Boolean) -> Unit,
 ) {
-    val storageState = storageStateSummary(uiState.storage.status)
-    TrustGateScreen {
-        item {
-            WorkflowSummaryPanel(
-                eyebrow = "Secure storage",
-                title = storageState.title,
-                supporting = storageState.body,
-                tone = storageState.tone,
-            ) {
-                PrimaryActionButton(
-                    label = "Store reference values",
+    val snapshot = uiState.storage.snapshot
+    var revealToken by rememberSaveable { mutableStateOf(false) }
+
+    ScreenScaffold(
+        title = "Secure storage",
+        onNavigateUp = onNavigateUp,
+        actions = {
+            IconButton(onClick = onRefreshStorage) {
+                Icon(Icons.Outlined.Refresh, contentDescription = "Reload stored values")
+            }
+        },
+    ) {
+        item(key = "intro") {
+            GroupedSurface {
+                Text(
+                    text = "Keys and values are encrypted with AES-256 (SIV for keys, GCM for values) under a " +
+                        "master key held in Android Keystore.",
+                    modifier = Modifier.padding(16.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Button(
                     onClick = onStoreReferenceValues,
-                )
-                SecondaryActionButton(
-                    title = "Reload encrypted values",
-                    description = "Read the latest encrypted snapshot without writing new values.",
-                    onClick = onRefreshStorage,
-                )
-            }
-        }
-
-        item {
-            SectionBlock(
-                title = "Stored values",
-                description = "These reference values verify local encrypted persistence without storing payment credentials.",
-            ) {
-                DetailSurface {
-                    DividerList {
-                        KeyValueRow(
-                            label = "Session token",
-                            value = maskToken(uiState.storage.snapshot.sessionToken),
-                        )
-                        SectionDivider()
-                        KeyValueRow(
-                            label = "Last risk level",
-                            value = uiState.storage.snapshot.lastRiskLevel?.asLabel() ?: "Not stored",
-                        )
-                        SectionDivider()
-                        KeyValueRow(
-                            label = "Signal preview on overview",
-                            value = if (uiState.storage.snapshot.showSignalsOnHome) "Enabled" else "Disabled",
-                        )
-                        SectionDivider()
-                        ToggleRow(
-                            label = "Show signal preview on overview",
-                            description = "This toggle changes only a local display preference. It does not affect scoring.",
-                            checked = uiState.storage.snapshot.showSignalsOnHome,
-                            onCheckedChange = onToggleShowSignalsOnHome,
-                        )
-                    }
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                ) {
+                    Text(if (snapshot.sessionToken == null) "Save reference values" else "Save new reference values")
                 }
             }
         }
 
-        item {
-            SectionBlock(
-                title = "Deliberately excluded",
-                description = "This workflow is intentionally narrow so the app does not imply that sensitive production data belongs on the device.",
-            ) {
-                DetailSurface {
-                    BulletLine("No real card data or payment credentials are written to this device.")
-                    BulletLine("No backend secrets or production signing keys live in app storage.")
-                    BulletLine("The stored values exist only to verify encrypted local persistence.")
-                }
+        (uiState.storage.status as? StorageStatus.Failed)?.let { failure ->
+            item(key = "error") {
+                NoticeCard(
+                    title = "Encrypted storage isn't available",
+                    body = failure.message,
+                    tone = Tone.CRITICAL,
+                    icon = Icons.Outlined.ErrorOutline,
+                )
             }
         }
-    }
-}
 
-private fun storageStateSummary(status: StorageStatus): StatusCalloutState {
-    return when (status) {
-        StorageStatus.Idle -> StatusCalloutState(
-            title = "No encrypted writes yet",
-            body = "The screen is showing the default encrypted snapshot.",
-        )
+        item(key = "values") {
+            Section(title = "Stored values") {
+                val token = snapshot.sessionToken
+                InfoRow(
+                    label = "Session token",
+                    value = when {
+                        token == null -> "Not saved"
+                        revealToken -> token
+                        else -> maskToken(token)
+                    },
+                    trailing = if (token != null) {
+                        {
+                            IconButton(onClick = { revealToken = !revealToken }) {
+                                Icon(
+                                    imageVector = if (revealToken) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                                    contentDescription = if (revealToken) "Hide session token" else "Show session token",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    } else {
+                        null
+                    },
+                )
+                RowDivider()
+                InfoRow(
+                    label = "Last risk level",
+                    value = snapshot.lastRiskLevel?.label() ?: "Not saved",
+                )
+            }
+        }
 
-        StorageStatus.Loaded -> StatusCalloutState(
-            title = "Encrypted snapshot reloaded",
-            body = "The values shown here were read back from local encrypted storage.",
-            tone = CalloutTone.SUCCESS,
-        )
+        item(key = "display") {
+            Section(title = "Display") {
+                SwitchRow(
+                    title = "Show detected signals on Overview",
+                    supporting = "Saved in encrypted storage. Doesn't affect scoring.",
+                    checked = snapshot.showSignalsOnHome,
+                    onCheckedChange = onToggleShowSignalsOnHome,
+                )
+            }
+        }
 
-        is StorageStatus.Stored -> StatusCalloutState(
-            title = "Encrypted values stored",
-            body = "${status.keyCount} reference values were written to local encrypted storage and read back.",
-            tone = CalloutTone.SUCCESS,
-        )
-
-        is StorageStatus.PreferenceUpdated -> StatusCalloutState(
-            title = "Display preference updated",
-            body = if (status.showSignalsOnHome) {
-                "Signal previews are now visible on the overview screen."
-            } else {
-                "Signal previews are now hidden on the overview screen."
-            },
-            tone = CalloutTone.SUCCESS,
-        )
-
-        is StorageStatus.Failed -> StatusCalloutState(
-            title = "Encrypted storage failed",
-            body = status.message,
-            tone = CalloutTone.ERROR,
-        )
+        item(key = "note") {
+            SectionFooter(
+                text = "TrustGate never writes card numbers, payment credentials, or production keys to the device. " +
+                    "These values exist only to show encrypted persistence working.",
+            )
+        }
     }
 }

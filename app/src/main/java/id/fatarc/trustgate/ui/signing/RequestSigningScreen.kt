@@ -1,95 +1,176 @@
 package id.fatarc.trustgate.ui.signing
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Send
+import androidx.compose.material.icons.outlined.EditNote
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.GppBad
+import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.VerifiedUser
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.text.font.FontFamily
-import id.fatarc.trustgate.ui.CalloutTone
-import id.fatarc.trustgate.ui.DetailSurface
-import id.fatarc.trustgate.ui.DividerList
-import id.fatarc.trustgate.ui.KeyValueRow
-import id.fatarc.trustgate.ui.PrimaryActionButton
-import id.fatarc.trustgate.ui.SectionBlock
-import id.fatarc.trustgate.ui.SectionDivider
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import id.fatarc.trustgate.domain.signing.RejectionReason
+import id.fatarc.trustgate.domain.signing.VerificationResult
+import id.fatarc.trustgate.ui.CodeTextStyle
+import id.fatarc.trustgate.ui.CopyButton
+import id.fatarc.trustgate.ui.GroupedSurface
+import id.fatarc.trustgate.ui.ListRow
+import id.fatarc.trustgate.ui.NoticeCard
+import id.fatarc.trustgate.ui.RowDivider
+import id.fatarc.trustgate.ui.ScreenScaffold
+import id.fatarc.trustgate.ui.Section
 import id.fatarc.trustgate.ui.SigningStatus
-import id.fatarc.trustgate.ui.StatusCalloutState
-import id.fatarc.trustgate.ui.TrustGateScreen
+import id.fatarc.trustgate.ui.TimeFormats
+import id.fatarc.trustgate.ui.Tone
+import id.fatarc.trustgate.ui.TrustGateSpacing
 import id.fatarc.trustgate.ui.TrustGateUiState
-import id.fatarc.trustgate.ui.WorkflowSummaryPanel
+import id.fatarc.trustgate.ui.ValueRow
+import id.fatarc.trustgate.ui.VerificationAttempt
+import id.fatarc.trustgate.ui.VerificationRecord
+import id.fatarc.trustgate.ui.contentColor
+import id.fatarc.trustgate.ui.rememberTimeFormats
 
 @Composable
 fun RequestSigningScreen(
     uiState: TrustGateUiState,
+    onNavigateUp: () -> Unit,
     onSignReferenceRequest: () -> Unit,
+    onVerifyRequest: (VerificationAttempt) -> Unit,
 ) {
-    val signingState = signingStateSummary(uiState.signing.status)
-    TrustGateScreen {
-        item {
-            WorkflowSummaryPanel(
-                eyebrow = "Request signing",
-                title = signingState.title,
-                supporting = signingState.body,
-                tone = signingState.tone,
-            ) {
-                PrimaryActionButton(
-                    label = "Sign reference request",
-                    onClick = onSignReferenceRequest,
+    val formats = rememberTimeFormats()
+    val request = uiState.signing.signedRequest
+    val verifications = uiState.signing.verifications
+
+    ScreenScaffold(
+        title = "Request signing",
+        onNavigateUp = onNavigateUp,
+    ) {
+        item(key = "intro") {
+            GroupedSurface {
+                Text(
+                    text = "Builds a reference payment request, hashes the body with SHA-256, and signs it with " +
+                        "HMAC-SHA256. The key is a demo key bundled in the app, so this shows the request shape, " +
+                        "not production key custody.",
+                    modifier = Modifier.padding(16.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                val buttonModifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 16.dp, bottom = 16.dp)
+                if (request == null) {
+                    Button(onClick = onSignReferenceRequest, modifier = buttonModifier) {
+                        Text("Sign request")
+                    }
+                } else {
+                    OutlinedButton(onClick = onSignReferenceRequest, modifier = buttonModifier) {
+                        Text("Sign a new request")
+                    }
+                }
+            }
+        }
+
+        (uiState.signing.status as? SigningStatus.Failed)?.let { failure ->
+            item(key = "error") {
+                NoticeCard(
+                    title = "Signing failed",
+                    body = failure.message,
+                    tone = Tone.CRITICAL,
+                    icon = Icons.Outlined.ErrorOutline,
                 )
             }
         }
 
-        item {
-            SectionBlock(
-                title = "Signing model",
-                description = "The client signs a reference request with a local HMAC key to show canonicalization, hashing, and header shape. Production deployments should use managed key custody.",
-            ) {
-                DetailSurface {
-                    Text(
-                        text = "Use this screen to inspect the exact payload, timestamp, nonce, and derived headers that would be sent with a protected request.",
-                        style = MaterialTheme.typography.bodyMedium,
+        if (request != null) {
+            item(key = "verifier") {
+                Section(
+                    title = "Try it against the verifier",
+                    footer = "The reference verifier plays the server's part with the same demo key. The signature " +
+                        "must cover what arrived, the timestamp must be within " +
+                        "${uiState.verifierWindowMinutes} minutes, and each nonce is accepted once.",
+                ) {
+                    ListRow(
+                        headline = "Send as signed",
+                        supporting = "Sending it a second time replays the same nonce.",
+                        supportingColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        leadingIcon = Icons.AutoMirrored.Outlined.Send,
+                        onClickLabel = "Send to the verifier",
+                        onClick = { onVerifyRequest(VerificationAttempt.AS_SIGNED) },
+                    )
+                    RowDivider(startIndent = TrustGateSpacing.listIconInset)
+                    ListRow(
+                        headline = "Send with a changed amount",
+                        supporting = "Edits the body after signing, as someone in the middle would.",
+                        supportingColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        leadingIcon = Icons.Outlined.EditNote,
+                        onClickLabel = "Send altered request",
+                        onClick = { onVerifyRequest(VerificationAttempt.CHANGED_AMOUNT) },
+                    )
+                    RowDivider(startIndent = TrustGateSpacing.listIconInset)
+                    ListRow(
+                        headline = "Send after the time window",
+                        supporting = "Delivers it as if it was held back and arrived too late.",
+                        supportingColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        leadingIcon = Icons.Outlined.Schedule,
+                        onClickLabel = "Send late request",
+                        onClick = { onVerifyRequest(VerificationAttempt.DELIVERED_LATE) },
                     )
                 }
             }
-        }
 
-        uiState.signing.signedRequest?.let { request ->
-            item {
-                SectionBlock(
-                    title = "Signed request",
-                    description = "These values come from the latest locally signed request.",
-                ) {
-                    DetailSurface {
-                        DividerList {
-                            KeyValueRow(label = "Amount", value = request.payload.amountMinor.toString())
-                            SectionDivider()
-                            KeyValueRow(label = "Currency", value = request.payload.currency)
-                            SectionDivider()
-                            KeyValueRow(label = "Reference", value = request.payload.merchantReference)
-                            SectionDivider()
-                            KeyValueRow(label = "Timestamp", value = request.timestamp, monospace = true)
-                            SectionDivider()
-                            KeyValueRow(label = "Nonce", value = request.nonce, monospace = true)
-                            SectionDivider()
-                            KeyValueRow(label = "Body hash", value = request.bodyHash, monospace = true)
-                            request.headers.toSortedMap().forEach { (name, value) ->
-                                SectionDivider()
-                                KeyValueRow(label = name, value = value, monospace = true)
-                            }
+            if (verifications.isNotEmpty()) {
+                item(key = "responses") {
+                    Section(title = "Verifier responses", modifier = Modifier.animateContentSize()) {
+                        verifications.forEachIndexed { index, record ->
+                            VerificationRow(record = record, formats = formats)
+                            if (index != verifications.lastIndex) RowDivider(startIndent = TrustGateSpacing.listIconInset)
                         }
                     }
                 }
             }
-            item {
-                SectionBlock(
+
+            item(key = "request") {
+                Section(title = "Request") {
+                    ValueRow(label = "Endpoint", value = "${request.method} ${request.path}", monospace = true)
+                    RowDivider()
+                    ValueRow(label = "Body hash (SHA-256)", value = request.bodyHash, monospace = true, copyable = true)
+                }
+            }
+
+            item(key = "body") {
+                Section(
                     title = "Canonical body",
-                    description = "This is the exact serialized payload used to derive the body hash.",
+                    action = { CopyButton(label = "Body", value = request.canonicalBody) },
+                    footer = "The exact bytes that were hashed. Any change to the body changes the hash and the signature.",
                 ) {
-                    DetailSurface {
+                    SelectionContainer {
                         Text(
                             text = request.canonicalBody,
-                            fontFamily = FontFamily.Monospace,
-                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(16.dp),
+                            style = CodeTextStyle,
                         )
+                    }
+                }
+            }
+
+            item(key = "headers") {
+                val headers = request.headers.toSortedMap().entries.toList()
+                Section(
+                    title = "Headers",
+                    footer = "The signature covers the method, path, timestamp, nonce, and body hash.",
+                ) {
+                    headers.forEachIndexed { index, (name, value) ->
+                        ValueRow(label = name, value = value, monospace = true, copyable = true)
+                        if (index != headers.lastIndex) RowDivider()
                     }
                 }
             }
@@ -97,23 +178,49 @@ fun RequestSigningScreen(
     }
 }
 
-private fun signingStateSummary(status: SigningStatus): StatusCalloutState {
-    return when (status) {
-        SigningStatus.Idle -> StatusCalloutState(
-            title = "No request signed yet",
-            body = "Generate a reference request to inspect the canonical payload, body hash, and derived headers.",
-        )
-
-        is SigningStatus.Signed -> StatusCalloutState(
-            title = "Request signed",
-            body = "The latest request for ${status.merchantReference} was canonicalized and signed locally.",
-            tone = CalloutTone.SUCCESS,
-        )
-
-        is SigningStatus.Failed -> StatusCalloutState(
-            title = "Signing failed",
-            body = status.message,
-            tone = CalloutTone.ERROR,
-        )
+@Composable
+private fun VerificationRow(
+    record: VerificationRecord,
+    formats: TimeFormats,
+) {
+    val accepted = record.result is VerificationResult.Accepted
+    val sentAs = when {
+        record.sentByProtectedAction -> "Sent by the protected action"
+        else -> when (record.attempt) {
+            VerificationAttempt.AS_SIGNED -> "Sent as signed"
+            VerificationAttempt.CHANGED_AMOUNT -> "Sent with a changed amount"
+            VerificationAttempt.DELIVERED_LATE -> "Sent after the time window"
+        }
     }
+    ListRow(
+        headline = when (val result = record.result) {
+            VerificationResult.Accepted -> "Accepted"
+            is VerificationResult.Rejected -> "Rejected: ${result.reason.shortLabel()}"
+        },
+        supporting = when (val result = record.result) {
+            VerificationResult.Accepted -> "$sentAs · ${formats.preciseTime(record.at)}. Signature, time, and nonce all held."
+            is VerificationResult.Rejected -> "$sentAs · ${formats.preciseTime(record.at)}. ${result.reason.sentence()}"
+        },
+        supportingColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        leadingIcon = if (accepted) Icons.Outlined.VerifiedUser else Icons.Outlined.GppBad,
+        leadingTint = if (accepted) Tone.POSITIVE.contentColor() else Tone.CRITICAL.contentColor(),
+        leadingIconDescription = if (accepted) "Accepted" else "Rejected",
+    )
+}
+
+private fun RejectionReason.shortLabel(): String = when (this) {
+    RejectionReason.MISSING_HEADERS -> "headers missing"
+    RejectionReason.MALFORMED_TIMESTAMP -> "bad timestamp"
+    RejectionReason.OUTSIDE_TIME_WINDOW -> "too late"
+    RejectionReason.SIGNATURE_MISMATCH -> "signature mismatch"
+    RejectionReason.NONCE_REUSED -> "replayed"
+}
+
+/** What the rejection means for someone trying to abuse the request. */
+fun RejectionReason.sentence(): String = when (this) {
+    RejectionReason.MISSING_HEADERS -> "The timestamp, nonce, or signature header was missing."
+    RejectionReason.MALFORMED_TIMESTAMP -> "The timestamp couldn't be read, so freshness can't be checked."
+    RejectionReason.OUTSIDE_TIME_WINDOW -> "It was signed too long before it arrived, so a held-back request can't be used later."
+    RejectionReason.SIGNATURE_MISMATCH -> "What arrived isn't what was signed, so an edited request can't get through."
+    RejectionReason.NONCE_REUSED -> "This nonce was already accepted, so a captured request can't be sent twice."
 }

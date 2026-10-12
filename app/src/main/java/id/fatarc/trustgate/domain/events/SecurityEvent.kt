@@ -4,6 +4,10 @@ import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.Serializable
 import java.time.Instant
+import java.util.UUID
+
+/** Number of events kept on the device; older entries are dropped first. */
+const val SECURITY_EVENT_LIMIT = 150
 
 @Serializable
 enum class SecurityEventType {
@@ -14,13 +18,16 @@ enum class SecurityEventType {
     SENSITIVE_ACTION_ALLOWED,
     SENSITIVE_ACTION_REQUIRES_CONFIRMATION,
     SENSITIVE_ACTION_ALLOWED_AFTER_CONFIRMATION,
+    SENSITIVE_ACTION_CANCELLED,
     SENSITIVE_ACTION_BLOCKED,
     REQUEST_SIGNED,
+    REQUEST_VERIFIED,
     SECURE_VALUE_STORED,
 }
 
 @Serializable
 data class SecurityEvent(
+    val id: String = UUID.randomUUID().toString(),
     val timestamp: String = Instant.now().toString(),
     val type: SecurityEventType,
     val riskLevel: DeviceRiskLevel? = null,
@@ -32,5 +39,6 @@ interface SecurityEventRepository {
     val events: StateFlow<List<SecurityEvent>>
 
     suspend fun record(event: SecurityEvent)
-}
 
+    suspend fun clear()
+}

@@ -8,15 +8,20 @@ import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 class EncryptedSecurityStore(
     context: Context,
 ) : SecureValueStore {
-    private val prefs = EncryptedSharedPreferences.create(
-        context,
-        FILE_NAME,
-        MasterKey.Builder(context)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build(),
-        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-    )
+    private val appContext = context.applicationContext
+
+    // Created on first use so Keystore or keyset failures surface to callers instead of crashing app start.
+    private val prefs by lazy {
+        EncryptedSharedPreferences.create(
+            appContext,
+            FILE_NAME,
+            MasterKey.Builder(appContext)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build(),
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+        )
+    }
 
     override fun readSnapshot(): SecurityStorageSnapshot {
         return SecurityStorageSnapshot(

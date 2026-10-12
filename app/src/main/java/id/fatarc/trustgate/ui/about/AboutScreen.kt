@@ -1,67 +1,69 @@
 package id.fatarc.trustgate.ui.about
 
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import id.fatarc.trustgate.ui.BulletLine
-import id.fatarc.trustgate.ui.DetailSurface
-import id.fatarc.trustgate.ui.SectionBlock
-import id.fatarc.trustgate.ui.SummaryPanel
-import id.fatarc.trustgate.ui.TrustGateScreen
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import id.fatarc.trustgate.BuildConfig
+import id.fatarc.trustgate.ui.BulletItem
+import id.fatarc.trustgate.ui.ScreenScaffold
+import id.fatarc.trustgate.ui.Section
 import id.fatarc.trustgate.ui.TrustGateUiState
 
 @Composable
 fun AboutScreen(
     uiState: TrustGateUiState,
+    onNavigateUp: () -> Unit,
 ) {
-    TrustGateScreen {
-        item {
-            SummaryPanel(
-                eyebrow = "Scope",
-                title = "A device-integrity lab, not a full trust platform",
-                supporting = "TrustGate Android connects client-side checks, protected actions, request signing, and local audit output. It does not replace server-side enforcement.",
+    ScreenScaffold(
+        title = "About TrustGate",
+        onNavigateUp = onNavigateUp,
+    ) {
+        item(key = "intro") {
+            Text(
+                text = "A device-integrity lab. It connects client-side checks to protected actions, request " +
+                    "signing, and a local audit trail. It doesn't replace server-side enforcement.",
+                modifier = Modifier.padding(horizontal = 16.dp),
+                style = MaterialTheme.typography.bodyLarge,
             )
         }
 
-        item {
-            SectionBlock(
-                title = "What this app covers",
-                description = "The current build focuses on a small set of mobile security workflows that can be reviewed end to end.",
-            ) {
-                DetailSurface {
-                    BulletLine("Collect runtime signals that suggest root access, emulation, debugging, or unusual install context.")
-                    BulletLine("Map those signals to a simple trust result that can guide protected app behavior.")
-                    BulletLine("Record local events so assessments and device states can be reviewed later.")
-                    BulletLine("Show how request signing and encrypted local storage fit into the same client security story.")
-                }
+        item(key = "covers") {
+            Section(title = "What it covers") {
+                Spacer(Modifier.height(6.dp))
+                BulletItem("Runtime signals for root access, emulation, debugging, and install source.")
+                BulletItem("A simple risk level that decides whether a protected action runs, asks, or stops.")
+                BulletItem("A local event log so each check and decision can be reviewed later.")
+                BulletItem("Request signing and encrypted storage as part of the same client story.")
+                Spacer(Modifier.height(6.dp))
             }
         }
 
-        item {
-            SectionBlock(
-                title = "Operational limits",
-                description = "These limits matter when interpreting the result in real-world environments.",
-            ) {
-                DetailSurface {
-                    BulletLine("Client-side checks are signals, not guarantees of trustworthiness.")
-                    BulletLine("The signing key is hardcoded because this build focuses on request shape, not production key custody.")
-                    BulletLine("There is no real payment processor, fraud engine, or server-side adjudication behind the reference flow.")
-                    BulletLine("Advanced bypass frameworks and kernel-level compromise remain out of scope.")
-                }
+        item(key = "limits") {
+            Section(title = "Limits") {
+                Spacer(Modifier.height(6.dp))
+                BulletItem("Client-side checks are signals, not proof that a device can be trusted.")
+                BulletItem("The signing key is bundled in the app; production keys belong in managed custody.")
+                BulletItem("There's no payment processor, fraud engine, or server-side decision behind the demo flow.")
+                BulletItem("Advanced hooking frameworks and kernel-level compromise are out of scope.")
+                Spacer(Modifier.height(6.dp))
             }
         }
 
-        item {
-            SectionBlock(
-                title = "Certificate pinning note",
-                description = "Pinning helps narrow transport risk, but it does not remove the need for backend validation and certificate operations.",
+        item(key = "pinning") {
+            Section(
+                title = "Certificate pinning",
+                footer = "Version ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
             ) {
-                DetailSurface {
-                    Text(
-                        text = uiState.pinningSummary,
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
+                Text(
+                    text = uiState.pinningSummary,
+                    modifier = Modifier.padding(16.dp),
+                    style = MaterialTheme.typography.bodyLarge,
+                )
             }
         }
     }

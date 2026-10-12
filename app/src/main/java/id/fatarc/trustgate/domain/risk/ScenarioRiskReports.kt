@@ -1,6 +1,13 @@
 package id.fatarc.trustgate.domain.risk
 
-fun scenarioRiskReport(level: DeviceRiskLevel): DeviceRiskReport {
+/**
+ * A simulated device profile for exercising each gate path. The signals go through the real
+ * [RiskScorer], so a profile can never claim a level its own signals don't produce.
+ */
+fun scenarioRiskReport(
+    level: DeviceRiskLevel,
+    scorer: RiskScorer = RiskScorer(),
+): DeviceRiskReport {
     val signals = when (level) {
         DeviceRiskLevel.LOW -> listOf(
             scenarioSignal(
@@ -53,12 +60,9 @@ fun scenarioRiskReport(level: DeviceRiskLevel): DeviceRiskReport {
             ),
         )
     }
-    val score = signals.filter { it.detected }.sumOf { it.severity.weight }
-    return DeviceRiskReport(
-        signals = signals,
-        score = score,
-        level = level,
-    )
+    return scorer.score(signals).also { report ->
+        check(report.level == level) { "Scenario signals for $level scored ${report.level}." }
+    }
 }
 
 private fun scenarioSignal(

@@ -13,6 +13,16 @@ class ScenarioRiskReportsTest {
     }
 
     @Test
+    fun `every scenario profile is scored to the level it simulates`() {
+        DeviceRiskLevel.entries.forEach { level ->
+            val report = scenarioRiskReport(level)
+
+            assertThat(report.level).isEqualTo(level)
+            assertThat(report.score).isEqualTo(report.signals.filter { it.detected }.sumOf { it.severity.weight })
+        }
+    }
+
+    @Test
     fun `high scenario profile stays high risk`() {
         val report = scenarioRiskReport(DeviceRiskLevel.HIGH)
 
