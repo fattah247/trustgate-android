@@ -1,10 +1,10 @@
 package id.fatarc.trustgate
 
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import id.fatarc.trustgate.ui.TrustGateApp
@@ -12,7 +12,8 @@ import id.fatarc.trustgate.ui.TrustGateViewModel
 import id.fatarc.trustgate.ui.TrustGateViewModelFactory
 import id.fatarc.trustgate.ui.theme.TrustGateTheme
 
-class MainActivity : ComponentActivity() {
+// A FragmentActivity so the system biometric prompt can host itself for step-up confirmation.
+class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -29,11 +30,16 @@ class MainActivity : ComponentActivity() {
                     onAttemptPayment = viewModel::attemptPayment,
                     onConfirmPayment = viewModel::confirmPayment,
                     onDismissConfirmation = viewModel::dismissConfirmation,
-                    onSignDemoRequest = viewModel::signDemoRequest,
-                    onStoreDemoValues = viewModel::storeDemoValues,
+                    onSignReferenceRequest = viewModel::signReferenceRequest,
+                    onStoreReferenceValues = viewModel::storeReferenceValues,
                     onRefreshStorage = viewModel::refreshStorage,
                     onToggleShowSignalsOnHome = viewModel::toggleShowSignalsOnHome,
-                    onSetDemoRiskLevel = viewModel::setDemoRiskLevel,
+                    onSetScenarioRiskLevel = viewModel::setScenarioRiskLevel,
+                    onClearEvents = viewModel::clearSecurityEvents,
+                    onVerifyRequest = viewModel::verifyLatestRequest,
+                    onExportEvents = viewModel::buildAuditExport,
+                    onAppResumed = viewModel::onAppResumed,
+                    onUserMessageShown = viewModel::userMessageShown,
                 )
             }
         }

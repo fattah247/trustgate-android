@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The TrustGate mark, drawn in the same 100-unit space as GateMark.kt and fitted inside the adaptive icon safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:scaleX="0.55"
+        android:scaleY="0.55"
+        android:translateX="26.5"
+        android:translateY="25">
+        <!-- Doors, slightly ajar -->
+        <path
+            android:fillColor="#CBE7DB"
+            android:pathData="M28,42 h10.9 a4,4 0 0 1 4,4 v40 a4,4 0 0 1 -4,4 h-10.9 a4,4 0 0 1 -4,-4 v-40 a4,4 0 0 1 4,-4 z M61.1,42 h10.9 a4,4 0 0 1 4,4 v40 a4,4 0 0 1 -4,4 h-10.9 a4,4 0 0 1 -4,-4 v-40 a4,4 0 0 1 4,-4 z"
+            android:strokeColor="#F6F4EF"
+            android:strokeWidth="3" />
+        <path
+            android:pathData="M30.3,48 V84 M36.6,48 V84 M63.4,48 V84 M69.7,48 V84"
+            android:strokeColor="#205C4C"
+            android:strokeLineCap="round"
+            android:strokeWidth="2.5" />
+        <!-- Posts and finials -->
+        <path
+            android:fillColor="#F6F4EF"
+            android:pathData="M16,30 h2 a6,6 0 0 1 6,6 v50 a6,6 0 0 1 -6,6 h-2 a6,6 0 0 1 -6,-6 v-50 a6,6 0 0 1 6,-6 z M82,30 h2 a6,6 0 0 1 6,6 v50 a6,6 0 0 1 -6,6 h-2 a6,6 0 0 1 -6,-6 v-50 a6,6 0 0 1 6,-6 z M10.5,24 a6.5,6.5 0 1 0 13,0 a6.5,6.5 0 1 0 -13,0 z M76.5,24 a6.5,6.5 0 1 0 13,0 a6.5,6.5 0 1 0 -13,0 z" />
+        <!-- Arch and lamp -->
+        <path
+            android:pathData="M17,36 Q50,-2 83,36 M50,16 L50,22"
+            android:strokeColor="#F6F4EF"
+            android:strokeLineCap="round"
+            android:strokeWidth="6" />
+        <path
+            android:fillColor="#F2C14E"
+            android:pathData="M45,27 a5,5 0 1 0 10,0 a5,5 0 1 0 -10,0 z" />
+    </group>
+</vector>

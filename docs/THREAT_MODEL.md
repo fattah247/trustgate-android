@@ -2,7 +2,7 @@
 
 ## What the app protects
 
-TrustGate Android protects a payment-like action from being treated the same on every device state. The app also protects a few mock local values from plain-text storage.
+TrustGate Android protects a payment-like action from being treated the same on every device state. The app also protects a few reference local values from plain-text storage.
 
 ## Attacker assumptions
 
@@ -17,7 +17,7 @@ TrustGate Android protects a payment-like action from being treated the same on 
 - Emulator signals from device build strings
 - Debugger-attached and debuggable-build signals
 - Sensitive action attempts on a high-risk device
-- Replay-shaped request risk through nonce and timestamp signing inputs
+- Replayed, edited, and held-back requests, rejected by the reference verifier through nonce reuse, signature mismatch, and the timestamp window
 - Unsafe local storage for session-like values
 
 ## Threats not modeled
@@ -34,9 +34,8 @@ TrustGate Android protects a payment-like action from being treated the same on 
 - Device runtime: low trust, because the user can modify it
 - App process: medium trust, useful for collecting signals but not an authority
 - Local encrypted storage: safer than plain preferences, still on the device
-- Backend boundary: simulated only; there is no live server in this repo
+- Backend boundary: simulated by an on-device reference verifier that shares the demo key; there is no live server in this repo
 
 ## Why client-side checks are only signals
 
 The app can inspect its own environment, but it cannot prove that the environment is honest. A determined attacker can hide or bypass many checks. That is why TrustGate Android uses risk levels and layered controls instead of claiming absolute enforcement.
-

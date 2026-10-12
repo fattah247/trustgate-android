@@ -1,33 +1,40 @@
 package id.fatarc.trustgate.domain.risk
 
-fun demoRiskReport(level: DeviceRiskLevel): DeviceRiskReport {
+/**
+ * A simulated device profile for exercising each gate path. The signals go through the real
+ * [RiskScorer], so a profile can never claim a level its own signals don't produce.
+ */
+fun scenarioRiskReport(
+    level: DeviceRiskLevel,
+    scorer: RiskScorer = RiskScorer(),
+): DeviceRiskReport {
     val signals = when (level) {
         DeviceRiskLevel.LOW -> listOf(
-            demoSignal(
+            scenarioSignal(
                 id = "installer_known",
                 name = "Known installer source",
                 severity = SignalSeverity.LOW,
                 detected = false,
-                explanation = "This sample profile keeps the gate open to show the allowed path.",
+                explanation = "This scenario profile keeps the gate open to show the allowed path.",
             ),
-            demoSignal(
+            scenarioSignal(
                 id = "debugger_connected",
                 name = "Debugger attached",
                 severity = SignalSeverity.HIGH,
                 detected = false,
-                explanation = "No debugger signal is active in the low-risk sample profile.",
+                explanation = "No debugger signal is active in the low-risk scenario profile.",
             ),
         )
 
         DeviceRiskLevel.MEDIUM -> listOf(
-            demoSignal(
+            scenarioSignal(
                 id = "test_keys",
                 name = "Test-keys build tags",
                 severity = SignalSeverity.MEDIUM,
                 detected = true,
-                explanation = "This sample profile shows a moderate trust decision without a hard block.",
+                explanation = "This scenario profile shows a moderate trust decision without a hard block.",
             ),
-            demoSignal(
+            scenarioSignal(
                 id = "installer_unknown",
                 name = "Installer source unknown",
                 severity = SignalSeverity.LOW,
@@ -37,31 +44,28 @@ fun demoRiskReport(level: DeviceRiskLevel): DeviceRiskReport {
         )
 
         DeviceRiskLevel.HIGH -> listOf(
-            demoSignal(
+            scenarioSignal(
                 id = "root_package",
                 name = "Root management package",
                 severity = SignalSeverity.HIGH,
                 detected = true,
-                explanation = "This sample profile shows how the app blocks a sensitive action on high risk.",
+                explanation = "This scenario profile shows how the app blocks a sensitive action on high risk.",
             ),
-            demoSignal(
+            scenarioSignal(
                 id = "debugger_connected",
                 name = "Debugger attached",
                 severity = SignalSeverity.HIGH,
                 detected = true,
-                explanation = "A connected debugger is treated as a strong signal in the blocked path sample.",
+                explanation = "A connected debugger is treated as a strong signal in the blocked path scenario.",
             ),
         )
     }
-    val score = signals.filter { it.detected }.sumOf { it.severity.weight }
-    return DeviceRiskReport(
-        signals = signals,
-        score = score,
-        level = level,
-    )
+    return scorer.score(signals).also { report ->
+        check(report.level == level) { "Scenario signals for $level scored ${report.level}." }
+    }
 }
 
-private fun demoSignal(
+private fun scenarioSignal(
     id: String,
     name: String,
     severity: SignalSeverity,
@@ -82,4 +86,3 @@ private fun demoSignal(
         explanation = explanation,
     )
 }
-

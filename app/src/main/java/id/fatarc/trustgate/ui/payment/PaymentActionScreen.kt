@@ -1,122 +1,425 @@
 package id.fatarc.trustgate.ui.payment
 
+import android.os.Build
+import android.view.HapticFeedbackConstants
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Block
+import androidx.compose.material.icons.outlined.Cancel
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.PendingActions
 import androidx.compose.material3.Button
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.os.ConfigurationCompat
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
-import id.fatarc.trustgate.ui.KeyValueRow
-import id.fatarc.trustgate.ui.RiskBadge
-import id.fatarc.trustgate.ui.SectionCard
+import id.fatarc.trustgate.domain.signing.ReferencePayment
+import id.fatarc.trustgate.domain.signing.VerificationResult
+import id.fatarc.trustgate.ui.GateMark
+import id.fatarc.trustgate.ui.GateState
+import id.fatarc.trustgate.ui.GroupedSurface
+import id.fatarc.trustgate.ui.InfoRow
+import id.fatarc.trustgate.ui.ListRow
+import id.fatarc.trustgate.ui.NoticeAction
+import id.fatarc.trustgate.ui.NoticeCard
+import id.fatarc.trustgate.ui.PaymentDecisionState
+import id.fatarc.trustgate.ui.PaymentUiState
+import id.fatarc.trustgate.ui.RiskReportSource
+import id.fatarc.trustgate.ui.RiskUiState
+import id.fatarc.trustgate.ui.RowDivider
+import id.fatarc.trustgate.ui.ScreenScaffold
+import id.fatarc.trustgate.ui.Section
+import id.fatarc.trustgate.ui.SectionFooter
+import id.fatarc.trustgate.ui.SectionHeader
+import id.fatarc.trustgate.ui.Submission
+import id.fatarc.trustgate.ui.TimeFormats
+import id.fatarc.trustgate.ui.Tone
+import id.fatarc.trustgate.ui.TrustGateSpacing
 import id.fatarc.trustgate.ui.TrustGateUiState
+import id.fatarc.trustgate.ui.contentColor
+import id.fatarc.trustgate.ui.formatMinorAmount
+import id.fatarc.trustgate.ui.icon
+import id.fatarc.trustgate.ui.label
+import id.fatarc.trustgate.ui.policyLabel
+import id.fatarc.trustgate.ui.rememberTimeFormats
+import id.fatarc.trustgate.ui.signing.sentence
+import id.fatarc.trustgate.ui.tone
+import java.util.Locale
 
 @Composable
 fun PaymentActionScreen(
     uiState: TrustGateUiState,
+    onNavigateUp: () -> Unit,
     onAttemptPayment: () -> Unit,
-    onSetDemoRiskLevel: (DeviceRiskLevel?) -> Unit,
+    onSetScenarioRiskLevel: (DeviceRiskLevel?) -> Unit,
+    onOpenSignals: () -> Unit,
+    onInspectRequest: () -> Unit,
 ) {
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+    val formats = rememberTimeFormats()
+    val risk = uiState.risk
+
+    DecisionHaptics(payment = uiState.payment)
+
+    ScreenScaffold(
+        title = "Sensitive action",
+        onNavigateUp = onNavigateUp,
     ) {
-        item {
-            SectionCard(
-                title = "Sensitive action gate",
-                modifier = Modifier.padding(top = 16.dp),
-            ) {
-                Text(
-                    text = "This screen simulates a payment approval. The app only uses the current risk level to decide whether to allow, require confirmation, or block.",
-                    style = MaterialTheme.typography.bodyMedium,
+        // No simulation banner here: the risk source control below already shows it, and an item
+        // inserted above the first visible one would land off screen.
+        item(key = "action") {
+            ActionCard(risk = risk, payment = uiState.payment, onAttemptPayment = onAttemptPayment)
+        }
+
+        if (uiState.payment.latestDecision != PaymentDecisionState.Idle) {
+            item(key = "result") {
+                DecisionResult(
+                    payment = uiState.payment,
+                    formats = formats,
+                    onOpenSignals = onOpenSignals,
+                    onInspectRequest = onInspectRequest,
+                    modifier = Modifier.animateItem(),
                 )
-                Text(
-                    text = "Demo risk state",
-                    style = MaterialTheme.typography.titleSmall,
-                )
-                Text(
-                    text = "Use sample risk profiles to show the allow and block paths without faking the app state.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                DemoRiskSelector(
-                    selectedLevel = uiState.selectedDemoRiskLevel,
-                    onSelectLevel = onSetDemoRiskLevel,
-                )
-                uiState.riskReport?.let { report ->
-                    RiskBadge(level = report.level)
-                    KeyValueRow(label = "Current risk", value = report.level.name)
-                    KeyValueRow(
-                        label = "Risk source",
-                        value = if (uiState.selectedDemoRiskLevel == null) "Live assessment" else "Demo sample",
-                    )
-                }
-                KeyValueRow(label = "LOW", value = "Allow action")
-                KeyValueRow(label = "MEDIUM", value = "Require confirmation")
-                KeyValueRow(label = "HIGH", value = "Block action")
-                Button(
-                    onClick = onAttemptPayment,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("Create demo payment")
-                }
             }
         }
 
-        item {
-            SectionCard(
-                title = "Latest decision",
-                modifier = Modifier.padding(bottom = 24.dp),
-            ) {
-                Text(uiState.actionMessage, style = MaterialTheme.typography.bodyMedium)
+        item(key = "source") {
+            RiskSourcePicker(
+                selectedLevel = risk.scenarioLevel,
+                onSelectLevel = onSetScenarioRiskLevel,
+            )
+        }
+
+        item(key = "policy") {
+            Section(title = "Policy") {
+                DeviceRiskLevel.entries.forEachIndexed { index, level ->
+                    val isCurrent = risk.report?.level == level
+                    ListRow(
+                        headline = "${level.label()}: ${level.policyLabel().lowercase()}",
+                        supporting = level.policyDescription(),
+                        supportingColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        leadingIcon = level.icon,
+                        leadingTint = level.tone().contentColor(),
+                        trailing = if (isCurrent) {
+                            {
+                                Text(
+                                    text = "Current",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        } else {
+                            null
+                        },
+                    )
+                    if (index != DeviceRiskLevel.entries.lastIndex) {
+                        RowDivider(startIndent = TrustGateSpacing.listIconInset)
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun DemoRiskSelector(
+private fun ActionCard(
+    risk: RiskUiState,
+    payment: PaymentUiState,
+    onAttemptPayment: () -> Unit,
+) {
+    val report = risk.report
+    val locale = ConfigurationCompat.getLocales(LocalConfiguration.current)[0] ?: Locale.getDefault()
+    val gate = payment.latestDecision.gateState()
+    GroupedSurface(shape = MaterialTheme.shapes.large) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, top = 20.dp, end = 16.dp, bottom = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // The gate acts out the decision: it swings open, waits ajar, or locks.
+            GateMark(
+                state = gate,
+                tone = payment.latestDecision.tone() ?: report?.level?.tone() ?: Tone.NEUTRAL,
+                contentDescription = null,
+                size = 64.dp,
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = formatMinorAmount(ReferencePayment.AMOUNT_MINOR, ReferencePayment.CURRENCY, locale),
+                    style = MaterialTheme.typography.headlineSmall,
+                )
+                Text(
+                    text = "Reference payment · ${ReferencePayment.payload().merchantReference}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Text(
+            text = "Running it checks the device again, applies the policy, and, if allowed, signs the request " +
+                "and sends it to the reference verifier.",
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        RowDivider()
+        InfoRow(
+            label = "This device",
+            value = when {
+                risk.errorMessage != null -> "Check failed"
+                report != null && risk.source == RiskReportSource.SCENARIO -> "${report.level.label()} (simulated)"
+                report != null -> report.level.label()
+                else -> "Checking…"
+            },
+            valueColor = when {
+                risk.errorMessage != null -> Tone.CRITICAL.contentColor()
+                report != null -> report.level.tone().contentColor()
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        )
+        RowDivider()
+        InfoRow(
+            label = "Gate response",
+            value = report?.level?.takeIf { risk.errorMessage == null }?.policyLabel() ?: "—",
+        )
+        Button(
+            onClick = onAttemptPayment,
+            enabled = !risk.isLoading && payment.latestDecision !is PaymentDecisionState.ConfirmationRequired,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 16.dp),
+        ) {
+            Text("Run protected action")
+        }
+    }
+}
+
+@Composable
+private fun DecisionResult(
+    payment: PaymentUiState,
+    formats: TimeFormats,
+    onOpenSignals: () -> Unit,
+    onInspectRequest: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    AnimatedContent(
+        targetState = payment,
+        contentKey = { it.decidedAt to (it.submission != null) },
+        transitionSpec = { fadeIn(tween(220, delayMillis = 60)) togetherWith fadeOut(tween(60)) },
+        modifier = modifier.semantics { liveRegion = LiveRegionMode.Polite },
+        label = "decisionResult",
+    ) { current ->
+        val outcome = current.outcome() ?: return@AnimatedContent
+        NoticeCard(
+            title = outcome.title,
+            body = outcome.body,
+            caption = current.decidedAt?.let(formats::preciseTime),
+            tone = outcome.tone,
+            icon = outcome.icon,
+            action = when {
+                current.latestDecision is PaymentDecisionState.Blocked ->
+                    NoticeAction(label = "View signals", onClick = onOpenSignals)
+
+                current.submission is Submission.Sent ->
+                    NoticeAction(label = "Inspect request", onClick = onInspectRequest)
+
+                else -> null
+            },
+        )
+    }
+}
+
+/** A light confirm or reject tap when the gate decides, the way a physical latch would feel. */
+@Composable
+private fun DecisionHaptics(payment: PaymentUiState) {
+    val view = LocalView.current
+    // Saved so returning to the screen or rotating doesn't replay the tap for an old decision.
+    var lastFelt by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(payment.decidedAt) {
+        val key = payment.decidedAt?.toString() ?: return@LaunchedEffect
+        if (key == lastFelt) return@LaunchedEffect
+        lastFelt = key
+        val confirm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) HapticFeedbackConstants.CONFIRM else HapticFeedbackConstants.VIRTUAL_KEY
+        val reject = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) HapticFeedbackConstants.REJECT else HapticFeedbackConstants.LONG_PRESS
+        when (payment.latestDecision) {
+            is PaymentDecisionState.Allowed,
+            is PaymentDecisionState.Confirmed,
+            -> view.performHapticFeedback(confirm)
+
+            is PaymentDecisionState.Blocked -> view.performHapticFeedback(reject)
+            else -> Unit
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RiskSourcePicker(
     selectedLevel: DeviceRiskLevel?,
     onSelectLevel: (DeviceRiskLevel?) -> Unit,
 ) {
-    val chipSpacing = Modifier.padding(end = 8.dp, bottom = 8.dp)
-    androidx.compose.foundation.layout.Column {
-        androidx.compose.foundation.layout.Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(
-                selected = selectedLevel == null,
-                onClick = { onSelectLevel(null) },
-                label = { Text("Actual") },
-                modifier = chipSpacing,
-            )
-            FilterChip(
-                selected = selectedLevel == DeviceRiskLevel.LOW,
-                onClick = { onSelectLevel(DeviceRiskLevel.LOW) },
-                label = { Text("Low") },
-                modifier = chipSpacing,
-            )
+    val options: List<Pair<DeviceRiskLevel?, String>> = listOf(
+        null to "Live",
+        DeviceRiskLevel.LOW to "Low",
+        DeviceRiskLevel.MEDIUM to "Medium",
+        DeviceRiskLevel.HIGH to "High",
+    )
+    Column {
+        SectionHeader(title = "Risk source")
+        Spacer(Modifier.height(4.dp))
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            options.forEachIndexed { index, (level, label) ->
+                SegmentedButton(
+                    selected = selectedLevel == level,
+                    onClick = { onSelectLevel(level) },
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size),
+                    // The check mark doesn't fit four segments on a phone; the fill marks the selection.
+                    icon = {},
+                    label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                )
+            }
         }
-        androidx.compose.foundation.layout.Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(
-                selected = selectedLevel == DeviceRiskLevel.MEDIUM,
-                onClick = { onSelectLevel(DeviceRiskLevel.MEDIUM) },
-                label = { Text("Medium") },
-                modifier = chipSpacing,
-            )
-            FilterChip(
-                selected = selectedLevel == DeviceRiskLevel.HIGH,
-                onClick = { onSelectLevel(DeviceRiskLevel.HIGH) },
-                label = { Text("High") },
-                modifier = chipSpacing,
-            )
-        }
+        SectionFooter(
+            text = "Low, Medium, and High simulate a device profile across the app until you switch back to Live.",
+        )
     }
+}
+
+private fun PaymentDecisionState.gateState(): GateState = when (this) {
+    PaymentDecisionState.Idle,
+    is PaymentDecisionState.Cancelled,
+    -> GateState.SHUT
+
+    is PaymentDecisionState.Allowed,
+    is PaymentDecisionState.Confirmed,
+    -> GateState.OPEN
+
+    is PaymentDecisionState.ConfirmationRequired -> GateState.AJAR
+    is PaymentDecisionState.Blocked -> GateState.LOCKED
+}
+
+private fun PaymentDecisionState.tone(): Tone? = when (this) {
+    PaymentDecisionState.Idle -> null
+    is PaymentDecisionState.Allowed,
+    is PaymentDecisionState.Confirmed,
+    -> Tone.POSITIVE
+
+    is PaymentDecisionState.ConfirmationRequired -> Tone.CAUTION
+    is PaymentDecisionState.Blocked -> Tone.CRITICAL
+    is PaymentDecisionState.Cancelled -> Tone.NEUTRAL
+}
+
+private data class Outcome(
+    val title: String,
+    val body: String,
+    val tone: Tone,
+    val icon: ImageVector,
+)
+
+private fun PaymentUiState.outcome(): Outcome? = when (val decision = latestDecision) {
+    PaymentDecisionState.Idle -> null
+
+    is PaymentDecisionState.Allowed -> allowedOutcome(
+        title = "Action allowed",
+        reason = "The device was ${decision.riskLevel.label().lowercase()}, so no extra step was needed.",
+    )
+
+    is PaymentDecisionState.ConfirmationRequired -> Outcome(
+        title = "Waiting for confirmation",
+        body = "The device was ${decision.riskLevel.label().lowercase()}, so the action is paused until you confirm.",
+        tone = Tone.CAUTION,
+        icon = Icons.Outlined.PendingActions,
+    )
+
+    is PaymentDecisionState.Confirmed -> allowedOutcome(
+        title = "Allowed after confirmation",
+        reason = "You confirmed the action on a ${decision.riskLevel.label().lowercase()} device.",
+    )
+
+    is PaymentDecisionState.Blocked -> Outcome(
+        title = "Action blocked",
+        body = "The device was ${decision.riskLevel.label().lowercase()}, so nothing was signed or sent.",
+        tone = Tone.CRITICAL,
+        icon = Icons.Outlined.Block,
+    )
+
+    is PaymentDecisionState.Cancelled -> Outcome(
+        title = "Action cancelled",
+        body = decision.problem?.let { "The confirmation stopped: $it Nothing was signed or sent." }
+            ?: "You cancelled at the confirmation step, so nothing was signed or sent.",
+        tone = Tone.NEUTRAL,
+        icon = Icons.Outlined.Cancel,
+    )
+}
+
+/** The gate let the action through; what matters next is whether the request it sent was accepted. */
+private fun PaymentUiState.allowedOutcome(title: String, reason: String): Outcome = when (val sent = submission) {
+    null -> Outcome(
+        title = title,
+        body = "$reason Signing and sending the request…",
+        tone = Tone.POSITIVE,
+        icon = Icons.Outlined.CheckCircle,
+    )
+
+    is Submission.NotSigned -> Outcome(
+        title = "Allowed, but not sent",
+        body = "$reason The request couldn't be signed: ${sent.message}",
+        tone = Tone.CRITICAL,
+        icon = Icons.Outlined.ErrorOutline,
+    )
+
+    is Submission.Sent -> when (val result = sent.result) {
+        VerificationResult.Accepted -> Outcome(
+            title = title,
+            body = "$reason The signed request (nonce ${sent.nonce.take(8)}…) was accepted by the reference verifier.",
+            tone = Tone.POSITIVE,
+            icon = Icons.Outlined.CheckCircle,
+        )
+
+        is VerificationResult.Rejected -> Outcome(
+            title = "Allowed, but rejected on arrival",
+            body = "$reason The reference verifier refused the request: ${result.reason.sentence()}",
+            tone = Tone.CRITICAL,
+            icon = Icons.Outlined.ErrorOutline,
+        )
+    }
+}
+
+private fun DeviceRiskLevel.policyDescription(): String = when (this) {
+    DeviceRiskLevel.LOW -> "Runs without an extra step."
+    DeviceRiskLevel.MEDIUM -> "Pauses until the person confirms with their screen lock or biometrics."
+    DeviceRiskLevel.HIGH -> "Stopped until the device is reviewed."
 }

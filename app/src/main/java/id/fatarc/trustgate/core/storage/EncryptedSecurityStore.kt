@@ -8,20 +8,25 @@ import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 class EncryptedSecurityStore(
     context: Context,
 ) : SecureValueStore {
-    private val prefs = EncryptedSharedPreferences.create(
-        context,
-        FILE_NAME,
-        MasterKey.Builder(context)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build(),
-        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-    )
+    private val appContext = context.applicationContext
+
+    // Created on first use so Keystore or keyset failures surface to callers instead of crashing app start.
+    private val prefs by lazy {
+        EncryptedSharedPreferences.create(
+            appContext,
+            FILE_NAME,
+            MasterKey.Builder(appContext)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build(),
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+        )
+    }
 
     override fun readSnapshot(): SecurityStorageSnapshot {
         return SecurityStorageSnapshot(
             sessionToken = prefs.getString(KEY_SESSION_TOKEN, null),
-            lastRiskLevel = prefs.getString(KEY_LAST_RISK_LEVEL, null)?.let(DeviceRiskLevel::valueOf),
+            lastRiskLevel = prefs.getString(KEY_LAST_RISK_LEVEL, null).toRiskLevelOrNull(),
             showSignalsOnHome = prefs.getBoolean(KEY_SHOW_SIGNALS_ON_HOME, true),
         )
     }
@@ -36,6 +41,10 @@ class EncryptedSecurityStore(
 
     override fun storeShowSignalsOnHome(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_SHOW_SIGNALS_ON_HOME, enabled).apply()
+    }
+
+    private fun String?.toRiskLevelOrNull(): DeviceRiskLevel? {
+        return DeviceRiskLevel.entries.firstOrNull { it.name == this }
     }
 
     private companion object {

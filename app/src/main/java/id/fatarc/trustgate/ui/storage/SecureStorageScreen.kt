@@ -1,87 +1,137 @@
 package id.fatarc.trustgate.ui.storage
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import id.fatarc.trustgate.ui.KeyValueRow
-import id.fatarc.trustgate.ui.SectionCard
+import id.fatarc.trustgate.ui.GroupedSurface
+import id.fatarc.trustgate.ui.InfoRow
+import id.fatarc.trustgate.ui.NoticeCard
+import id.fatarc.trustgate.ui.RowDivider
+import id.fatarc.trustgate.ui.ScreenScaffold
+import id.fatarc.trustgate.ui.Section
+import id.fatarc.trustgate.ui.SectionFooter
+import id.fatarc.trustgate.ui.StorageStatus
+import id.fatarc.trustgate.ui.SwitchRow
+import id.fatarc.trustgate.ui.Tone
 import id.fatarc.trustgate.ui.TrustGateUiState
+import id.fatarc.trustgate.ui.label
 import id.fatarc.trustgate.ui.maskToken
 
 @Composable
 fun SecureStorageScreen(
     uiState: TrustGateUiState,
-    onStoreDemoValues: () -> Unit,
+    onNavigateUp: () -> Unit,
+    onStoreReferenceValues: () -> Unit,
     onRefreshStorage: () -> Unit,
     onToggleShowSignalsOnHome: (Boolean) -> Unit,
 ) {
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+    val snapshot = uiState.storage.snapshot
+    var revealToken by rememberSaveable { mutableStateOf(false) }
+
+    ScreenScaffold(
+        title = "Secure storage",
+        onNavigateUp = onNavigateUp,
+        actions = {
+            IconButton(onClick = onRefreshStorage) {
+                Icon(Icons.Outlined.Refresh, contentDescription = "Reload stored values")
+            }
+        },
     ) {
-        item {
-            SectionCard(
-                title = "Encrypted values",
-                modifier = Modifier.padding(top = 16.dp),
-            ) {
+        item(key = "intro") {
+            GroupedSurface {
                 Text(
-                    text = "This demo stores a mock session token, the last risk decision, and one harmless UI preference in encrypted local storage.",
+                    text = "Keys and values are encrypted with AES-256 (SIV for keys, GCM for values) under a " +
+                        "master key held in Android Keystore.",
+                    modifier = Modifier.padding(16.dp),
                     style = MaterialTheme.typography.bodyMedium,
-                )
-                KeyValueRow(
-                    label = "Session token",
-                    value = maskToken(uiState.storageSnapshot.sessionToken),
-                )
-                KeyValueRow(
-                    label = "Last risk level",
-                    value = uiState.storageSnapshot.lastRiskLevel?.name ?: "Not stored",
-                )
-                KeyValueRow(
-                    label = "Signals visible on home",
-                    value = uiState.storageSnapshot.showSignalsOnHome.toString(),
-                )
-                Switch(
-                    checked = uiState.storageSnapshot.showSignalsOnHome,
-                    onCheckedChange = onToggleShowSignalsOnHome,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Button(
-                    onClick = onStoreDemoValues,
-                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onStoreReferenceValues,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
                 ) {
-                    Text("Store demo values")
+                    Text(if (snapshot.sessionToken == null) "Save reference values" else "Save new reference values")
                 }
-                Button(
-                    onClick = onRefreshStorage,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("Reload stored values")
-                }
-                Text(uiState.storageMessage, style = MaterialTheme.typography.bodyMedium)
             }
         }
 
-        item {
-            SectionCard(
-                title = "What is not stored",
-                modifier = Modifier.padding(bottom = 24.dp),
-            ) {
-                Text(
-                    text = "No real card data, payment credentials, or server secrets are stored in the app.",
-                    style = MaterialTheme.typography.bodyMedium,
+        (uiState.storage.status as? StorageStatus.Failed)?.let { failure ->
+            item(key = "error") {
+                NoticeCard(
+                    title = "Encrypted storage isn't available",
+                    body = failure.message,
+                    tone = Tone.CRITICAL,
+                    icon = Icons.Outlined.ErrorOutline,
                 )
             }
+        }
+
+        item(key = "values") {
+            Section(title = "Stored values") {
+                val token = snapshot.sessionToken
+                InfoRow(
+                    label = "Session token",
+                    value = when {
+                        token == null -> "Not saved"
+                        revealToken -> token
+                        else -> maskToken(token)
+                    },
+                    trailing = if (token != null) {
+                        {
+                            IconButton(onClick = { revealToken = !revealToken }) {
+                                Icon(
+                                    imageVector = if (revealToken) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                                    contentDescription = if (revealToken) "Hide session token" else "Show session token",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    } else {
+                        null
+                    },
+                )
+                RowDivider()
+                InfoRow(
+                    label = "Last risk level",
+                    value = snapshot.lastRiskLevel?.label() ?: "Not saved",
+                )
+            }
+        }
+
+        item(key = "display") {
+            Section(title = "Display") {
+                SwitchRow(
+                    title = "Show detected signals on Overview",
+                    supporting = "Saved in encrypted storage. Doesn't affect scoring.",
+                    checked = snapshot.showSignalsOnHome,
+                    onCheckedChange = onToggleShowSignalsOnHome,
+                )
+            }
+        }
+
+        item(key = "note") {
+            SectionFooter(
+                text = "TrustGate never writes card numbers, payment credentials, or production keys to the device. " +
+                    "These values exist only to show encrypted persistence working.",
+            )
         }
     }
 }
-

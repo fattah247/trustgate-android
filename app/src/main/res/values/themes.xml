@@ -1,4 +1,6 @@
 <resources>
-    <style name="Theme.TrustGate" parent="Theme.Material3.DayNight.NoActionBar" />
+    <style name="Theme.TrustGate" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- Matches the Compose background so launch and recents never flash a different colour. -->
+        <item name="android:windowBackground">@color/trustgate_window</item>
+    </style>
 </resources>
-

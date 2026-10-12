@@ -40,5 +40,16 @@ class HmacRequestSignerTest {
 
         assertThat(first.signature).isNotEqualTo(second.signature)
     }
-}
 
+    @Test
+    fun `canonical body escapes embedded quotes`() {
+        val request = signer.sign(
+            payload = payload.copy(merchantReference = "REF-\"1001\""),
+            timestamp = "2026-05-31T00:00:00Z",
+            nonce = "abc123nonce",
+        )
+
+        assertThat(request.canonicalBody)
+            .isEqualTo("{\"amountMinor\":125000,\"currency\":\"IDR\",\"merchantReference\":\"REF-\\\"1001\\\"\"}")
+    }
+}

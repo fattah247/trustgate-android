@@ -1,58 +1,70 @@
 package id.fatarc.trustgate.ui.about
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import id.fatarc.trustgate.ui.SectionCard
+import id.fatarc.trustgate.BuildConfig
+import id.fatarc.trustgate.ui.BulletItem
+import id.fatarc.trustgate.ui.ScreenScaffold
+import id.fatarc.trustgate.ui.Section
 import id.fatarc.trustgate.ui.TrustGateUiState
 
 @Composable
 fun AboutScreen(
     uiState: TrustGateUiState,
+    onNavigateUp: () -> Unit,
 ) {
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ScreenScaffold(
+        title = "About TrustGate",
+        onNavigateUp = onNavigateUp,
     ) {
-        item {
-            SectionCard(
-                title = "What this app is",
-                modifier = Modifier.padding(top = 16.dp),
-            ) {
-                Text(
-                    text = "TrustGate Android is a public-safe mobile security lab. It shows how a client can collect risk signals, gate sensitive actions, sign requests, and keep a local security event log.",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+        item(key = "intro") {
+            Text(
+                text = "A device-integrity lab. It connects client-side checks to protected actions, request " +
+                    "signing, and a local audit trail. It doesn't replace server-side enforcement.",
+                modifier = Modifier.padding(horizontal = 16.dp),
+                style = MaterialTheme.typography.bodyLarge,
+            )
+        }
+
+        item(key = "covers") {
+            Section(title = "What it covers") {
+                Spacer(Modifier.height(6.dp))
+                BulletItem("Runtime signals for root access, emulation, debugging, and install source.")
+                BulletItem("A simple risk level that decides whether a protected action runs, asks, or stops.")
+                BulletItem("A local event log so each check and decision can be reviewed later.")
+                BulletItem("Request signing and encrypted storage as part of the same client story.")
+                Spacer(Modifier.height(6.dp))
             }
         }
-        item {
-            SectionCard(title = "Limitations") {
-                Text("Client-side checks are signals, not guarantees.", style = MaterialTheme.typography.bodyMedium)
-                Text("The request signing key is hardcoded for demo purposes only.", style = MaterialTheme.typography.bodyMedium)
-                Text("There is no real payment processor or fraud engine behind this app.", style = MaterialTheme.typography.bodyMedium)
-                Text("Advanced bypass frameworks and kernel-level compromise are out of scope.", style = MaterialTheme.typography.bodyMedium)
+
+        item(key = "limits") {
+            Section(title = "Limits") {
+                Spacer(Modifier.height(6.dp))
+                BulletItem("Client-side checks are signals, not proof that a device can be trusted.")
+                BulletItem("The signing key is bundled in the app; production keys belong in managed custody.")
+                BulletItem("There's no payment processor, fraud engine, or server-side decision behind the demo flow.")
+                BulletItem("Advanced hooking frameworks and kernel-level compromise are out of scope.")
+                Spacer(Modifier.height(6.dp))
             }
         }
-        item {
-            SectionCard(
-                title = "Certificate pinning note",
-                modifier = Modifier.padding(bottom = 24.dp),
+
+        item(key = "pinning") {
+            Section(
+                title = "Certificate pinning",
+                footer = "Version ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
             ) {
-                Text(uiState.pinningSummary, style = MaterialTheme.typography.bodyMedium)
                 Text(
-                    text = "Pinning can reduce some man-in-the-middle risk, but it still needs certificate rotation planning and server-side controls.",
-                    style = MaterialTheme.typography.bodyMedium,
+                    text = uiState.pinningSummary,
+                    modifier = Modifier.padding(16.dp),
+                    style = MaterialTheme.typography.bodyLarge,
                 )
             }
         }
     }
 }
-
