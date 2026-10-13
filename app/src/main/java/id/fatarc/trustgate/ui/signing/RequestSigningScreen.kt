@@ -27,6 +27,7 @@ import id.fatarc.trustgate.ui.ListRow
 import id.fatarc.trustgate.ui.NoticeCard
 import id.fatarc.trustgate.ui.RowDivider
 import id.fatarc.trustgate.ui.ScreenScaffold
+import id.fatarc.trustgate.ui.SensitiveScreen
 import id.fatarc.trustgate.ui.Section
 import id.fatarc.trustgate.ui.SigningStatus
 import id.fatarc.trustgate.ui.TimeFormats
@@ -49,6 +50,8 @@ fun RequestSigningScreen(
     val formats = rememberTimeFormats()
     val request = uiState.signing.signedRequest
     val verifications = uiState.signing.verifications
+
+    SensitiveScreen()
 
     ScreenScaffold(
         title = "Request signing",

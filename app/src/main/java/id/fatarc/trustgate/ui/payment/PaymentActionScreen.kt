@@ -63,6 +63,7 @@ import id.fatarc.trustgate.ui.ScreenScaffold
 import id.fatarc.trustgate.ui.Section
 import id.fatarc.trustgate.ui.SectionFooter
 import id.fatarc.trustgate.ui.SectionHeader
+import id.fatarc.trustgate.ui.SensitiveScreen
 import id.fatarc.trustgate.ui.Submission
 import id.fatarc.trustgate.ui.SwitchRow
 import id.fatarc.trustgate.ui.TimeFormats
@@ -92,6 +93,7 @@ fun PaymentActionScreen(
     val formats = rememberTimeFormats()
     val risk = uiState.risk
 
+    SensitiveScreen()
     DecisionHaptics(payment = uiState.payment)
 
     ScreenScaffold(

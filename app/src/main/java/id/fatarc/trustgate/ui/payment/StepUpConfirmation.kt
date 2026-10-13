@@ -25,6 +25,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import id.fatarc.trustgate.core.security.ConfirmationMethod
+import id.fatarc.trustgate.ui.FilterObscuredTouches
 import java.security.Signature
 import java.time.Instant
 
@@ -119,6 +120,7 @@ private fun TapConfirmationDialog(
         icon = { Icon(Icons.Outlined.GppMaybe, contentDescription = null) },
         title = { Text("Continue on this device?") },
         text = {
+            FilterObscuredTouches()
             Text(
                 "$reason Continue only if you trust it.\n\nThis device has no screen lock, so TrustGate can't ask " +
                     "you to confirm with a PIN or fingerprint. Your tap is signed into the request instead.",

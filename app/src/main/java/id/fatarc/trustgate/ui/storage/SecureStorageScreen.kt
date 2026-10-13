@@ -26,6 +26,7 @@ import id.fatarc.trustgate.ui.RowDivider
 import id.fatarc.trustgate.ui.ScreenScaffold
 import id.fatarc.trustgate.ui.Section
 import id.fatarc.trustgate.ui.SectionFooter
+import id.fatarc.trustgate.ui.SensitiveScreen
 import id.fatarc.trustgate.ui.StorageStatus
 import id.fatarc.trustgate.ui.SwitchRow
 import id.fatarc.trustgate.ui.Tone
@@ -43,6 +44,8 @@ fun SecureStorageScreen(
 ) {
     val snapshot = uiState.storage.snapshot
     var revealToken by rememberSaveable { mutableStateOf(false) }
+
+    SensitiveScreen()
 
     ScreenScaffold(
         title = "Secure storage",
