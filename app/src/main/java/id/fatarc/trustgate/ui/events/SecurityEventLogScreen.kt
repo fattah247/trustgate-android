@@ -344,7 +344,7 @@ private fun EventRow(
                         DetailLine(
                             label = metadataLabel(key),
                             value = metadataValue(key, value),
-                            monospace = key == "nonce" || key == "signaturePrefix" || key == "signalId",
+                            monospace = key in MonospaceMetadata,
                         )
                     }
                 }
@@ -380,3 +380,5 @@ private fun DetailLine(
         )
     }
 }
+
+private val MonospaceMetadata = setOf("nonce", "signaturePrefix", "signalId", "keyId", "idempotencyKey", "paymentId")

@@ -46,7 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.os.ConfigurationCompat
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.signing.ReferencePayment
-import id.fatarc.trustgate.domain.signing.VerificationResult
+import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.ui.GateMark
 import id.fatarc.trustgate.ui.GateState
 import id.fatarc.trustgate.ui.GroupedSurface
@@ -64,6 +64,7 @@ import id.fatarc.trustgate.ui.Section
 import id.fatarc.trustgate.ui.SectionFooter
 import id.fatarc.trustgate.ui.SectionHeader
 import id.fatarc.trustgate.ui.Submission
+import id.fatarc.trustgate.ui.SwitchRow
 import id.fatarc.trustgate.ui.TimeFormats
 import id.fatarc.trustgate.ui.Tone
 import id.fatarc.trustgate.ui.TrustGateSpacing
@@ -84,6 +85,7 @@ fun PaymentActionScreen(
     onNavigateUp: () -> Unit,
     onAttemptPayment: () -> Unit,
     onSetScenarioRiskLevel: (DeviceRiskLevel?) -> Unit,
+    onSetSimulateLostResponse: (Boolean) -> Unit,
     onOpenSignals: () -> Unit,
     onInspectRequest: () -> Unit,
 ) {
@@ -121,8 +123,26 @@ fun PaymentActionScreen(
             )
         }
 
+        item(key = "reliability") {
+            Section(
+                title = "Network",
+                footer = "Each payment carries an idempotency key. When a response is lost, the app sends the same " +
+                    "signed request again and the backend answers with the original payment instead of charging twice.",
+            ) {
+                SwitchRow(
+                    title = "Lose the first response",
+                    supporting = "The backend processes the payment, but its reply never arrives.",
+                    checked = uiState.simulateLostResponse,
+                    onCheckedChange = onSetSimulateLostResponse,
+                )
+            }
+        }
+
         item(key = "policy") {
-            Section(title = "Policy") {
+            Section(
+                title = "Policy",
+                footer = "The reference backend makes this decision, not the app, and says which key must sign the request.",
+            ) {
                 DeviceRiskLevel.entries.forEachIndexed { index, level ->
                     val isCurrent = risk.report?.level == level
                     ListRow(
@@ -189,8 +209,8 @@ private fun ActionCard(
             }
         }
         Text(
-            text = "Running it checks the device again, applies the policy, and, if allowed, signs the request " +
-                "and sends it to the reference verifier.",
+            text = "Running it checks the device again and asks the backend to decide. If it's allowed, the app " +
+                "signs the payment with a key held in Android Keystore and submits it.",
             modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -253,7 +273,7 @@ private fun DecisionResult(
                 current.latestDecision is PaymentDecisionState.Blocked ->
                     NoticeAction(label = "View signals", onClick = onOpenSignals)
 
-                current.submission is Submission.Sent ->
+                current.submission is Submission.Charged || current.submission is Submission.Refused ->
                     NoticeAction(label = "Inspect request", onClick = onInspectRequest)
 
                 else -> null
@@ -385,41 +405,54 @@ private fun PaymentUiState.outcome(): Outcome? = when (val decision = latestDeci
     )
 }
 
-/** The gate let the action through; what matters next is whether the request it sent was accepted. */
+/** The gate let the action through; what matters next is whether the payment it sent was charged. */
 private fun PaymentUiState.allowedOutcome(title: String, reason: String): Outcome = when (val sent = submission) {
     null -> Outcome(
         title = title,
-        body = "$reason Signing and sending the request…",
+        body = "$reason Signing and sending the payment\u2026",
         tone = Tone.POSITIVE,
         icon = Icons.Outlined.CheckCircle,
     )
 
-    is Submission.NotSigned -> Outcome(
+    is Submission.NotSent -> Outcome(
         title = "Allowed, but not sent",
-        body = "$reason The request couldn't be signed: ${sent.message}",
+        body = "$reason The payment couldn't be signed: ${sent.message}",
         tone = Tone.CRITICAL,
         icon = Icons.Outlined.ErrorOutline,
     )
 
-    is Submission.Sent -> when (val result = sent.result) {
-        VerificationResult.Accepted -> Outcome(
-            title = title,
-            body = "$reason The signed request (nonce ${sent.nonce.take(8)}…) was accepted by the reference verifier.",
-            tone = Tone.POSITIVE,
-            icon = Icons.Outlined.CheckCircle,
-        )
+    is Submission.Charged -> Outcome(
+        title = title,
+        body = buildString {
+            append(reason)
+            append(" Payment ${sent.paymentId} was accepted, signed by the ")
+            append(if (sent.signedWith == KeyRole.STEP_UP) "step-up key your confirmation unlocked." else "device key.")
+            if (sent.lostResponses > 0) {
+                append(" The first response was lost; the retry returned the same payment, so it was charged once.")
+            }
+        },
+        tone = Tone.POSITIVE,
+        icon = Icons.Outlined.CheckCircle,
+    )
 
-        is VerificationResult.Rejected -> Outcome(
-            title = "Allowed, but rejected on arrival",
-            body = "$reason The reference verifier refused the request: ${result.reason.sentence()}",
-            tone = Tone.CRITICAL,
-            icon = Icons.Outlined.ErrorOutline,
-        )
-    }
+    is Submission.Refused -> Outcome(
+        title = "Allowed, but refused on arrival",
+        body = "$reason The backend refused the payment: ${sent.reason.sentence()}",
+        tone = Tone.CRITICAL,
+        icon = Icons.Outlined.ErrorOutline,
+    )
+
+    is Submission.NoResponse -> Outcome(
+        title = "No response",
+        body = "$reason No answer came back after ${sent.attempts} tries, so the outcome is unknown. Retrying is " +
+            "safe: the same idempotency key can never be charged twice.",
+        tone = Tone.CAUTION,
+        icon = Icons.Outlined.ErrorOutline,
+    )
 }
 
 private fun DeviceRiskLevel.policyDescription(): String = when (this) {
     DeviceRiskLevel.LOW -> "Runs without an extra step."
-    DeviceRiskLevel.MEDIUM -> "Pauses until the person confirms with their screen lock or biometrics."
+    DeviceRiskLevel.MEDIUM -> "Signed only after the person unlocks the step-up key with their screen lock or biometrics."
     DeviceRiskLevel.HIGH -> "Stopped until the device is reviewed."
 }

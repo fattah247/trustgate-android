@@ -4,10 +4,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.Cancel
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Fingerprint
 import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.GppBad
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.Payments
 import androidx.compose.material.icons.outlined.PendingActions
 import androidx.compose.material.icons.outlined.Radar
 import androidx.compose.material.icons.outlined.Science
@@ -35,6 +37,9 @@ val SecurityEvent.isScenario: Boolean
 val SecurityEvent.isRejectedVerification: Boolean
     get() = type == SecurityEventType.REQUEST_VERIFIED && metadata["result"] == "rejected"
 
+private val SecurityEvent.paymentResult: String?
+    get() = metadata["result"].takeIf { type == SecurityEventType.PAYMENT_SUBMITTED }
+
 /** Per-signal entries repeat what the check that produced them already says. */
 val SecurityEvent.isSignalDetail: Boolean
     get() = type == SecurityEventType.ROOT_SIGNAL_FOUND ||
@@ -61,6 +66,12 @@ fun SecurityEvent.headline(): String = when (type) {
     SecurityEventType.REQUEST_SIGNED -> "Request signed"
     SecurityEventType.REQUEST_VERIFIED -> if (isRejectedVerification) "Verifier rejected request" else "Verifier accepted request"
     SecurityEventType.SECURE_VALUE_STORED -> "Encrypted values saved"
+    SecurityEventType.KEY_REGISTERED -> if (metadata["role"] == "step_up") "Step-up key registered" else "Device key registered"
+    SecurityEventType.PAYMENT_SUBMITTED -> when (paymentResult) {
+        "accepted" -> if (metadata["lostResponses"] != null) "Payment charged once after a retry" else "Payment charged"
+        "unknown" -> "Payment outcome unknown"
+        else -> "Payment refused"
+    }
 }
 
 fun SecurityEvent.tone(): Tone = when (type) {
@@ -83,6 +94,12 @@ fun SecurityEvent.tone(): Tone = when (type) {
     SecurityEventType.SENSITIVE_ACTION_BLOCKED -> Tone.CRITICAL
 
     SecurityEventType.REQUEST_VERIFIED -> if (isRejectedVerification) Tone.CRITICAL else Tone.POSITIVE
+    SecurityEventType.KEY_REGISTERED -> if (metadata["attestation"] == "verified") Tone.POSITIVE else Tone.CAUTION
+    SecurityEventType.PAYMENT_SUBMITTED -> when (paymentResult) {
+        "accepted" -> Tone.POSITIVE
+        "unknown" -> Tone.CAUTION
+        else -> Tone.CRITICAL
+    }
 
     SecurityEventType.SENSITIVE_ACTION_CANCELLED,
     SecurityEventType.REQUEST_SIGNED,
@@ -108,6 +125,12 @@ val SecurityEvent.icon: ImageVector
         SecurityEventType.REQUEST_SIGNED -> Icons.Outlined.Key
         SecurityEventType.REQUEST_VERIFIED -> if (isRejectedVerification) Icons.Outlined.GppBad else Icons.Outlined.VerifiedUser
         SecurityEventType.SECURE_VALUE_STORED -> Icons.Outlined.Lock
+        SecurityEventType.KEY_REGISTERED -> if (metadata["role"] == "step_up") Icons.Outlined.Fingerprint else Icons.Outlined.Key
+        SecurityEventType.PAYMENT_SUBMITTED -> when (paymentResult) {
+            "accepted" -> Icons.Outlined.Payments
+            "unknown" -> Icons.Outlined.PendingActions
+            else -> Icons.Outlined.GppBad
+        }
     }
 
 fun metadataLabel(key: String): String = when (key) {
@@ -123,6 +146,17 @@ fun metadataLabel(key: String): String = when (key) {
     "attempt" -> "Sent"
     "result" -> "Result"
     "reason" -> "Reason"
+    "decidedBy" -> "Decided by"
+    "keyId" -> "Key ID"
+    "role" -> "Key"
+    "protection" -> "Held in"
+    "attestation" -> "Attestation"
+    "verifiedBoot" -> "Verified boot"
+    "bootloaderLocked" -> "Bootloader locked"
+    "idempotencyKey" -> "Idempotency key"
+    "attempts" -> "Attempts"
+    "lostResponses" -> "Lost responses"
+    "paymentId" -> "Payment"
     else -> key
         .replace(Regex("([a-z])([A-Z])"), "$1 $2")
         .replace('_', ' ')
@@ -154,6 +188,16 @@ fun metadataValue(key: String, value: String): String = when {
         else -> value
     }
     key == "reason" -> value.replace('_', ' ').replaceFirstChar { it.titlecase() }
+    key == "decidedBy" -> if (value == "reference-backend") "Reference backend" else value
+    key == "role" -> if (value == "step_up") "Step-up key" else "Device key"
+    key == "protection" -> when (value) {
+        "strongbox" -> "StrongBox"
+        "trusted_environment" -> "Secure hardware"
+        "software" -> "Software"
+        else -> value.replaceFirstChar { it.titlecase() }
+    }
+    key == "attestation" || key == "verifiedBoot" -> value.replace('_', ' ').replaceFirstChar { it.titlecase() }
+    key == "bootloaderLocked" -> if (value == "true") "Yes" else "No"
     key == "result" -> value.replaceFirstChar { it.titlecase() }
     else -> value
 }
@@ -174,7 +218,10 @@ private fun SecurityEvent.group(): EventFilter = when (type) {
 
     SecurityEventType.REQUEST_SIGNED,
     SecurityEventType.REQUEST_VERIFIED,
+    SecurityEventType.KEY_REGISTERED,
     -> EventFilter.SIGNING
+
+    SecurityEventType.PAYMENT_SUBMITTED -> EventFilter.ACTIONS
 
     SecurityEventType.SECURE_VALUE_STORED -> EventFilter.STORAGE
 }
