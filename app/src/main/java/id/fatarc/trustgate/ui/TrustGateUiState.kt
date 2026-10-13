@@ -1,9 +1,13 @@
 package id.fatarc.trustgate.ui
 
+import id.fatarc.trustgate.core.keys.KeySet
+import id.fatarc.trustgate.core.security.ConfirmationMethod
 import id.fatarc.trustgate.core.storage.SecurityStorageSnapshot
 import id.fatarc.trustgate.domain.events.SecurityEvent
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.risk.DeviceRiskReport
+import id.fatarc.trustgate.domain.signing.KeyRole
+import id.fatarc.trustgate.domain.signing.RejectionReason
 import id.fatarc.trustgate.domain.signing.SignedRequest
 import id.fatarc.trustgate.domain.signing.VerificationResult
 import java.time.Instant
@@ -14,10 +18,19 @@ data class TrustGateUiState(
     val payment: PaymentUiState = PaymentUiState(),
     val signing: SigningUiState = SigningUiState(),
     val storage: StorageUiState = StorageUiState(),
+    val keys: KeysUiState = KeysUiState(),
+    /** Drop the first response to each payment, as a timeout would, to show retries are safe. */
+    val simulateLostResponse: Boolean = false,
     val pinningSummary: String = "",
-    /** The reference verifier's freshness window, shown where its rules are explained. */
+    /** The reference backend's freshness window, shown where its rules are explained. */
     val verifierWindowMinutes: Long = 5,
     val userMessage: UserMessage? = null,
+)
+
+data class KeysUiState(
+    val keys: KeySet? = null,
+    val isPreparing: Boolean = true,
+    val errorMessage: String? = null,
 )
 
 data class RiskUiState(
@@ -42,15 +55,21 @@ data class PaymentUiState(
     val submission: Submission? = null,
 )
 
-/** The signed request a permitted action sends, and what the reference verifier made of it. */
+/** What happened to the payment a permitted action sent. */
 sealed interface Submission {
-    data class Sent(
-        val merchantReference: String,
-        val nonce: String,
-        val result: VerificationResult,
+    data class Charged(
+        val paymentId: String,
+        val signedWith: KeyRole,
+        val attempts: Int,
+        val lostResponses: Int,
     ) : Submission
 
-    data class NotSigned(val message: String) : Submission
+    data class Refused(val reason: RejectionReason) : Submission
+
+    /** Every attempt went unanswered; the idempotency key makes a later retry safe. */
+    data class NoResponse(val attempts: Int) : Submission
+
+    data class NotSent(val message: String) : Submission
 }
 
 sealed interface PaymentDecisionState {
@@ -58,7 +77,10 @@ sealed interface PaymentDecisionState {
 
     data class Allowed(val riskLevel: DeviceRiskLevel) : PaymentDecisionState
 
-    data class ConfirmationRequired(val riskLevel: DeviceRiskLevel) : PaymentDecisionState
+    data class ConfirmationRequired(
+        val riskLevel: DeviceRiskLevel,
+        val method: ConfirmationMethod,
+    ) : PaymentDecisionState
 
     data class Confirmed(val riskLevel: DeviceRiskLevel) : PaymentDecisionState
 
@@ -87,6 +109,8 @@ data class VerificationRecord(
     val result: VerificationResult,
     val at: Instant,
     val sentByProtectedAction: Boolean = false,
+    /** Responses lost before this one arrived; the backend charged once regardless. */
+    val lostResponses: Int = 0,
 )
 
 sealed interface SigningStatus {

@@ -1,7 +1,9 @@
 package id.fatarc.trustgate.core.security
 
+import id.fatarc.trustgate.core.backend.PaymentResponse
+import id.fatarc.trustgate.core.backend.SubmitOutcome
+import id.fatarc.trustgate.core.keys.RegisteredKey
 import id.fatarc.trustgate.domain.actiongate.SensitiveActionDecision
-import id.fatarc.trustgate.domain.actiongate.SensitiveActionGate
 import id.fatarc.trustgate.domain.events.SecurityEvent
 import id.fatarc.trustgate.domain.events.SecurityEventRepository
 import id.fatarc.trustgate.domain.events.SecurityEventType
@@ -10,6 +12,7 @@ import id.fatarc.trustgate.domain.risk.DeviceSignalCollector
 import id.fatarc.trustgate.domain.risk.RiskScorer
 import id.fatarc.trustgate.domain.risk.SignalCategory
 import id.fatarc.trustgate.domain.risk.flaggedSignalIds
+import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.domain.signing.RejectionReason
 import id.fatarc.trustgate.domain.signing.SignedRequest
 import id.fatarc.trustgate.domain.signing.VerificationResult
@@ -37,7 +40,6 @@ enum class ConfirmationMethod(val metadataValue: String) {
 class TrustGateSecurityService(
     private val signalCollector: DeviceSignalCollector,
     private val riskScorer: RiskScorer,
-    private val actionGate: SensitiveActionGate,
     private val eventRepository: SecurityEventRepository,
 ) {
     suspend fun assessDeviceRisk(
@@ -78,16 +80,77 @@ class TrustGateSecurityService(
         return report
     }
 
-    suspend fun evaluateSensitiveAction(report: DeviceRiskReport): SensitiveActionDecision {
-        return actionGate.decide(report.level).also { decision ->
-            eventRepository.record(
-                SecurityEvent(
-                    type = decision.toSecurityEventType(),
-                    riskLevel = report.level,
-                    message = decision.toAuditMessage(),
-                ),
-            )
-        }
+    /** Logs the gate decision the backend made for this report. */
+    suspend fun recordGateDecision(report: DeviceRiskReport, decision: SensitiveActionDecision) {
+        eventRepository.record(
+            SecurityEvent(
+                type = decision.toSecurityEventType(),
+                riskLevel = report.level,
+                message = decision.toAuditMessage(),
+                metadata = mapOf("decidedBy" to "reference-backend"),
+            ),
+        )
+    }
+
+    suspend fun recordKeyRegistered(key: RegisteredKey) {
+        val attestation = key.attestation
+        eventRepository.record(
+            SecurityEvent(
+                type = SecurityEventType.KEY_REGISTERED,
+                message = buildString {
+                    append(
+                        when (key.role) {
+                            KeyRole.DEVICE -> "Device signing key registered"
+                            KeyRole.STEP_UP -> "Step-up key registered; it signs only after the person authenticates"
+                        },
+                    )
+                    append(
+                        when {
+                            attestation.isVerified -> ", with a verified attestation."
+                            attestation.isAttested -> ", but its attestation didn't fully verify."
+                            else -> " without attestation."
+                        },
+                    )
+                },
+                metadata = buildMap {
+                    put("keyId", key.keyId)
+                    put("role", key.role.name.lowercase())
+                    put("protection", key.protection.name.lowercase())
+                    put("attestation", if (attestation.isVerified) "verified" else if (attestation.isAttested) "unverified" else "none")
+                    attestation.description?.rootOfTrust?.let { root ->
+                        put("verifiedBoot", root.verifiedBootState.name.lowercase())
+                        put("bootloaderLocked", root.deviceLocked.toString())
+                    }
+                },
+            ),
+        )
+    }
+
+    suspend fun recordPayment(request: SignedRequest, outcome: SubmitOutcome) {
+        val response = outcome.response
+        eventRepository.record(
+            SecurityEvent(
+                type = SecurityEventType.PAYMENT_SUBMITTED,
+                message = when (response) {
+                    null -> "No response after ${outcome.attempts} attempts; the payment's outcome is unknown."
+                    is PaymentResponse.Rejected -> "The backend refused the payment: ${response.reason.auditPhrase()}."
+                    is PaymentResponse.Processed -> if (outcome.lostResponses > 0) {
+                        "Payment ${response.payment.id} charged once; a lost response was retried and returned the same payment."
+                    } else {
+                        "Payment ${response.payment.id} charged for ${request.payload.merchantReference}."
+                    }
+                },
+                metadata = buildMap {
+                    put("result", if (response is PaymentResponse.Processed) "accepted" else if (response == null) "unknown" else "rejected")
+                    request.idempotencyKey?.let { put("idempotencyKey", it) }
+                    put("keyId", request.keyId)
+                    put("attempts", outcome.attempts.toString())
+                    if (outcome.lostResponses > 0) put("lostResponses", outcome.lostResponses.toString())
+                    if (response is PaymentResponse.Processed) put("paymentId", response.payment.id)
+                    if (response is PaymentResponse.Rejected) put("reason", response.reason.name.lowercase())
+                },
+            ),
+        )
     }
 
     suspend fun confirmSensitiveAction(report: DeviceRiskReport, method: ConfirmationMethod) {
@@ -139,6 +202,7 @@ class TrustGateSecurityService(
                 },
                 metadata = mapOf(
                     "nonce" to request.nonce,
+                    "keyId" to request.keyId,
                     "signaturePrefix" to request.signature.take(12),
                 ),
             ),
@@ -152,10 +216,10 @@ class TrustGateSecurityService(
                 type = SecurityEventType.REQUEST_VERIFIED,
                 message = when (result) {
                     VerificationResult.Accepted ->
-                        "Reference verifier accepted the request for ${request.payload.merchantReference}."
+                        "Reference backend accepted the request for ${request.payload.merchantReference}."
 
                     is VerificationResult.Rejected ->
-                        "Reference verifier rejected the request: ${result.reason.auditPhrase()}."
+                        "Reference backend rejected the request: ${result.reason.auditPhrase()}."
                 },
                 metadata = buildMap {
                     put("nonce", request.nonce)
@@ -238,10 +302,15 @@ class TrustGateSecurityService(
     }
 
     private fun RejectionReason.auditPhrase(): String = when (this) {
-        RejectionReason.MISSING_HEADERS -> "signing headers missing"
+        RejectionReason.MISSING_HEADERS -> "signing headers missing or malformed"
         RejectionReason.MALFORMED_TIMESTAMP -> "timestamp malformed"
         RejectionReason.OUTSIDE_TIME_WINDOW -> "outside the time window"
+        RejectionReason.UNKNOWN_KEY -> "signed by a key it doesn't know"
         RejectionReason.SIGNATURE_MISMATCH -> "signature doesn't match the request"
-        RejectionReason.NONCE_REUSED -> "nonce already used"
+        RejectionReason.UNKNOWN_CHALLENGE -> "challenge not issued to this device or expired"
+        RejectionReason.CHALLENGE_REUSED -> "challenge already used"
+        RejectionReason.CONFIRMATION_REQUIRED -> "required confirmation missing"
+        RejectionReason.IDEMPOTENCY_CONFLICT -> "idempotency key reused for a different payment"
+        RejectionReason.MALFORMED_BODY -> "payment body unreadable"
     }
 }

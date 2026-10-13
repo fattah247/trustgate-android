@@ -27,6 +27,7 @@ import id.fatarc.trustgate.ui.ListRow
 import id.fatarc.trustgate.ui.NoticeCard
 import id.fatarc.trustgate.ui.RowDivider
 import id.fatarc.trustgate.ui.ScreenScaffold
+import id.fatarc.trustgate.ui.SensitiveScreen
 import id.fatarc.trustgate.ui.Section
 import id.fatarc.trustgate.ui.SigningStatus
 import id.fatarc.trustgate.ui.TimeFormats
@@ -50,6 +51,8 @@ fun RequestSigningScreen(
     val request = uiState.signing.signedRequest
     val verifications = uiState.signing.verifications
 
+    SensitiveScreen()
+
     ScreenScaffold(
         title = "Request signing",
         onNavigateUp = onNavigateUp,
@@ -57,9 +60,9 @@ fun RequestSigningScreen(
         item(key = "intro") {
             GroupedSurface {
                 Text(
-                    text = "Builds a reference payment request, hashes the body with SHA-256, and signs it with " +
-                        "HMAC-SHA256. The key is a demo key bundled in the app, so this shows the request shape, " +
-                        "not production key custody.",
+                    text = "Signs a reference payment request with this device's P-256 key (ECDSA over SHA-256). " +
+                        "The private key stays in Android Keystore; the backend checks the signature with the " +
+                        "public key it registered.",
                     modifier = Modifier.padding(16.dp),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -79,6 +82,10 @@ fun RequestSigningScreen(
             }
         }
 
+        item(key = "keys") {
+            DeviceKeysSection(keys = uiState.keys)
+        }
+
         (uiState.signing.status as? SigningStatus.Failed)?.let { failure ->
             item(key = "error") {
                 NoticeCard(
@@ -93,14 +100,14 @@ fun RequestSigningScreen(
         if (request != null) {
             item(key = "verifier") {
                 Section(
-                    title = "Try it against the verifier",
-                    footer = "The reference verifier plays the server's part with the same demo key. The signature " +
-                        "must cover what arrived, the timestamp must be within " +
-                        "${uiState.verifierWindowMinutes} minutes, and each nonce is accepted once.",
+                    title = "Try it against the backend",
+                    footer = "The reference backend verifies with the registered public key. The signature must " +
+                        "cover what arrived, the timestamp must be within ${uiState.verifierWindowMinutes} minutes, " +
+                        "and the nonce must be a one-time challenge it issued to this device.",
                 ) {
                     ListRow(
                         headline = "Send as signed",
-                        supporting = "Sending it a second time replays the same nonce.",
+                        supporting = "Sending it a second time replays the backend's one-time challenge.",
                         supportingColor = MaterialTheme.colorScheme.onSurfaceVariant,
                         leadingIcon = Icons.AutoMirrored.Outlined.Send,
                         onClickLabel = "Send to the verifier",
@@ -129,7 +136,7 @@ fun RequestSigningScreen(
 
             if (verifications.isNotEmpty()) {
                 item(key = "responses") {
-                    Section(title = "Verifier responses", modifier = Modifier.animateContentSize()) {
+                    Section(title = "Backend responses", modifier = Modifier.animateContentSize()) {
                         verifications.forEachIndexed { index, record ->
                             VerificationRow(record = record, formats = formats)
                             if (index != verifications.lastIndex) RowDivider(startIndent = TrustGateSpacing.listIconInset)
@@ -141,6 +148,8 @@ fun RequestSigningScreen(
             item(key = "request") {
                 Section(title = "Request") {
                     ValueRow(label = "Endpoint", value = "${request.method} ${request.path}", monospace = true)
+                    RowDivider()
+                    ValueRow(label = "Signed by", value = request.keyId, monospace = true)
                     RowDivider()
                     ValueRow(label = "Body hash (SHA-256)", value = request.bodyHash, monospace = true, copyable = true)
                 }
@@ -185,6 +194,8 @@ private fun VerificationRow(
 ) {
     val accepted = record.result is VerificationResult.Accepted
     val sentAs = when {
+        record.sentByProtectedAction && record.lostResponses > 0 ->
+            "Sent by the protected action; the first response was lost and the retry returned the same payment"
         record.sentByProtectedAction -> "Sent by the protected action"
         else -> when (record.attempt) {
             VerificationAttempt.AS_SIGNED -> "Sent as signed"
@@ -212,15 +223,25 @@ private fun RejectionReason.shortLabel(): String = when (this) {
     RejectionReason.MISSING_HEADERS -> "headers missing"
     RejectionReason.MALFORMED_TIMESTAMP -> "bad timestamp"
     RejectionReason.OUTSIDE_TIME_WINDOW -> "too late"
+    RejectionReason.UNKNOWN_KEY -> "unknown key"
     RejectionReason.SIGNATURE_MISMATCH -> "signature mismatch"
-    RejectionReason.NONCE_REUSED -> "replayed"
+    RejectionReason.UNKNOWN_CHALLENGE -> "unknown challenge"
+    RejectionReason.CHALLENGE_REUSED -> "replayed"
+    RejectionReason.CONFIRMATION_REQUIRED -> "confirmation missing"
+    RejectionReason.IDEMPOTENCY_CONFLICT -> "idempotency conflict"
+    RejectionReason.MALFORMED_BODY -> "unreadable body"
 }
 
 /** What the rejection means for someone trying to abuse the request. */
 fun RejectionReason.sentence(): String = when (this) {
-    RejectionReason.MISSING_HEADERS -> "The timestamp, nonce, or signature header was missing."
+    RejectionReason.MISSING_HEADERS -> "A signing header was missing or malformed."
     RejectionReason.MALFORMED_TIMESTAMP -> "The timestamp couldn't be read, so freshness can't be checked."
     RejectionReason.OUTSIDE_TIME_WINDOW -> "It was signed too long before it arrived, so a held-back request can't be used later."
+    RejectionReason.UNKNOWN_KEY -> "The backend never registered the key that signed it."
     RejectionReason.SIGNATURE_MISMATCH -> "What arrived isn't what was signed, so an edited request can't get through."
-    RejectionReason.NONCE_REUSED -> "This nonce was already accepted, so a captured request can't be sent twice."
+    RejectionReason.UNKNOWN_CHALLENGE -> "The nonce isn't a challenge the backend issued to this device, or it expired."
+    RejectionReason.CHALLENGE_REUSED -> "This one-time challenge was already used, so a captured request can't be sent twice."
+    RejectionReason.CONFIRMATION_REQUIRED -> "The backend asked for confirmation and the request wasn't signed with it."
+    RejectionReason.IDEMPOTENCY_CONFLICT -> "The idempotency key was already used for a different payment."
+    RejectionReason.MALFORMED_BODY -> "The body isn't a payment the backend can process, so nothing was charged."
 }

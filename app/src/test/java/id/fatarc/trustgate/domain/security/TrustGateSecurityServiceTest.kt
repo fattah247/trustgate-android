@@ -1,12 +1,10 @@
 package id.fatarc.trustgate.domain.security
 
 import com.google.common.truth.Truth.assertThat
-import id.fatarc.trustgate.core.crypto.HmacRequestSigner
 import id.fatarc.trustgate.core.security.AssessmentTrigger
 import id.fatarc.trustgate.core.security.ConfirmationMethod
 import id.fatarc.trustgate.core.security.TrustGateSecurityService
 import id.fatarc.trustgate.domain.actiongate.SensitiveActionGate
-import id.fatarc.trustgate.domain.events.SecurityEvent
 import id.fatarc.trustgate.domain.events.SecurityEventRepository
 import id.fatarc.trustgate.domain.events.SecurityEventType
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
@@ -17,10 +15,13 @@ import id.fatarc.trustgate.domain.risk.SignalCategory
 import id.fatarc.trustgate.domain.risk.SignalSeverity
 import id.fatarc.trustgate.domain.risk.scenarioRiskReport
 import id.fatarc.trustgate.domain.signing.PaymentRequestPayload
+import id.fatarc.trustgate.domain.signing.ReferenceRequestSigner
 import id.fatarc.trustgate.domain.signing.RejectionReason
 import id.fatarc.trustgate.domain.signing.VerificationResult
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
+import id.fatarc.trustgate.testing.FakeSignalCollector
+import id.fatarc.trustgate.testing.InMemorySecurityEventRepository
+import id.fatarc.trustgate.testing.MutableSignalCollector
+import id.fatarc.trustgate.testing.TestKey
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
 
@@ -39,7 +40,6 @@ class TrustGateSecurityServiceTest {
                 ),
             ),
             riskScorer = RiskScorer(),
-            actionGate = SensitiveActionGate(),
             eventRepository = repository,
         )
 
@@ -63,12 +63,11 @@ class TrustGateSecurityServiceTest {
                 ),
             ),
             riskScorer = RiskScorer(),
-            actionGate = SensitiveActionGate(),
             eventRepository = repository,
         )
 
         val report = service.assessDeviceRisk()
-        service.evaluateSensitiveAction(report)
+        service.recordGateDecision(report, SensitiveActionGate().decide(report.level))
 
         assertThat(repository.events.value.last().type).isEqualTo(SecurityEventType.SENSITIVE_ACTION_BLOCKED)
     }
@@ -143,18 +142,23 @@ class TrustGateSecurityServiceTest {
     fun `verifier rejection is recorded with its reason`() = runTest {
         val repository = InMemorySecurityEventRepository()
         val service = serviceWith(repository = repository, signals = emptyList())
-        val request = HmacRequestSigner().sign(
-            payload = PaymentRequestPayload(amountMinor = 1, currency = "IDR", merchantReference = "REF-1"),
-            timestamp = "2026-05-31T00:00:00Z",
-            nonce = "n-1",
-        )
+        val request = TestKey().let { key ->
+            key.sign(
+                ReferenceRequestSigner().prepare(
+                    payload = PaymentRequestPayload(amountMinor = 1, currency = "IDR", merchantReference = "REF-1"),
+                    nonce = "n-1",
+                    keyId = key.keyId,
+                    timestamp = "2026-05-31T00:00:00Z",
+                ),
+            )
+        }
 
-        service.recordVerification(request, VerificationResult.Rejected(RejectionReason.NONCE_REUSED), attempt = "as-signed")
+        service.recordVerification(request, VerificationResult.Rejected(RejectionReason.CHALLENGE_REUSED), attempt = "as-signed")
 
         val event = repository.events.value.single()
         assertThat(event.type).isEqualTo(SecurityEventType.REQUEST_VERIFIED)
         assertThat(event.metadata).containsEntry("result", "rejected")
-        assertThat(event.metadata).containsEntry("reason", "nonce_reused")
+        assertThat(event.metadata).containsEntry("reason", "challenge_reused")
     }
 
     @Test
@@ -168,7 +172,7 @@ class TrustGateSecurityServiceTest {
         )
 
         val report = service.assessDeviceRisk()
-        service.evaluateSensitiveAction(report)
+        service.recordGateDecision(report, SensitiveActionGate().decide(report.level))
         service.cancelSensitiveAction(report)
 
         assertThat(repository.events.value.takeLast(2).map { it.type }).containsExactly(
@@ -198,7 +202,6 @@ class TrustGateSecurityServiceTest {
     ): TrustGateSecurityService = TrustGateSecurityService(
         signalCollector = collector,
         riskScorer = RiskScorer(),
-        actionGate = SensitiveActionGate(),
         eventRepository = repository,
     )
 
@@ -217,29 +220,3 @@ class TrustGateSecurityServiceTest {
         )
     }
 }
-
-private class FakeSignalCollector(
-    private val signals: List<RiskSignal>,
-) : DeviceSignalCollector {
-    override fun collectSignals(): List<RiskSignal> = signals
-}
-
-private class MutableSignalCollector(
-    var signals: List<RiskSignal>,
-) : DeviceSignalCollector {
-    override fun collectSignals(): List<RiskSignal> = signals
-}
-
-private class InMemorySecurityEventRepository : SecurityEventRepository {
-    private val state = MutableStateFlow<List<SecurityEvent>>(emptyList())
-    override val events: StateFlow<List<SecurityEvent>> = state
-
-    override suspend fun record(event: SecurityEvent) {
-        state.value = state.value + event
-    }
-
-    override suspend fun clear() {
-        state.value = emptyList()
-    }
-}
-

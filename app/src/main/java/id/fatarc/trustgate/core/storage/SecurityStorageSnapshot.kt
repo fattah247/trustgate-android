@@ -6,6 +6,8 @@ data class SecurityStorageSnapshot(
     val sessionToken: String? = null,
     val lastRiskLevel: DeviceRiskLevel? = null,
     val showSignalsOnHome: Boolean = true,
+    /** Values that couldn't be decrypted, such as after a restore onto another device, and were removed. */
+    val unreadableValuesCleared: Int = 0,
 )
 
 interface SecureValueStore {

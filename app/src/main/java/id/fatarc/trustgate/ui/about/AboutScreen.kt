@@ -36,9 +36,10 @@ fun AboutScreen(
             Section(title = "What it covers") {
                 Spacer(Modifier.height(6.dp))
                 BulletItem("Runtime signals for root access, emulation, debugging, and install source.")
-                BulletItem("A simple risk level that decides whether a protected action runs, asks, or stops.")
+                BulletItem("A risk level the backend turns into a decision: run, ask to confirm, or stop.")
+                BulletItem("Keystore keys, attested to the backend, that sign each request; the step-up key only signs after biometrics or the screen lock.")
+                BulletItem("One-time challenges and idempotent payments, so replays are refused and retries never charge twice.")
                 BulletItem("A local event log so each check and decision can be reviewed later.")
-                BulletItem("Request signing and encrypted storage as part of the same client story.")
                 Spacer(Modifier.height(6.dp))
             }
         }
@@ -47,8 +48,8 @@ fun AboutScreen(
             Section(title = "Limits") {
                 Spacer(Modifier.height(6.dp))
                 BulletItem("Client-side checks are signals, not proof that a device can be trusted.")
-                BulletItem("The signing key is bundled in the app; production keys belong in managed custody.")
-                BulletItem("There's no payment processor, fraud engine, or server-side decision behind the demo flow.")
+                BulletItem("The reference backend runs inside the app, so it shows what a server checks but isn't an independent authority.")
+                BulletItem("There's no Play Integrity verdict, payment processor, or fraud engine behind the demo flow.")
                 BulletItem("Advanced hooking frameworks and kernel-level compromise are out of scope.")
                 Spacer(Modifier.height(6.dp))
             }

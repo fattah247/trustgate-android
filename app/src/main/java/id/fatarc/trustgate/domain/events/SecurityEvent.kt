@@ -23,6 +23,8 @@ enum class SecurityEventType {
     REQUEST_SIGNED,
     REQUEST_VERIFIED,
     SECURE_VALUE_STORED,
+    KEY_REGISTERED,
+    PAYMENT_SUBMITTED,
 }
 
 @Serializable

@@ -57,7 +57,6 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.navigation
 import androidx.navigation.compose.rememberNavController
-import id.fatarc.trustgate.core.security.ConfirmationMethod
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.ui.about.AboutScreen
 import id.fatarc.trustgate.ui.events.SecurityEventLogScreen
@@ -68,6 +67,7 @@ import id.fatarc.trustgate.ui.payment.StepUpConfirmation
 import id.fatarc.trustgate.ui.risk.DeviceRiskDetailsScreen
 import id.fatarc.trustgate.ui.signing.RequestSigningScreen
 import id.fatarc.trustgate.ui.storage.SecureStorageScreen
+import java.security.Signature
 
 private object Routes {
     const val OVERVIEW = "overview"
@@ -100,8 +100,11 @@ fun TrustGateApp(
     uiState: TrustGateUiState,
     onRefreshRisk: () -> Unit,
     onAttemptPayment: () -> Unit,
-    onConfirmPayment: (ConfirmationMethod) -> Unit,
+    onStepUpSignature: () -> Signature?,
+    onStepUpAuthenticated: (Signature) -> Unit,
+    onConfirmWithTap: () -> Unit,
     onDismissConfirmation: (problem: String?) -> Unit,
+    onSetSimulateLostResponse: (Boolean) -> Unit,
     onSignReferenceRequest: () -> Unit,
     onStoreReferenceValues: () -> Unit,
     onRefreshStorage: () -> Unit,
@@ -248,6 +251,7 @@ fun TrustGateApp(
                                         onNavigateUp = dropUnlessResumed { navController.navigateUp() },
                                         onAttemptPayment = onAttemptPayment,
                                         onSetScenarioRiskLevel = onSetScenarioRiskLevel,
+                                        onSetSimulateLostResponse = onSetSimulateLostResponse,
                                         // Pushed within Gate so back returns to the action, not Overview.
                                         onOpenSignals = dropUnlessResumed { navController.navigate(Routes.GATE_SIGNALS) },
                                         onInspectRequest = dropUnlessResumed { navController.navigate(Routes.SIGNING) },
@@ -295,11 +299,15 @@ fun TrustGateApp(
             }
         }
 
-        if (uiState.payment.latestDecision is PaymentDecisionState.ConfirmationRequired) {
+        val pendingConfirmation = uiState.payment.latestDecision as? PaymentDecisionState.ConfirmationRequired
+        if (pendingConfirmation != null) {
             StepUpConfirmation(
+                method = pendingConfirmation.method,
                 requestedAt = uiState.payment.decidedAt,
                 signalNames = uiState.risk.report?.flaggedSignals().orEmpty().map { it.name },
-                onConfirm = onConfirmPayment,
+                onRequestSignature = onStepUpSignature,
+                onAuthenticated = onStepUpAuthenticated,
+                onConfirmTap = onConfirmWithTap,
                 onDismiss = onDismissConfirmation,
             )
         }

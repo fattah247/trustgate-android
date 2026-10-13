@@ -26,6 +26,7 @@ import id.fatarc.trustgate.ui.RowDivider
 import id.fatarc.trustgate.ui.ScreenScaffold
 import id.fatarc.trustgate.ui.Section
 import id.fatarc.trustgate.ui.SectionFooter
+import id.fatarc.trustgate.ui.SensitiveScreen
 import id.fatarc.trustgate.ui.StorageStatus
 import id.fatarc.trustgate.ui.SwitchRow
 import id.fatarc.trustgate.ui.Tone
@@ -44,6 +45,8 @@ fun SecureStorageScreen(
     val snapshot = uiState.storage.snapshot
     var revealToken by rememberSaveable { mutableStateOf(false) }
 
+    SensitiveScreen()
+
     ScreenScaffold(
         title = "Secure storage",
         onNavigateUp = onNavigateUp,
@@ -56,8 +59,9 @@ fun SecureStorageScreen(
         item(key = "intro") {
             GroupedSurface {
                 Text(
-                    text = "Keys and values are encrypted with AES-256 (SIV for keys, GCM for values) under a " +
-                        "master key held in Android Keystore.",
+                    text = "Each value is encrypted with AES-256-GCM under a key held in Android Keystore and bound " +
+                        "to its name, so a value copied into another slot won't decrypt. Backups and device " +
+                        "transfers leave these values out.",
                     modifier = Modifier.padding(16.dp),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
