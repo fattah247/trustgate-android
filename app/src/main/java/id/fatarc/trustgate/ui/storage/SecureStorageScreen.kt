@@ -56,8 +56,9 @@ fun SecureStorageScreen(
         item(key = "intro") {
             GroupedSurface {
                 Text(
-                    text = "Keys and values are encrypted with AES-256 (SIV for keys, GCM for values) under a " +
-                        "master key held in Android Keystore.",
+                    text = "Each value is encrypted with AES-256-GCM under a key held in Android Keystore and bound " +
+                        "to its name, so a value copied into another slot won't decrypt. Backups and device " +
+                        "transfers leave these values out.",
                     modifier = Modifier.padding(16.dp),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

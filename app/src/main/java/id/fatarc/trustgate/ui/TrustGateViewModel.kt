@@ -367,7 +367,12 @@ class TrustGateViewModel(
                 withContext(ioDispatcher) { secureValueStore.readSnapshot() }
             }.rethrowCancellation().onSuccess { snapshot ->
                 applyStorageSnapshot(snapshot)
-                if (announce) showMessage("Reloaded from encrypted storage")
+                when {
+                    snapshot.unreadableValuesCleared > 0 -> showMessage(
+                        "${snapshot.unreadableValuesCleared} stored values couldn't be decrypted on this device and were cleared",
+                    )
+                    announce -> showMessage("Reloaded from encrypted storage")
+                }
             }.onFailure { error ->
                 updateStorageFailure(error.message ?: "Encrypted storage is unavailable.")
             }

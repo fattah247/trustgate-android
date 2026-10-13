@@ -7,7 +7,7 @@ import id.fatarc.trustgate.core.crypto.PinnedHttpClientFactory
 import id.fatarc.trustgate.core.crypto.PinningConfig
 import id.fatarc.trustgate.core.security.AndroidDeviceSignalCollector
 import id.fatarc.trustgate.core.security.TrustGateSecurityService
-import id.fatarc.trustgate.core.storage.EncryptedSecurityStore
+import id.fatarc.trustgate.core.storage.KeystoreSecureValueStore
 import id.fatarc.trustgate.core.storage.SecureValueStore
 import id.fatarc.trustgate.data.securityevent.PersistedSecurityEventRepository
 import id.fatarc.trustgate.domain.actiongate.SensitiveActionGate
@@ -20,7 +20,7 @@ class TrustGateAppContainer(
     context: Context,
 ) {
     val securityEventRepository: SecurityEventRepository = PersistedSecurityEventRepository(context)
-    val secureValueStore: SecureValueStore = EncryptedSecurityStore(context)
+    val secureValueStore: SecureValueStore = KeystoreSecureValueStore(context)
     val requestSigner: RequestSigner = HmacRequestSigner()
 
     // One instance for the app's lifetime so its nonce ledger catches replays across screens.
