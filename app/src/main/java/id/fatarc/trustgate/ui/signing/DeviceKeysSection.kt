@@ -15,11 +15,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import id.fatarc.trustgate.core.attestation.AttestationReport
 import id.fatarc.trustgate.core.attestation.SecurityLevel
 import id.fatarc.trustgate.core.attestation.VerifiedBootState
 import id.fatarc.trustgate.core.keys.RegisteredKey
+import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.ui.KeysUiState
 import id.fatarc.trustgate.ui.ListRow
 import id.fatarc.trustgate.ui.RowDivider
@@ -41,7 +43,6 @@ fun DeviceKeysSection(keys: KeysUiState) {
         when {
             registered != null -> {
                 KeyRow(
-                    title = "Device key",
                     key = registered.device,
                     purpose = "Signs ordinary requests.",
                 )
@@ -49,7 +50,6 @@ fun DeviceKeysSection(keys: KeysUiState) {
                 val stepUp = registered.stepUp
                 if (stepUp != null) {
                     KeyRow(
-                        title = "Step-up key",
                         key = stepUp,
                         purpose = if (stepUp.attestation.description?.userAuthRequired == true) {
                             "Signs only after biometrics or the screen lock; the attestation proves it."
@@ -92,15 +92,14 @@ fun DeviceKeysSection(keys: KeysUiState) {
 
 @Composable
 private fun KeyRow(
-    title: String,
     key: RegisteredKey,
     purpose: String,
 ) {
     ListRow(
-        headline = title,
+        headline = key.role.title(),
         supporting = "$purpose ${key.attestation.summary()}\n${key.keyId}",
         supportingColor = MaterialTheme.colorScheme.onSurfaceVariant,
-        leadingIcon = if (title == "Device key") Icons.Outlined.Key else Icons.Outlined.Fingerprint,
+        leadingIcon = key.role.icon(),
         leadingTint = if (key.attestation.isVerified) Tone.POSITIVE.contentColor() else Tone.CAUTION.contentColor(),
         trailing = { Trailing(key.protection.label()) },
     )
@@ -113,6 +112,16 @@ private fun Trailing(text: String) {
         style = MaterialTheme.typography.labelMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+}
+
+fun KeyRole.title(): String = when (this) {
+    KeyRole.DEVICE -> "Device key"
+    KeyRole.STEP_UP -> "Step-up key"
+}
+
+fun KeyRole.icon(): ImageVector = when (this) {
+    KeyRole.DEVICE -> Icons.Outlined.Key
+    KeyRole.STEP_UP -> Icons.Outlined.Fingerprint
 }
 
 fun SecurityLevel.label(): String = when (this) {

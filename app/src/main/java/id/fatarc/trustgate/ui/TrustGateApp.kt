@@ -128,7 +128,7 @@ fun TrustGateApp(
         }
     }
 
-    // Coming back to the app re-checks a stale verdict so nothing old is presented as current.
+    // Coming back to the app refreshes the keys and re-checks a stale verdict.
     LifecycleResumeEffect(Unit) {
         onAppResumed()
         onPauseOrDispose { }

@@ -18,6 +18,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import id.fatarc.trustgate.core.backend.ReferenceBackend
 import id.fatarc.trustgate.domain.signing.RejectionReason
 import id.fatarc.trustgate.domain.signing.VerificationResult
 import id.fatarc.trustgate.ui.CodeTextStyle
@@ -27,8 +28,8 @@ import id.fatarc.trustgate.ui.ListRow
 import id.fatarc.trustgate.ui.NoticeCard
 import id.fatarc.trustgate.ui.RowDivider
 import id.fatarc.trustgate.ui.ScreenScaffold
-import id.fatarc.trustgate.ui.SensitiveScreen
 import id.fatarc.trustgate.ui.Section
+import id.fatarc.trustgate.ui.SensitiveScreen
 import id.fatarc.trustgate.ui.SigningStatus
 import id.fatarc.trustgate.ui.TimeFormats
 import id.fatarc.trustgate.ui.Tone
@@ -102,7 +103,7 @@ fun RequestSigningScreen(
                 Section(
                     title = "Try it against the backend",
                     footer = "The reference backend verifies with the registered public key. The signature must " +
-                        "cover what arrived, the timestamp must be within ${uiState.verifierWindowMinutes} minutes, " +
+                        "cover what arrived, the timestamp must be within ${ReferenceBackend.ALLOWED_CLOCK_SKEW.toMinutes()} minutes, " +
                         "and the nonce must be a one-time challenge it issued to this device.",
                 ) {
                     ListRow(
@@ -219,7 +220,7 @@ private fun VerificationRow(
     )
 }
 
-private fun RejectionReason.shortLabel(): String = when (this) {
+fun RejectionReason.shortLabel(): String = when (this) {
     RejectionReason.MISSING_HEADERS -> "headers missing"
     RejectionReason.MALFORMED_TIMESTAMP -> "bad timestamp"
     RejectionReason.OUTSIDE_TIME_WINDOW -> "too late"

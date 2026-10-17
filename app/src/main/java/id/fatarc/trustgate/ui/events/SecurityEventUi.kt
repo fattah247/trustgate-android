@@ -4,7 +4,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.Cancel
 import androidx.compose.material.icons.outlined.CheckCircle
-import androidx.compose.material.icons.outlined.Fingerprint
 import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.GppBad
 import androidx.compose.material.icons.outlined.Key
@@ -15,11 +14,18 @@ import androidx.compose.material.icons.outlined.Radar
 import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.ui.graphics.vector.ImageVector
+import id.fatarc.trustgate.core.attestation.SecurityLevel
 import id.fatarc.trustgate.core.security.TrustGateSecurityService
 import id.fatarc.trustgate.domain.events.SecurityEvent
 import id.fatarc.trustgate.domain.events.SecurityEventType
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
+import id.fatarc.trustgate.domain.signing.KeyRole
+import id.fatarc.trustgate.domain.signing.RejectionReason
 import id.fatarc.trustgate.ui.Tone
+import id.fatarc.trustgate.ui.signing.icon
+import id.fatarc.trustgate.ui.signing.label
+import id.fatarc.trustgate.ui.signing.shortLabel
+import id.fatarc.trustgate.ui.signing.title
 
 enum class EventFilter(val label: String) {
     ALL("All"),
@@ -66,7 +72,7 @@ fun SecurityEvent.headline(): String = when (type) {
     SecurityEventType.REQUEST_SIGNED -> "Request signed"
     SecurityEventType.REQUEST_VERIFIED -> if (isRejectedVerification) "Verifier rejected request" else "Verifier accepted request"
     SecurityEventType.SECURE_VALUE_STORED -> "Encrypted values saved"
-    SecurityEventType.KEY_REGISTERED -> if (metadata["role"] == "step_up") "Step-up key registered" else "Device key registered"
+    SecurityEventType.KEY_REGISTERED -> "${role().title()} registered"
     SecurityEventType.PAYMENT_SUBMITTED -> when (paymentResult) {
         "accepted" -> if (metadata["lostResponses"] != null) "Payment charged once after a retry" else "Payment charged"
         "unknown" -> "Payment outcome unknown"
@@ -125,7 +131,7 @@ val SecurityEvent.icon: ImageVector
         SecurityEventType.REQUEST_SIGNED -> Icons.Outlined.Key
         SecurityEventType.REQUEST_VERIFIED -> if (isRejectedVerification) Icons.Outlined.GppBad else Icons.Outlined.VerifiedUser
         SecurityEventType.SECURE_VALUE_STORED -> Icons.Outlined.Lock
-        SecurityEventType.KEY_REGISTERED -> if (metadata["role"] == "step_up") Icons.Outlined.Fingerprint else Icons.Outlined.Key
+        SecurityEventType.KEY_REGISTERED -> role().icon()
         SecurityEventType.PAYMENT_SUBMITTED -> when (paymentResult) {
             "accepted" -> Icons.Outlined.Payments
             "unknown" -> Icons.Outlined.PendingActions
@@ -187,19 +193,15 @@ fun metadataValue(key: String, value: String): String = when {
         "protected-action" -> "By a protected action"
         else -> value
     }
-    key == "reason" -> value.replace('_', ' ').replaceFirstChar { it.titlecase() }
+    key == "reason" -> (RejectionReason.entries.byMetadata(value)?.shortLabel() ?: value.replace('_', ' '))
+        .replaceFirstChar { it.titlecase() }
     key == "decidedBy" -> when (value) {
         "reference-backend" -> "Reference backend"
         "app" -> "This app"
         else -> value
     }
-    key == "role" -> if (value == "step_up") "Step-up key" else "Device key"
-    key == "protection" -> when (value) {
-        "strongbox" -> "StrongBox"
-        "trusted_environment" -> "Secure hardware"
-        "software" -> "Software"
-        else -> value.replaceFirstChar { it.titlecase() }
-    }
+    key == "role" -> KeyRole.entries.byMetadata(value)?.title() ?: value
+    key == "protection" -> SecurityLevel.entries.byMetadata(value)?.label() ?: value.replaceFirstChar { it.titlecase() }
     key == "attestation" || key == "verifiedBoot" -> value.replace('_', ' ').replaceFirstChar { it.titlecase() }
     key == "bootloaderLocked" -> if (value == "true") "Yes" else "No"
     key == "result" -> value.replaceFirstChar { it.titlecase() }
@@ -229,3 +231,8 @@ private fun SecurityEvent.group(): EventFilter = when (type) {
 
     SecurityEventType.SECURE_VALUE_STORED -> EventFilter.STORAGE
 }
+
+/** Metadata holds enum names in lower case; an entry from an older build may name one this build lacks. */
+private fun <T : Enum<T>> List<T>.byMetadata(value: String): T? = firstOrNull { it.name.lowercase() == value }
+
+private fun SecurityEvent.role(): KeyRole = KeyRole.entries.byMetadata(metadata["role"].orEmpty()) ?: KeyRole.DEVICE

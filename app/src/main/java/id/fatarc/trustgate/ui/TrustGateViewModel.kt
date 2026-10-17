@@ -67,10 +67,7 @@ class TrustGateViewModel(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(
-        TrustGateUiState(
-            pinningSummary = buildPinningSummary(pinningConfig),
-            verifierWindowMinutes = ReferenceBackend.ALLOWED_CLOCK_SKEW.toMinutes(),
-        ),
+        TrustGateUiState(pinning = pinningConfig),
     )
     val uiState: StateFlow<TrustGateUiState> = _uiState.asStateFlow()
 
@@ -334,7 +331,8 @@ class TrustGateViewModel(
                     request.asReceived() to now.plus(ReferenceBackend.ALLOWED_CLOCK_SKEW).plus(LATE_DELIVERY_MARGIN)
             }
             val result = withContext(ioDispatcher) { backend.authenticate(received, receivedAt) }
-            recordVerification(request, attempt, result, sentByProtectedAction = false)
+            addVerificationRecord(request, VerificationRecord(attempt, result, at = Instant.now()))
+            runCatching { securityService.recordVerification(request, result, attempt.metadataValue) }.rethrowCancellation()
         }
     }
 
@@ -444,12 +442,8 @@ class TrustGateViewModel(
     private suspend fun reportForSensitiveAction(): DeviceRiskReport? {
         val risk = _uiState.value.risk
         val scenarioLevel = risk.scenarioLevel
-        if (scenarioLevel != null) {
-            return risk.report?.takeIf { risk.source == RiskReportSource.SCENARIO }
-                ?: scenarioRiskReport(scenarioLevel).also { report ->
-                    applyRiskReport(report = report, source = RiskReportSource.SCENARIO, resetDecision = false)
-                }
-        }
+        // Choosing a profile applies its report at once, so there is always one to judge against.
+        if (scenarioLevel != null) return risk.report
         return assessLiveDevice(trigger = AssessmentTrigger.BEFORE_ACTION, resetDecision = false)
     }
 
@@ -552,25 +546,18 @@ class TrustGateViewModel(
 
     /** Registers or refreshes the device's keys with the backend; null when they can't be prepared. */
     private suspend fun ensureKeys(): KeySet? {
-        _uiState.update { current ->
-            current.copy(keys = current.keys.copy(isPreparing = current.keys.keys == null, errorMessage = null))
-        }
+        _uiState.update { current -> current.copy(keys = current.keys.copy(errorMessage = null)) }
         return runCatching { keyRegistrar.ensure() }
             .rethrowCancellation()
             .onSuccess { result ->
-                _uiState.update { current -> current.copy(keys = KeysUiState(keys = result.keys, isPreparing = false)) }
+                _uiState.update { current -> current.copy(keys = KeysUiState(keys = result.keys)) }
                 result.newlyRegistered.forEach { key ->
                     runCatching { securityService.recordKeyRegistered(key) }.rethrowCancellation()
                 }
             }
             .onFailure { error ->
                 _uiState.update { current ->
-                    current.copy(
-                        keys = current.keys.copy(
-                            isPreparing = false,
-                            errorMessage = error.message ?: "The device key couldn't be prepared.",
-                        ),
-                    )
+                    current.copy(keys = current.keys.copy(errorMessage = error.message ?: "The device key couldn't be prepared."))
                 }
             }
             .getOrNull()
@@ -611,12 +598,12 @@ class TrustGateViewModel(
         return when (val response = outcome.response) {
             null -> Submission.NoResponse(outcome.attempts)
             is PaymentResponse.Rejected -> {
-                addVerificationRecord(signed, VerificationResult.Rejected(response.reason), outcome.lostResponses)
+                addVerificationRecord(signed, sentByProtectedAction(VerificationResult.Rejected(response.reason), outcome.lostResponses))
                 Submission.Refused(response.reason)
             }
 
             is PaymentResponse.Processed -> {
-                addVerificationRecord(signed, VerificationResult.Accepted, outcome.lostResponses)
+                addVerificationRecord(signed, sentByProtectedAction(VerificationResult.Accepted, outcome.lostResponses))
                 Submission.Charged(
                     paymentId = response.payment.id,
                     signedWith = response.payment.signedWith,
@@ -645,39 +632,16 @@ class TrustGateViewModel(
         }
     }
 
-    private fun addVerificationRecord(request: SignedRequest, result: VerificationResult, lostResponses: Int) {
-        val record = VerificationRecord(
-            attempt = VerificationAttempt.AS_SIGNED,
-            result = result,
-            at = Instant.now(),
-            sentByProtectedAction = true,
-            lostResponses = lostResponses,
-        )
-        _uiState.update { current ->
-            if (current.signing.signedRequest?.nonce != request.nonce) {
-                current
-            } else {
-                current.copy(
-                    signing = current.signing.copy(
-                        verifications = (listOf(record) + current.signing.verifications).take(MAX_VERIFICATION_RECORDS),
-                    ),
-                )
-            }
-        }
-    }
+    private fun sentByProtectedAction(result: VerificationResult, lostResponses: Int) = VerificationRecord(
+        attempt = VerificationAttempt.AS_SIGNED,
+        result = result,
+        at = Instant.now(),
+        sentByProtectedAction = true,
+        lostResponses = lostResponses,
+    )
 
-    private suspend fun recordVerification(
-        request: SignedRequest,
-        attempt: VerificationAttempt,
-        result: VerificationResult,
-        sentByProtectedAction: Boolean,
-    ) {
-        val record = VerificationRecord(
-            attempt = attempt,
-            result = result,
-            at = Instant.now(),
-            sentByProtectedAction = sentByProtectedAction,
-        )
+    /** Lists [record] under [request], unless another request was signed since and replaced it. */
+    private fun addVerificationRecord(request: SignedRequest, record: VerificationRecord) {
         _uiState.update { current ->
             if (current.signing.signedRequest?.nonce != request.nonce) {
                 current
@@ -689,8 +653,6 @@ class TrustGateViewModel(
                 )
             }
         }
-        val attemptName = if (sentByProtectedAction) "protected-action" else attempt.metadataValue
-        runCatching { securityService.recordVerification(request, result, attemptName) }.rethrowCancellation()
     }
 
     /** Clears any earlier result so it can't be mistaken for this attempt's, and says why nothing ran. */
@@ -710,15 +672,6 @@ class TrustGateViewModel(
     private fun showMessage(text: String) {
         val message = UserMessage(id = nextMessageId++, text = text)
         _uiState.update { current -> current.copy(userMessage = message) }
-    }
-
-
-    private fun buildPinningSummary(config: PinningConfig): String {
-        return if (config.enabled) {
-            "Pinning is on for ${config.host}. A real deployment also needs a plan for rotating pins."
-        } else {
-            "Pinning for ${config.host} is implemented but turned off, so this build works without a pinned server."
-        }
     }
 }
 

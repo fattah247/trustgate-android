@@ -61,7 +61,11 @@ fun AboutScreen(
                 footer = "Version ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
             ) {
                 Text(
-                    text = uiState.pinningSummary,
+                    text = if (uiState.pinning.enabled) {
+                        "Pinning is on for ${uiState.pinning.host}. A real deployment also needs a plan for rotating pins."
+                    } else {
+                        "Pinning for ${uiState.pinning.host} is written but turned off, so this build works without a pinned server."
+                    },
                     modifier = Modifier.padding(16.dp),
                     style = MaterialTheme.typography.bodyLarge,
                 )
