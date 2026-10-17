@@ -28,7 +28,7 @@ Each key is generated with a one-time attestation challenge from the backend. Th
 - the attestation carries the challenge the backend issued,
 - for a step-up key, the attestation shows the key requires user authentication.
 
-A chain that can't be read or fails any of these checks is refused. A device that can't attest at all returns only the key's own self-signed certificate; that key is registered and reported as unattested. The backend records where each key lives, the verified boot state, and whether the bootloader is locked. A production backend would also pin Google's attestation roots and check the revocation list.
+A key presented without a chain, or with one that can't be read or fails any of these checks, is refused. A device that can't attest at all returns only the key's own self-signed certificate; that key is registered and reported as unattested. The backend records where each key lives, the verified boot state, and whether the bootloader is locked. A production backend would also pin Google's attestation roots and check the revocation list.
 
 The step-up key is tied to its device key. Registering one needs the device key's signature over the registration challenge and the new key's ID. When the device key is attested, the step-up key must be attested by the same root. Removing a step-up key, for example after the screen lock is turned off, also needs a device-key signature. Without that, anyone who knew a device's key ID could quietly downgrade it from step-up to a tap. The app checks that both keys still exist in Keystore before each payment and registers replacements when the system has deleted them.
 

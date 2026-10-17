@@ -136,9 +136,9 @@ Unit tests run on the JVM, using software keys where the app uses Keystore:
 
 - Risk scoring to `LOW`, `MEDIUM`, and `HIGH`, with the reason recorded for each path, and simulated profiles scored through the real scorer
 - Request preparation: every signed field changes the bytes to sign, and canonical bodies escape correctly
-- Attestation: KeyDescription parsing, security levels, root of trust, and whether a key requires authentication
+- Attestation: KeyDescription parsing, security levels, root of trust, and whether a key requires authentication, checked against certificate chains the tests build and sign
 - Backend: registration and attestation policy, step-up keys vouched for by the device key, one-time challenges bound to their purpose, replay, edited and unusable bodies, foreign keys and challenges, expired challenges, time windows, step-up enforcement, tap confirmation, and idempotency keys scoped per device
-- Payment client: a lost response is retried and charged once; when every response is lost the outcome is reported as unknown
+- Payment client: a lost response is retried and charged once, retries back off exponentially, and when every response is lost the outcome is reported as unknown
 - Key registration: both keys at launch, a step-up key the system deleted replaced, and a removed screen lock downgrading the device at the backend
 - Storage sealing: values round-trip, and moved, altered, or foreign-key values don't open
 - ViewModel: each protected-action path, the step-up key actually signing, a device turning high risk mid-confirmation, a profile switch mid-payment, and step-up key invalidation
