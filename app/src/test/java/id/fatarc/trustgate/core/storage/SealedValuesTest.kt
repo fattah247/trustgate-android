@@ -3,8 +3,8 @@ package id.fatarc.trustgate.core.storage
 import com.google.common.truth.Truth.assertThat
 import org.junit.Assert.assertThrows
 import org.junit.Test
-import java.security.GeneralSecurityException
 import java.util.Base64
+import javax.crypto.AEADBadTagException
 import javax.crypto.KeyGenerator
 
 class SealedValuesTest {
@@ -27,7 +27,7 @@ class SealedValuesTest {
     fun `a value moved into another slot does not open`() {
         val stored = sealed.seal("last_risk_level", "LOW")
 
-        assertThrows(GeneralSecurityException::class.java) { sealed.open("session_token", stored) }
+        assertThrows(AEADBadTagException::class.java) { sealed.open("session_token", stored) }
     }
 
     @Test
@@ -35,7 +35,7 @@ class SealedValuesTest {
         val bytes = Base64.getDecoder().decode(sealed.seal("session_token", "tg-session-1234"))
         bytes[bytes.size - 1] = (bytes.last().toInt() xor 0x01).toByte()
 
-        assertThrows(GeneralSecurityException::class.java) {
+        assertThrows(AEADBadTagException::class.java) {
             sealed.open("session_token", Base64.getEncoder().encodeToString(bytes))
         }
     }
@@ -44,8 +44,14 @@ class SealedValuesTest {
     fun `a value sealed under another key does not open`() {
         val other = SealedValues { KeyGenerator.getInstance("AES").apply { init(256) }.generateKey() }
 
-        assertThrows(GeneralSecurityException::class.java) {
+        assertThrows(AEADBadTagException::class.java) {
             sealed.open("session_token", other.seal("session_token", "tg-session-1234"))
         }
+    }
+
+    @Test
+    fun `a value too short or not Base64 is reported as malformed`() {
+        assertThrows(IllegalArgumentException::class.java) { sealed.open("session_token", "AAAA") }
+        assertThrows(IllegalArgumentException::class.java) { sealed.open("session_token", "not base64!") }
     }
 }

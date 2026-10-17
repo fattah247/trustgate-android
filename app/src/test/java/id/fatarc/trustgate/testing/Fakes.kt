@@ -17,12 +17,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.security.Signature
 
-class FakeSignalCollector(
-    private val signals: List<RiskSignal>,
-) : DeviceSignalCollector {
-    override fun collectSignals(): List<RiskSignal> = signals
-}
-
 class MutableSignalCollector(
     var signals: List<RiskSignal>,
 ) : DeviceSignalCollector {

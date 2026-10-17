@@ -11,7 +11,6 @@ import id.fatarc.trustgate.core.security.TrustGateSecurityService
 import id.fatarc.trustgate.domain.events.SecurityEventType
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.risk.RiskScorer
-import id.fatarc.trustgate.domain.risk.RiskSignal
 import id.fatarc.trustgate.domain.risk.SignalCategory
 import id.fatarc.trustgate.domain.risk.SignalSeverity
 import id.fatarc.trustgate.domain.signing.KeyRole
@@ -22,6 +21,7 @@ import id.fatarc.trustgate.testing.InMemorySecureValueStore
 import id.fatarc.trustgate.testing.InMemorySecurityEventRepository
 import id.fatarc.trustgate.testing.MutableSignalCollector
 import id.fatarc.trustgate.testing.SoftwareKeyProvider
+import id.fatarc.trustgate.testing.riskSignal
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -74,11 +74,11 @@ class TrustGateViewModelTest {
     private fun TestScope.start(): TrustGateViewModel = viewModel().also { lastViewModel = it }
 
     private fun mediumRisk() {
-        collector.signals = listOf(signal("test_keys", SignalCategory.ROOT, SignalSeverity.MEDIUM))
+        collector.signals = listOf(riskSignal("test_keys", SignalSeverity.MEDIUM, SignalCategory.ROOT))
     }
 
     private fun highRisk() {
-        collector.signals = listOf(signal("debugger_connected", SignalCategory.DEBUGGER, SignalSeverity.HIGH))
+        collector.signals = listOf(riskSignal("debugger_connected", SignalSeverity.HIGH, SignalCategory.DEBUGGER))
     }
 
     @Test
@@ -280,13 +280,4 @@ class TrustGateViewModelTest {
             PaymentDecisionState.ConfirmationRequired(DeviceRiskLevel.MEDIUM, ConfirmationMethod.DEVICE_CREDENTIAL),
         )
     }
-
-    private fun signal(id: String, category: SignalCategory, severity: SignalSeverity) = RiskSignal(
-        id = id,
-        name = id,
-        category = category,
-        severity = severity,
-        detected = true,
-        explanation = "test signal",
-    )
 }
