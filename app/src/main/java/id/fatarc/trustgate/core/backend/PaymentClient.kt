@@ -4,7 +4,6 @@ import id.fatarc.trustgate.domain.signing.ReceivedRequest
 import id.fatarc.trustgate.domain.signing.ReferenceSigningScheme
 import kotlinx.coroutines.delay
 import java.io.IOException
-import java.time.Clock
 import kotlin.random.Random
 
 /** The request reached the backend and was handled, but the answer never made it back. */
@@ -20,7 +19,6 @@ fun interface PaymentTransport {
  */
 class ReferenceTransport(
     private val backend: ReferenceBackend,
-    private val clock: Clock = Clock.systemUTC(),
 ) : PaymentTransport {
     @Volatile
     var loseFirstResponse: Boolean = false
@@ -28,7 +26,7 @@ class ReferenceTransport(
     private val lostFor = HashSet<String>()
 
     override suspend fun submit(request: ReceivedRequest): PaymentResponse {
-        val response = backend.submitPayment(request, clock.instant())
+        val response = backend.submitPayment(request)
         val key = request.header(ReferenceSigningScheme.HEADER_IDEMPOTENCY_KEY)
         if (loseFirstResponse && key != null && synchronized(lostFor) { lostFor.add(key) }) {
             throw ResponseLostException()

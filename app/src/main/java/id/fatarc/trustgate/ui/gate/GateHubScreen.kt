@@ -27,6 +27,7 @@ import id.fatarc.trustgate.ui.GroupedSurface
 import id.fatarc.trustgate.ui.gateState
 import id.fatarc.trustgate.ui.ListRow
 import id.fatarc.trustgate.ui.PaymentDecisionState
+import id.fatarc.trustgate.ui.PaymentUiState
 import id.fatarc.trustgate.ui.RiskReportSource
 import id.fatarc.trustgate.ui.RiskUiState
 import id.fatarc.trustgate.ui.RowDivider
@@ -36,6 +37,7 @@ import id.fatarc.trustgate.ui.SigningStatus
 import id.fatarc.trustgate.ui.SimulationBanner
 import id.fatarc.trustgate.ui.StorageStatus
 import id.fatarc.trustgate.ui.StorageUiState
+import id.fatarc.trustgate.ui.Submission
 import id.fatarc.trustgate.ui.TimeFormats
 import id.fatarc.trustgate.ui.Tone
 import id.fatarc.trustgate.ui.TrustGateSpacing
@@ -68,7 +70,7 @@ fun GateHubScreen(
 
         item(key = "workflows") {
             Section(title = "Workflows") {
-                val payment = paymentState(uiState.payment.latestDecision)
+                val payment = paymentState(uiState.payment)
                 WorkflowRow(
                     title = "Sensitive action",
                     state = payment.first,
@@ -186,13 +188,21 @@ private fun DeviceRiskLevel.policySentence(): String = when (this) {
     DeviceRiskLevel.HIGH -> "Protected actions are blocked"
 }
 
-private fun paymentState(decision: PaymentDecisionState): Pair<String, Tone> = when (decision) {
+private fun paymentState(payment: PaymentUiState): Pair<String, Tone> = when (val decision = payment.latestDecision) {
     PaymentDecisionState.Idle -> "Not run yet" to Tone.NEUTRAL
-    is PaymentDecisionState.Allowed -> "Last run: allowed" to Tone.POSITIVE
     is PaymentDecisionState.ConfirmationRequired -> "Waiting for confirmation" to Tone.CAUTION
-    is PaymentDecisionState.Confirmed -> "Last run: allowed after confirmation" to Tone.POSITIVE
     is PaymentDecisionState.Blocked -> "Last run: blocked" to Tone.CRITICAL
     is PaymentDecisionState.Cancelled -> "Last run: cancelled" to Tone.NEUTRAL
+    is PaymentDecisionState.Allowed,
+    is PaymentDecisionState.Confirmed,
+    -> when (payment.submission) {
+        null -> "Sending the payment" to Tone.NEUTRAL
+        is Submission.Charged ->
+            (if (decision is PaymentDecisionState.Confirmed) "Last run: allowed after confirmation" else "Last run: allowed") to Tone.POSITIVE
+        is Submission.Refused -> "Last run: refused by the backend" to Tone.CRITICAL
+        is Submission.NoResponse -> "Last run: outcome unknown" to Tone.CAUTION
+        is Submission.NotSent -> "Last run: not sent" to Tone.CRITICAL
+    }
 }
 
 private fun signingState(status: SigningStatus): Pair<String, Tone> = when (status) {

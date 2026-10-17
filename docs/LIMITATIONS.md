@@ -6,6 +6,7 @@
 - The reference backend runs inside the app process. It verifies with registered public keys, but it isn't an independent authority, and its registered keys, challenges, and payment ledger last only as long as the process. The app registers fresh keys each launch for that reason.
 - Attestation chains are checked for internal consistency, the registered key, and the issued challenge, but not against Google's attestation roots or revocation list.
 - Emulators and many test devices attest keys in software, which the app reports as such.
+- On a device that can't attest keys at all, Keystore can't sign the step-up key's own certificate, because that key needs authentication to sign. The backend then refuses it, and medium risk falls back to the signed tap.
 - Step-up confirmation falls back to a signed tap on devices without a screen lock; that path is weaker by design and is labelled as such in the log.
 - Certificate pinning is implemented as an example and would need backup pins and rotation planning in a real deployment.
 - Screen capture is only blocked in release builds, so debug builds can be documented and tested.

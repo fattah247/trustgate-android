@@ -1,9 +1,6 @@
-package id.fatarc.trustgate.domain.security
+package id.fatarc.trustgate.core.security
 
 import com.google.common.truth.Truth.assertThat
-import id.fatarc.trustgate.core.security.AssessmentTrigger
-import id.fatarc.trustgate.core.security.ConfirmationMethod
-import id.fatarc.trustgate.core.security.TrustGateSecurityService
 import id.fatarc.trustgate.domain.actiongate.SensitiveActionGate
 import id.fatarc.trustgate.domain.events.SecurityEventRepository
 import id.fatarc.trustgate.domain.events.SecurityEventType
@@ -18,10 +15,10 @@ import id.fatarc.trustgate.domain.signing.PaymentRequestPayload
 import id.fatarc.trustgate.domain.signing.ReferenceRequestSigner
 import id.fatarc.trustgate.domain.signing.RejectionReason
 import id.fatarc.trustgate.domain.signing.VerificationResult
-import id.fatarc.trustgate.testing.FakeSignalCollector
 import id.fatarc.trustgate.testing.InMemorySecurityEventRepository
 import id.fatarc.trustgate.testing.MutableSignalCollector
 import id.fatarc.trustgate.testing.TestKey
+import id.fatarc.trustgate.testing.riskSignal
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
 
@@ -29,19 +26,7 @@ class TrustGateSecurityServiceTest {
     @Test
     fun `security event is created after risk assessment`() = runTest {
         val repository = InMemorySecurityEventRepository()
-        val service = TrustGateSecurityService(
-            signalCollector = FakeSignalCollector(
-                listOf(
-                    detectedSignal(
-                        id = "root_package",
-                        category = SignalCategory.ROOT,
-                        severity = SignalSeverity.HIGH,
-                    ),
-                ),
-            ),
-            riskScorer = RiskScorer(),
-            eventRepository = repository,
-        )
+        val service = serviceWith(repository, listOf(riskSignal("root_package", SignalSeverity.HIGH, SignalCategory.ROOT)))
 
         service.assessDeviceRisk()
 
@@ -52,19 +37,7 @@ class TrustGateSecurityServiceTest {
     @Test
     fun `security event is created after blocked action`() = runTest {
         val repository = InMemorySecurityEventRepository()
-        val service = TrustGateSecurityService(
-            signalCollector = FakeSignalCollector(
-                listOf(
-                    detectedSignal(
-                        id = "debugger_connected",
-                        category = SignalCategory.DEBUGGER,
-                        severity = SignalSeverity.HIGH,
-                    ),
-                ),
-            ),
-            riskScorer = RiskScorer(),
-            eventRepository = repository,
-        )
+        val service = serviceWith(repository, listOf(riskSignal("debugger_connected", SignalSeverity.HIGH, SignalCategory.DEBUGGER)))
 
         val report = service.assessDeviceRisk()
         service.recordGateDecision(report, SensitiveActionGate().decide(report.level))
@@ -78,8 +51,8 @@ class TrustGateSecurityServiceTest {
         val service = serviceWith(
             repository = repository,
             signals = listOf(
-                detectedSignal(id = "root_package", category = SignalCategory.ROOT, severity = SignalSeverity.HIGH),
-                detectedSignal(id = "debugger_connected", category = SignalCategory.DEBUGGER, severity = SignalSeverity.HIGH),
+                riskSignal("root_package", SignalSeverity.HIGH, SignalCategory.ROOT),
+                riskSignal("debugger_connected", SignalSeverity.HIGH, SignalCategory.DEBUGGER),
             ),
         )
 
@@ -93,7 +66,7 @@ class TrustGateSecurityServiceTest {
     fun `resume check stays silent when nothing changed`() = runTest {
         val repository = InMemorySecurityEventRepository()
         val collector = MutableSignalCollector(
-            listOf(detectedSignal(id = "test_keys", category = SignalCategory.ROOT, severity = SignalSeverity.MEDIUM)),
+            listOf(riskSignal("test_keys", SignalSeverity.MEDIUM, SignalCategory.ROOT)),
         )
         val service = serviceWith(repository = repository, collector = collector)
         val first = service.assessDeviceRisk(trigger = AssessmentTrigger.LAUNCH)
@@ -108,16 +81,12 @@ class TrustGateSecurityServiceTest {
     fun `resume check records the change when the verdict moves`() = runTest {
         val repository = InMemorySecurityEventRepository()
         val collector = MutableSignalCollector(
-            listOf(detectedSignal(id = "test_keys", category = SignalCategory.ROOT, severity = SignalSeverity.MEDIUM)),
+            listOf(riskSignal("test_keys", SignalSeverity.MEDIUM, SignalCategory.ROOT)),
         )
         val service = serviceWith(repository = repository, collector = collector)
         val first = service.assessDeviceRisk(trigger = AssessmentTrigger.LAUNCH)
 
-        collector.signals = collector.signals + detectedSignal(
-            id = "debugger_connected",
-            category = SignalCategory.DEBUGGER,
-            severity = SignalSeverity.HIGH,
-        )
+        collector.signals = collector.signals + riskSignal("debugger_connected", SignalSeverity.HIGH, SignalCategory.DEBUGGER)
         val second = service.assessDeviceRisk(trigger = AssessmentTrigger.RESUME, previous = first)
 
         val assessment = repository.events.value.last { it.type == SecurityEventType.DEVICE_RISK_ASSESSED }
@@ -167,7 +136,7 @@ class TrustGateSecurityServiceTest {
         val service = serviceWith(
             repository = repository,
             signals = listOf(
-                detectedSignal(id = "test_keys", category = SignalCategory.ROOT, severity = SignalSeverity.MEDIUM),
+                riskSignal("test_keys", SignalSeverity.MEDIUM, SignalCategory.ROOT),
             ),
         )
 
@@ -192,31 +161,16 @@ class TrustGateSecurityServiceTest {
         val event = repository.events.value.single()
         assertThat(event.type).isEqualTo(SecurityEventType.DEVICE_RISK_ASSESSED)
         assertThat(event.riskLevel).isEqualTo(DeviceRiskLevel.HIGH)
-        assertThat(event.metadata["source"]).isEqualTo(TrustGateSecurityService.SCENARIO_SOURCE)
+        assertThat(event.metadata["source"]).isEqualTo("scenario-selector")
     }
 
     private fun serviceWith(
         repository: SecurityEventRepository,
         signals: List<RiskSignal> = emptyList(),
-        collector: DeviceSignalCollector = FakeSignalCollector(signals),
+        collector: DeviceSignalCollector = MutableSignalCollector(signals),
     ): TrustGateSecurityService = TrustGateSecurityService(
         signalCollector = collector,
         riskScorer = RiskScorer(),
         eventRepository = repository,
     )
-
-    private fun detectedSignal(
-        id: String,
-        category: SignalCategory,
-        severity: SignalSeverity,
-    ): RiskSignal {
-        return RiskSignal(
-            id = id,
-            name = id,
-            category = category,
-            severity = severity,
-            detected = true,
-            explanation = "test signal",
-        )
-    }
 }

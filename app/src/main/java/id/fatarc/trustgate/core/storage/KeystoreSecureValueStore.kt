@@ -33,36 +33,37 @@ class KeystoreSecureValueStore(
         var cleared = 0
         fun read(name: String): String? {
             val stored = prefs.getString(name, null) ?: return null
+            fun discard(): String? {
+                prefs.edit().remove(name).apply()
+                cleared++
+                return null
+            }
             return try {
                 sealed.open(name, stored)
-            } catch (error: AEADBadTagException) {
+            } catch (_: AEADBadTagException) {
                 // Encrypted under a key this device doesn't have, typically after a restore or transfer.
                 // Other Keystore errors may be temporary, so they reach the caller and the value is kept.
-                prefs.edit().remove(name).apply()
-                cleared++
-                null
-            } catch (error: IllegalArgumentException) {
-                prefs.edit().remove(name).apply()
-                cleared++
-                null
+                discard()
+            } catch (_: IllegalArgumentException) {
+                discard()
             }
         }
         return SecurityStorageSnapshot(
-            sessionToken = read(KEY_SESSION_TOKEN),
-            lastRiskLevel = read(KEY_LAST_RISK_LEVEL)?.let { name -> DeviceRiskLevel.entries.firstOrNull { it.name == name } },
-            showSignalsOnHome = read(KEY_SHOW_SIGNALS_ON_HOME)?.toBooleanStrictOrNull() ?: true,
+            sessionToken = read(SecureValueNames.SESSION_TOKEN),
+            lastRiskLevel = read(SecureValueNames.LAST_RISK_LEVEL)?.let { name -> DeviceRiskLevel.entries.firstOrNull { it.name == name } },
+            showSignalsOnHome = read(SecureValueNames.SHOW_SIGNALS_ON_HOME)?.toBooleanStrictOrNull() ?: true,
             unreadableValuesCleared = cleared,
         )
     }
 
     @Synchronized
-    override fun storeSessionToken(token: String) = put(KEY_SESSION_TOKEN, token)
+    override fun storeSessionToken(token: String) = put(SecureValueNames.SESSION_TOKEN, token)
 
     @Synchronized
-    override fun storeLastRiskLevel(level: DeviceRiskLevel) = put(KEY_LAST_RISK_LEVEL, level.name)
+    override fun storeLastRiskLevel(level: DeviceRiskLevel) = put(SecureValueNames.LAST_RISK_LEVEL, level.name)
 
     @Synchronized
-    override fun storeShowSignalsOnHome(enabled: Boolean) = put(KEY_SHOW_SIGNALS_ON_HOME, enabled.toString())
+    override fun storeShowSignalsOnHome(enabled: Boolean) = put(SecureValueNames.SHOW_SIGNALS_ON_HOME, enabled.toString())
 
     private fun put(name: String, value: String) {
         // commit, not apply: the caller reads back right away and must see the write or its failure.
@@ -98,10 +99,10 @@ class KeystoreSecureValueStore(
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
             )
             buildMap {
-                legacy.getString(KEY_SESSION_TOKEN, null)?.let { put(KEY_SESSION_TOKEN, it) }
-                legacy.getString(KEY_LAST_RISK_LEVEL, null)?.let { put(KEY_LAST_RISK_LEVEL, it) }
-                if (legacy.contains(KEY_SHOW_SIGNALS_ON_HOME)) {
-                    put(KEY_SHOW_SIGNALS_ON_HOME, legacy.getBoolean(KEY_SHOW_SIGNALS_ON_HOME, true).toString())
+                legacy.getString(SecureValueNames.SESSION_TOKEN, null)?.let { put(SecureValueNames.SESSION_TOKEN, it) }
+                legacy.getString(SecureValueNames.LAST_RISK_LEVEL, null)?.let { put(SecureValueNames.LAST_RISK_LEVEL, it) }
+                if (legacy.contains(SecureValueNames.SHOW_SIGNALS_ON_HOME)) {
+                    put(SecureValueNames.SHOW_SIGNALS_ON_HOME, legacy.getBoolean(SecureValueNames.SHOW_SIGNALS_ON_HOME, true).toString())
                 }
             }
         }.getOrElse {
@@ -120,8 +121,5 @@ class KeystoreSecureValueStore(
         const val KEY_ALIAS = "trustgate_storage_key"
         const val FILE_NAME = "trustgate_secure_values_v2"
         const val LEGACY_FILE_NAME = "trustgate_secure_values"
-        const val KEY_SESSION_TOKEN = "session_token"
-        const val KEY_LAST_RISK_LEVEL = "last_risk_level"
-        const val KEY_SHOW_SIGNALS_ON_HOME = "show_signals_on_home"
     }
 }

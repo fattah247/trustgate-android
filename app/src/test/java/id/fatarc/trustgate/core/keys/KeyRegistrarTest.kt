@@ -4,13 +4,13 @@ import com.google.common.truth.Truth.assertThat
 import id.fatarc.trustgate.core.backend.PaymentAuthorization
 import id.fatarc.trustgate.core.backend.ReferenceBackend
 import id.fatarc.trustgate.core.backend.RequiredConfirmation
-import id.fatarc.trustgate.core.backend.RiskEvidence
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.testing.SoftwareKeyProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
+import java.security.KeyStoreException
 
 class KeyRegistrarTest {
     private val keys = SoftwareKeyProvider()
@@ -18,8 +18,7 @@ class KeyRegistrarTest {
     private val registrar = KeyRegistrar(keys, backend, Dispatchers.Unconfined)
 
     private fun mediumRiskConfirmation(deviceKeyId: String): RequiredConfirmation =
-        (backend.beginPayment(deviceKeyId, RiskEvidence(DeviceRiskLevel.MEDIUM, emptySet(), simulated = true)) as PaymentAuthorization.Proceed)
-            .confirmation
+        (backend.beginPayment(deviceKeyId, DeviceRiskLevel.MEDIUM) as PaymentAuthorization.Proceed).confirmation
 
     @Test
     fun `both keys are registered when a screen lock is set`() = runTest {
@@ -51,5 +50,19 @@ class KeyRegistrarTest {
         assertThat(keySet.stepUp).isNull()
         assertThat(keySet.stepUpUnavailableReason).isNotNull()
         assertThat(mediumRiskConfirmation(device.keyId)).isEqualTo(RequiredConfirmation.TAP)
+    }
+
+    @Test
+    fun `a Keystore error is reported instead of replacing the keys`() = runTest {
+        val first = registrar.ensure().keys
+        keys.keystoreError = KeyStoreException("Keystore is busy")
+
+        val failure = runCatching { registrar.ensure() }.exceptionOrNull()
+        keys.keystoreError = null
+        val recovered = registrar.ensure()
+
+        assertThat(failure).isInstanceOf(KeyStoreException::class.java)
+        assertThat(recovered.keys).isEqualTo(first)
+        assertThat(recovered.newlyRegistered).isEmpty()
     }
 }

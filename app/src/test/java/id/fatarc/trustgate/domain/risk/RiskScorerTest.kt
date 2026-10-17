@@ -1,6 +1,7 @@
 package id.fatarc.trustgate.domain.risk
 
 import com.google.common.truth.Truth.assertThat
+import id.fatarc.trustgate.testing.riskSignal
 import org.junit.Test
 
 class RiskScorerTest {
@@ -10,8 +11,8 @@ class RiskScorerTest {
     fun `risk score maps clean device to low`() {
         val report = scorer.score(
             listOf(
-                signal("root", SignalSeverity.HIGH, detected = false),
-                signal("emulator", SignalSeverity.MEDIUM, detected = false),
+                riskSignal("root", SignalSeverity.HIGH, detected = false),
+                riskSignal("emulator", SignalSeverity.MEDIUM, detected = false),
             ),
         )
 
@@ -20,34 +21,25 @@ class RiskScorerTest {
     }
 
     @Test
-    fun `risk score maps moderate signals to medium`() {
+    fun `moderate signals are medium risk by score`() {
         val report = scorer.score(
             listOf(
-                signal("installer", SignalSeverity.LOW, detected = true),
-                signal("test-keys", SignalSeverity.MEDIUM, detected = true),
+                riskSignal("installer", SignalSeverity.LOW),
+                riskSignal("test-keys", SignalSeverity.MEDIUM),
             ),
         )
 
         assertThat(report.level).isEqualTo(DeviceRiskLevel.MEDIUM)
         assertThat(report.score).isEqualTo(3)
+        assertThat(report.reason).isEqualTo(RiskReason.ScoreThreshold(score = 3, threshold = RiskScorer.MEDIUM_SCORE_THRESHOLD))
     }
 
     @Test
-    fun `risk score maps severe signal to high`() {
-        val report = scorer.score(
-            listOf(
-                signal("debugger", SignalSeverity.HIGH, detected = true),
-            ),
-        )
+    fun `a severe signal is high risk even when the total is low`() {
+        val report = scorer.score(listOf(riskSignal("debugger", SignalSeverity.HIGH)))
 
         assertThat(report.level).isEqualTo(DeviceRiskLevel.HIGH)
         assertThat(report.score).isEqualTo(3)
-    }
-
-    @Test
-    fun `severe signal is the reason even when the total is low`() {
-        val report = scorer.score(listOf(signal("debugger", SignalSeverity.HIGH, detected = true)))
-
         assertThat(report.reason).isEqualTo(RiskReason.SevereSignal(listOf("debugger")))
     }
 
@@ -55,9 +47,9 @@ class RiskScorerTest {
     fun `weaker signals that add up to five are high risk by score`() {
         val report = scorer.score(
             listOf(
-                signal("emulator", SignalSeverity.MEDIUM, detected = true),
-                signal("debuggable", SignalSeverity.MEDIUM, detected = true),
-                signal("installer", SignalSeverity.LOW, detected = true),
+                riskSignal("emulator", SignalSeverity.MEDIUM),
+                riskSignal("debuggable", SignalSeverity.MEDIUM),
+                riskSignal("installer", SignalSeverity.LOW),
             ),
         )
 
@@ -66,38 +58,11 @@ class RiskScorerTest {
     }
 
     @Test
-    fun `medium reason carries the score and medium threshold`() {
-        val report = scorer.score(
-            listOf(
-                signal("installer", SignalSeverity.LOW, detected = true),
-                signal("test-keys", SignalSeverity.MEDIUM, detected = true),
-            ),
-        )
-
-        assertThat(report.reason).isEqualTo(RiskReason.ScoreThreshold(score = 3, threshold = RiskScorer.MEDIUM_SCORE_THRESHOLD))
-    }
-
-    @Test
     fun `a single weak signal stays low and reports its points`() {
-        val report = scorer.score(listOf(signal("installer", SignalSeverity.LOW, detected = true)))
+        val report = scorer.score(listOf(riskSignal("installer", SignalSeverity.LOW)))
 
         assertThat(report.level).isEqualTo(DeviceRiskLevel.LOW)
         assertThat(report.reason).isEqualTo(RiskReason.BelowThresholds(score = 1))
-    }
-
-    private fun signal(
-        id: String,
-        severity: SignalSeverity,
-        detected: Boolean,
-    ): RiskSignal {
-        return RiskSignal(
-            id = id,
-            name = id,
-            category = SignalCategory.ROOT,
-            severity = severity,
-            detected = detected,
-            explanation = "test signal",
-        )
     }
 }
 

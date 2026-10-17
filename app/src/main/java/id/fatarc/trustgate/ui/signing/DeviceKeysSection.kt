@@ -7,8 +7,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ErrorOutline
-import androidx.compose.material.icons.outlined.Fingerprint
-import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -17,9 +15,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import id.fatarc.trustgate.core.attestation.AttestationReport
-import id.fatarc.trustgate.core.attestation.SecurityLevel
 import id.fatarc.trustgate.core.attestation.VerifiedBootState
 import id.fatarc.trustgate.core.keys.RegisteredKey
+import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.ui.KeysUiState
 import id.fatarc.trustgate.ui.ListRow
 import id.fatarc.trustgate.ui.RowDivider
@@ -41,7 +39,6 @@ fun DeviceKeysSection(keys: KeysUiState) {
         when {
             registered != null -> {
                 KeyRow(
-                    title = "Device key",
                     key = registered.device,
                     purpose = "Signs ordinary requests.",
                 )
@@ -49,7 +46,6 @@ fun DeviceKeysSection(keys: KeysUiState) {
                 val stepUp = registered.stepUp
                 if (stepUp != null) {
                     KeyRow(
-                        title = "Step-up key",
                         key = stepUp,
                         purpose = if (stepUp.attestation.description?.userAuthRequired == true) {
                             "Signs only after biometrics or the screen lock; the attestation proves it."
@@ -59,10 +55,10 @@ fun DeviceKeysSection(keys: KeysUiState) {
                     )
                 } else {
                     ListRow(
-                        headline = "Step-up key",
+                        headline = KeyRole.STEP_UP.title(),
                         supporting = registered.stepUpUnavailableReason ?: "Not set up.",
                         supportingColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        leadingIcon = Icons.Outlined.Fingerprint,
+                        leadingIcon = KeyRole.STEP_UP.icon(),
                         trailing = { Trailing("Not set up") },
                     )
                 }
@@ -92,15 +88,14 @@ fun DeviceKeysSection(keys: KeysUiState) {
 
 @Composable
 private fun KeyRow(
-    title: String,
     key: RegisteredKey,
     purpose: String,
 ) {
     ListRow(
-        headline = title,
+        headline = key.role.title(),
         supporting = "$purpose ${key.attestation.summary()}\n${key.keyId}",
         supportingColor = MaterialTheme.colorScheme.onSurfaceVariant,
-        leadingIcon = if (title == "Device key") Icons.Outlined.Key else Icons.Outlined.Fingerprint,
+        leadingIcon = key.role.icon(),
         leadingTint = if (key.attestation.isVerified) Tone.POSITIVE.contentColor() else Tone.CAUTION.contentColor(),
         trailing = { Trailing(key.protection.label()) },
     )
@@ -113,13 +108,6 @@ private fun Trailing(text: String) {
         style = MaterialTheme.typography.labelMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-}
-
-fun SecurityLevel.label(): String = when (this) {
-    SecurityLevel.STRONGBOX -> "StrongBox"
-    SecurityLevel.TRUSTED_ENVIRONMENT -> "Secure hardware"
-    SecurityLevel.SOFTWARE -> "Software"
-    SecurityLevel.UNKNOWN -> "Unknown"
 }
 
 private fun AttestationReport.summary(): String {

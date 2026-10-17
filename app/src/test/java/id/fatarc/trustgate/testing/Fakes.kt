@@ -17,12 +17,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.security.Signature
 
-class FakeSignalCollector(
-    private val signals: List<RiskSignal>,
-) : DeviceSignalCollector {
-    override fun collectSignals(): List<RiskSignal> = signals
-}
-
 class MutableSignalCollector(
     var signals: List<RiskSignal>,
 ) : DeviceSignalCollector {
@@ -76,14 +70,20 @@ class SoftwareKeyProvider(
     override fun generate(role: KeyRole, attestationChallenge: ByteArray): GeneratedKey {
         val key = TestKey().also { keys[role] = it }
         if (role == KeyRole.STEP_UP) stepUpInvalidated = false
-        return GeneratedKey(role, key.encodedPublicKey, emptyList(), SecurityLevel.SOFTWARE)
+        return GeneratedKey(role, key.encodedPublicKey, selfSignedChain(key), SecurityLevel.SOFTWARE)
     }
 
     override fun delete(role: KeyRole) {
         keys.remove(role)
     }
 
-    override fun hasKey(role: KeyRole): Boolean = role in keys
+    /** Makes Keystore unreadable, the way a busy or failing secure element can be for a moment. */
+    var keystoreError: Exception? = null
+
+    override fun hasKey(role: KeyRole): Boolean {
+        keystoreError?.let { throw it }
+        return role in keys
+    }
 
     override fun signWithDeviceKey(data: ByteArray): ByteArray = keys.getValue(KeyRole.DEVICE).sign(data)
 

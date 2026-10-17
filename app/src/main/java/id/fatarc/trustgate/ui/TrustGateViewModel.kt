@@ -11,7 +11,6 @@ import id.fatarc.trustgate.core.backend.PaymentResponse
 import id.fatarc.trustgate.core.backend.ReferenceBackend
 import id.fatarc.trustgate.core.backend.ReferenceTransport
 import id.fatarc.trustgate.core.backend.RequiredConfirmation
-import id.fatarc.trustgate.core.backend.RiskEvidence
 import id.fatarc.trustgate.core.crypto.PinningConfig
 import id.fatarc.trustgate.core.keys.DeviceKeyProvider
 import id.fatarc.trustgate.core.keys.KeyRegistrar
@@ -20,19 +19,18 @@ import id.fatarc.trustgate.core.keys.StepUpKeyInvalidatedException
 import id.fatarc.trustgate.core.security.AssessmentTrigger
 import id.fatarc.trustgate.core.security.ConfirmationMethod
 import id.fatarc.trustgate.core.security.TrustGateSecurityService
+import id.fatarc.trustgate.core.storage.SecureValueNames
 import id.fatarc.trustgate.core.storage.SecureValueStore
 import id.fatarc.trustgate.core.storage.SecurityStorageSnapshot
 import id.fatarc.trustgate.data.securityevent.AuditLogExport
-import id.fatarc.trustgate.domain.actiongate.SensitiveActionDecision
 import id.fatarc.trustgate.domain.events.SecurityEventRepository
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.risk.DeviceRiskReport
-import id.fatarc.trustgate.domain.risk.flaggedSignalIds
 import id.fatarc.trustgate.domain.risk.scenarioRiskReport
-import id.fatarc.trustgate.domain.signing.ReferencePayment
 import id.fatarc.trustgate.domain.signing.KeyRole
+import id.fatarc.trustgate.domain.signing.ReferencePayment
+import id.fatarc.trustgate.domain.signing.ReferenceRequestSigner
 import id.fatarc.trustgate.domain.signing.ReferenceSigningScheme
-import id.fatarc.trustgate.domain.signing.RequestSigner
 import id.fatarc.trustgate.domain.signing.SignedRequest
 import id.fatarc.trustgate.domain.signing.VerificationResult
 import id.fatarc.trustgate.domain.signing.asReceived
@@ -59,7 +57,7 @@ class TrustGateViewModel(
     private val securityService: TrustGateSecurityService,
     private val eventRepository: SecurityEventRepository,
     private val secureValueStore: SecureValueStore,
-    private val requestSigner: RequestSigner,
+    private val requestSigner: ReferenceRequestSigner,
     private val backend: ReferenceBackend,
     private val keyProvider: DeviceKeyProvider,
     private val keyRegistrar: KeyRegistrar,
@@ -69,10 +67,7 @@ class TrustGateViewModel(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(
-        TrustGateUiState(
-            pinningSummary = buildPinningSummary(pinningConfig),
-            verifierWindowMinutes = backend.allowedClockSkew.toMinutes(),
-        ),
+        TrustGateUiState(pinning = pinningConfig),
     )
     val uiState: StateFlow<TrustGateUiState> = _uiState.asStateFlow()
 
@@ -112,17 +107,15 @@ class TrustGateViewModel(
      * verdict is announced or logged.
      */
     fun onAppResumed() {
-        // A screen lock set or removed in Settings adds or drops the step-up key. Returning from the
-        // confirmation prompt also resumes the app, and the key must stay put while it's in use.
-        if (_uiState.value.payment.latestDecision !is PaymentDecisionState.ConfirmationRequired) {
-            viewModelScope.launch { ensureKeys() }
-        }
+        // Returning from the confirmation prompt also resumes the app. The keys must stay put while
+        // they're in use, and the action checks the device again itself.
+        if (actionJob?.isActive == true || _uiState.value.payment.latestDecision is PaymentDecisionState.ConfirmationRequired) return
+        // A screen lock set or removed in Settings adds or drops the step-up key.
+        viewModelScope.launch { ensureKeys() }
+
         val risk = _uiState.value.risk
         val previous = risk.report ?: return
-        if (risk.scenarioLevel != null || risk.isLoading) return
-        if (assessmentJob?.isActive == true || actionJob?.isActive == true) return
-        // Returning from the system lock screen also resumes the app; the action's own re-check covers that.
-        if (_uiState.value.payment.latestDecision is PaymentDecisionState.ConfirmationRequired) return
+        if (risk.scenarioLevel != null || risk.isLoading || assessmentJob?.isActive == true) return
         if (Duration.between(previous.assessedAt, Instant.now()) < RESUME_RECHECK_AFTER) return
 
         assessmentJob = viewModelScope.launch {
@@ -153,42 +146,42 @@ class TrustGateViewModel(
                 ?: return@launch abandonAction("The device couldn't be checked, so the action didn't run.")
             val keys = ensureKeys()
                 ?: return@launch abandonAction("The device key isn't ready, so the action didn't run.")
-            val evidence = RiskEvidence(
-                level = report.level,
-                flaggedSignalIds = report.flaggedSignalIds(),
-                simulated = _uiState.value.risk.source == RiskReportSource.SCENARIO,
-            )
-            val authorization = withContext(ioDispatcher) { backend.beginPayment(keys.device.keyId, evidence) }
+            val authorization = withContext(ioDispatcher) { backend.beginPayment(keys.device.keyId, report.level) }
             runCatching { securityService.recordGateDecision(report, authorization.decision) }.rethrowCancellation()
 
-            when (authorization) {
-                is PaymentAuthorization.Blocked -> updateDecision(PaymentDecisionState.Blocked(report.level))
-                is PaymentAuthorization.Proceed -> when (authorization.confirmation) {
-                    RequiredConfirmation.NONE -> {
-                        val pending = PendingPayment(authorization.nonce, keys.device.keyId, KeyRole.DEVICE, null, newIdempotencyKey())
-                        val submission = signAndSubmit(pending, keyProvider::signWithDeviceKey)
-                        // A profile switch cancels this job; don't publish a result for the old profile.
-                        ensureActive()
-                        updateDecision(PaymentDecisionState.Allowed(report.level), submission)
-                    }
+            if (authorization !is PaymentAuthorization.Proceed) {
+                updateDecision(PaymentDecisionState.Blocked(report.level))
+                return@launch
+            }
+            val keyId = when (authorization.signWith) {
+                KeyRole.DEVICE -> keys.device.keyId
+                KeyRole.STEP_UP -> keys.stepUp?.keyId
+                    ?: return@launch abandonAction("The step-up key isn't registered, so the action didn't run.")
+            }
+            val pending = PendingPayment(
+                nonce = authorization.nonce,
+                keyId = keyId,
+                signWith = authorization.signWith,
+                confirmation = ReferenceSigningScheme.CONFIRMATION_TAP.takeIf { authorization.confirmation == RequiredConfirmation.TAP },
+                idempotencyKey = newIdempotencyKey(),
+            )
+            when (authorization.confirmation) {
+                RequiredConfirmation.NONE -> {
+                    updateDecision(PaymentDecisionState.Allowed(report.level))
+                    val submission = signAndSubmit(pending, keyProvider::signWithDeviceKey)
+                    // A profile switch cancels this job; don't publish a result for the old profile.
+                    ensureActive()
+                    publishSubmission(submission)
+                }
 
-                    RequiredConfirmation.STEP_UP_KEY -> {
-                        val stepUp = keys.stepUp
-                            ?: return@launch abandonAction("The step-up key isn't registered, so the action didn't run.")
-                        pendingPayment = PendingPayment(authorization.nonce, stepUp.keyId, KeyRole.STEP_UP, null, newIdempotencyKey())
-                        updateDecision(PaymentDecisionState.ConfirmationRequired(report.level, ConfirmationMethod.DEVICE_CREDENTIAL))
-                    }
+                RequiredConfirmation.STEP_UP_KEY -> {
+                    pendingPayment = pending
+                    updateDecision(PaymentDecisionState.ConfirmationRequired(report.level, ConfirmationMethod.DEVICE_CREDENTIAL))
+                }
 
-                    RequiredConfirmation.TAP -> {
-                        pendingPayment = PendingPayment(
-                            nonce = authorization.nonce,
-                            keyId = keys.device.keyId,
-                            signWith = KeyRole.DEVICE,
-                            confirmation = ReferenceSigningScheme.CONFIRMATION_TAP,
-                            idempotencyKey = newIdempotencyKey(),
-                        )
-                        updateDecision(PaymentDecisionState.ConfirmationRequired(report.level, ConfirmationMethod.TAP))
-                    }
+                RequiredConfirmation.TAP -> {
+                    pendingPayment = pending
+                    updateDecision(PaymentDecisionState.ConfirmationRequired(report.level, ConfirmationMethod.TAP))
                 }
             }
         }
@@ -242,7 +235,7 @@ class TrustGateViewModel(
             val report = reportForSensitiveAction()
                 ?: return@launch abandonAction("The device couldn't be checked, so the action didn't run.")
             if (report.level == DeviceRiskLevel.HIGH) {
-                runCatching { securityService.recordGateDecision(report, SensitiveActionDecision.BLOCK) }.rethrowCancellation()
+                runCatching { securityService.recordBlockedAfterConfirmation(report) }.rethrowCancellation()
                 updateDecision(PaymentDecisionState.Blocked(report.level))
                 return@launch
             }
@@ -253,13 +246,7 @@ class TrustGateViewModel(
 
             val submission = signAndSubmit(pending, sign)
             ensureActive()
-            _uiState.update { current ->
-                if (current.payment.latestDecision is PaymentDecisionState.Confirmed) {
-                    current.copy(payment = current.payment.copy(submission = submission))
-                } else {
-                    current
-                }
-            }
+            publishSubmission(submission)
         }
     }
 
@@ -341,10 +328,11 @@ class TrustGateViewModel(
                 ) to now
                 // Arrives just past the window the backend allows, as a delayed or captured request would.
                 VerificationAttempt.DELIVERED_LATE ->
-                    request.asReceived() to now.plus(backend.allowedClockSkew).plus(LATE_DELIVERY_MARGIN)
+                    request.asReceived() to now.plus(ReferenceBackend.ALLOWED_CLOCK_SKEW).plus(LATE_DELIVERY_MARGIN)
             }
             val result = withContext(ioDispatcher) { backend.authenticate(received, receivedAt) }
-            recordVerification(request, attempt, result, sentByProtectedAction = false)
+            addVerificationRecord(request, VerificationRecord(attempt, result, at = Instant.now()))
+            runCatching { securityService.recordVerification(request, result, attempt.metadataValue) }.rethrowCancellation()
         }
     }
 
@@ -363,7 +351,7 @@ class TrustGateViewModel(
             val report = _uiState.value.risk.report
             val showSignalsOnHome = _uiState.value.storage.snapshot.showSignalsOnHome
             runCatching {
-                writeStorage {
+                withStorage {
                     secureValueStore.storeSessionToken("tg-session-${UUID.randomUUID().toString().take(8)}")
                     report?.let { secureValueStore.storeLastRiskLevel(it.level) }
                     secureValueStore.storeShowSignalsOnHome(showSignalsOnHome)
@@ -371,9 +359,9 @@ class TrustGateViewModel(
                 }
             }.rethrowCancellation().onSuccess { snapshot ->
                 val storedKeys = buildList {
-                    add("session_token")
-                    if (report != null) add("last_risk_level")
-                    add("show_signals_on_home")
+                    add(SecureValueNames.SESSION_TOKEN)
+                    if (report != null) add(SecureValueNames.LAST_RISK_LEVEL)
+                    add(SecureValueNames.SHOW_SIGNALS_ON_HOME)
                 }
                 applyStorageSnapshot(snapshot)
                 showMessage("Saved ${storedKeys.size} values to encrypted storage")
@@ -399,10 +387,10 @@ class TrustGateViewModel(
         }
         viewModelScope.launch {
             runCatching {
-                writeStorage { secureValueStore.storeShowSignalsOnHome(enabled) }
+                withStorage { secureValueStore.storeShowSignalsOnHome(enabled) }
             }.rethrowCancellation().onFailure { error ->
                 // Show what is actually stored rather than guessing at the previous value.
-                val stored = runCatching { writeStorage { secureValueStore.readSnapshot() } }.getOrNull()
+                val stored = runCatching { withStorage { secureValueStore.readSnapshot() } }.getOrNull()
                 _uiState.update { current ->
                     current.copy(
                         storage = current.storage.copy(
@@ -435,12 +423,14 @@ class TrustGateViewModel(
     private fun assessRisk(trigger: AssessmentTrigger, announceResult: Boolean) {
         if (assessmentJob?.isActive == true) return
         assessmentJob = viewModelScope.launch {
+            // A payment already on its way keeps its result; the new verdict applies to the next action.
+            val resetDecision = actionJob?.isActive != true
             val scenarioLevel = _uiState.value.risk.scenarioLevel
             if (scenarioLevel != null) {
-                applyRiskReport(report = scenarioRiskReport(scenarioLevel), source = RiskReportSource.SCENARIO)
+                applyRiskReport(report = scenarioRiskReport(scenarioLevel), source = RiskReportSource.SCENARIO, resetDecision = resetDecision)
                 return@launch
             }
-            val report = assessLiveDevice(trigger = trigger, resetDecision = true) ?: return@launch
+            val report = assessLiveDevice(trigger = trigger, resetDecision = resetDecision) ?: return@launch
             if (announceResult) {
                 showMessage("Check complete · ${report.level.label()}")
             }
@@ -454,12 +444,8 @@ class TrustGateViewModel(
     private suspend fun reportForSensitiveAction(): DeviceRiskReport? {
         val risk = _uiState.value.risk
         val scenarioLevel = risk.scenarioLevel
-        if (scenarioLevel != null) {
-            return risk.report?.takeIf { risk.source == RiskReportSource.SCENARIO }
-                ?: scenarioRiskReport(scenarioLevel).also { report ->
-                    applyRiskReport(report = report, source = RiskReportSource.SCENARIO, resetDecision = false)
-                }
-        }
+        // Choosing a profile applies its report at once, so there is always one to judge against.
+        if (scenarioLevel != null) return risk.report
         return assessLiveDevice(trigger = AssessmentTrigger.BEFORE_ACTION, resetDecision = false)
     }
 
@@ -482,7 +468,7 @@ class TrustGateViewModel(
     private fun loadStorageSnapshot(announce: Boolean) {
         viewModelScope.launch {
             runCatching {
-                withContext(ioDispatcher) { secureValueStore.readSnapshot() }
+                withStorage { secureValueStore.readSnapshot() }
             }.rethrowCancellation().onSuccess { snapshot ->
                 applyStorageSnapshot(snapshot)
                 when {
@@ -547,35 +533,33 @@ class TrustGateViewModel(
         }
     }
 
-    private fun updateDecision(decision: PaymentDecisionState, submission: Submission? = null) {
+    private fun updateDecision(decision: PaymentDecisionState) {
         _uiState.update { current ->
-            current.copy(
-                payment = PaymentUiState(latestDecision = decision, decidedAt = Instant.now(), submission = submission),
-            )
+            current.copy(payment = PaymentUiState(latestDecision = decision, decidedAt = Instant.now()))
+        }
+    }
+
+    /** Adds what happened to the payment to the decision that let it through, unless that was reset meanwhile. */
+    private fun publishSubmission(submission: Submission) {
+        _uiState.update { current ->
+            if (current.payment.isSending) current.copy(payment = current.payment.copy(submission = submission)) else current
         }
     }
 
     /** Registers or refreshes the device's keys with the backend; null when they can't be prepared. */
     private suspend fun ensureKeys(): KeySet? {
-        _uiState.update { current ->
-            current.copy(keys = current.keys.copy(isPreparing = current.keys.keys == null, errorMessage = null))
-        }
+        _uiState.update { current -> current.copy(keys = current.keys.copy(errorMessage = null)) }
         return runCatching { keyRegistrar.ensure() }
             .rethrowCancellation()
             .onSuccess { result ->
-                _uiState.update { current -> current.copy(keys = KeysUiState(keys = result.keys, isPreparing = false)) }
+                _uiState.update { current -> current.copy(keys = KeysUiState(keys = result.keys)) }
                 result.newlyRegistered.forEach { key ->
                     runCatching { securityService.recordKeyRegistered(key) }.rethrowCancellation()
                 }
             }
             .onFailure { error ->
                 _uiState.update { current ->
-                    current.copy(
-                        keys = current.keys.copy(
-                            isPreparing = false,
-                            errorMessage = error.message ?: "The device key couldn't be prepared.",
-                        ),
-                    )
+                    current.copy(keys = KeysUiState(errorMessage = error.message ?: "The device key couldn't be prepared."))
                 }
             }
             .getOrNull()
@@ -616,12 +600,12 @@ class TrustGateViewModel(
         return when (val response = outcome.response) {
             null -> Submission.NoResponse(outcome.attempts)
             is PaymentResponse.Rejected -> {
-                addVerificationRecord(signed, VerificationResult.Rejected(response.reason), outcome.lostResponses)
+                addVerificationRecord(signed, protectedActionRecord(VerificationResult.Rejected(response.reason), outcome.lostResponses))
                 Submission.Refused(response.reason)
             }
 
             is PaymentResponse.Processed -> {
-                addVerificationRecord(signed, VerificationResult.Accepted, outcome.lostResponses)
+                addVerificationRecord(signed, protectedActionRecord(VerificationResult.Accepted, outcome.lostResponses))
                 Submission.Charged(
                     paymentId = response.payment.id,
                     signedWith = response.payment.signedWith,
@@ -650,39 +634,16 @@ class TrustGateViewModel(
         }
     }
 
-    private fun addVerificationRecord(request: SignedRequest, result: VerificationResult, lostResponses: Int) {
-        val record = VerificationRecord(
-            attempt = VerificationAttempt.AS_SIGNED,
-            result = result,
-            at = Instant.now(),
-            sentByProtectedAction = true,
-            lostResponses = lostResponses,
-        )
-        _uiState.update { current ->
-            if (current.signing.signedRequest?.nonce != request.nonce) {
-                current
-            } else {
-                current.copy(
-                    signing = current.signing.copy(
-                        verifications = (listOf(record) + current.signing.verifications).take(MAX_VERIFICATION_RECORDS),
-                    ),
-                )
-            }
-        }
-    }
+    private fun protectedActionRecord(result: VerificationResult, lostResponses: Int) = VerificationRecord(
+        attempt = VerificationAttempt.AS_SIGNED,
+        result = result,
+        at = Instant.now(),
+        sentByProtectedAction = true,
+        lostResponses = lostResponses,
+    )
 
-    private suspend fun recordVerification(
-        request: SignedRequest,
-        attempt: VerificationAttempt,
-        result: VerificationResult,
-        sentByProtectedAction: Boolean,
-    ) {
-        val record = VerificationRecord(
-            attempt = attempt,
-            result = result,
-            at = Instant.now(),
-            sentByProtectedAction = sentByProtectedAction,
-        )
+    /** Lists [record] under [request], unless another request was signed since and replaced it. */
+    private fun addVerificationRecord(request: SignedRequest, record: VerificationRecord) {
         _uiState.update { current ->
             if (current.signing.signedRequest?.nonce != request.nonce) {
                 current
@@ -694,8 +655,6 @@ class TrustGateViewModel(
                 )
             }
         }
-        val attemptName = if (sentByProtectedAction) "protected-action" else attempt.metadataValue
-        runCatching { securityService.recordVerification(request, result, attemptName) }.rethrowCancellation()
     }
 
     /** Clears any earlier result so it can't be mistaken for this attempt's, and says why nothing ran. */
@@ -707,23 +666,14 @@ class TrustGateViewModel(
 
     private fun newIdempotencyKey(): String = "pay_" + UUID.randomUUID().toString().replace("-", "")
 
-    /** Storage calls run one at a time, in order, so quick toggles can't land out of order. */
-    private suspend fun <T> writeStorage(block: () -> T): T = storageLock.withLock {
+    /** Storage calls run one at a time, in order, so a reload can't land between a toggle and its write. */
+    private suspend fun <T> withStorage(block: () -> T): T = storageLock.withLock {
         withContext(ioDispatcher) { block() }
     }
 
     private fun showMessage(text: String) {
         val message = UserMessage(id = nextMessageId++, text = text)
         _uiState.update { current -> current.copy(userMessage = message) }
-    }
-
-
-    private fun buildPinningSummary(config: PinningConfig): String {
-        return if (config.enabled) {
-            "Pinning is on for ${config.host}. A real deployment also needs a plan for rotating pins."
-        } else {
-            "Pinning for ${config.host} is implemented but turned off, so this build works without a pinned server."
-        }
     }
 }
 

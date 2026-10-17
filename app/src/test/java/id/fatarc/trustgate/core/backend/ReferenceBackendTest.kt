@@ -12,7 +12,9 @@ import id.fatarc.trustgate.domain.signing.SignedRequest
 import id.fatarc.trustgate.domain.signing.VerificationResult
 import id.fatarc.trustgate.domain.signing.asReceived
 import id.fatarc.trustgate.testing.MutableClock
+import id.fatarc.trustgate.testing.TestAttestation
 import id.fatarc.trustgate.testing.TestKey
+import id.fatarc.trustgate.testing.selfSignedChain
 import org.junit.Test
 
 class ReferenceBackendTest {
@@ -25,16 +27,19 @@ class ReferenceBackendTest {
 
     private fun registerDevice(key: TestKey = device) {
         val challenge = backend.issueRegistrationChallenge()
-        val result = backend.registerKey(KeyRole.DEVICE, key.encodedPublicKey, emptyList(), challenge)
+        val result = backend.registerKey(KeyRole.DEVICE, key.encodedPublicKey, selfSignedChain(key), challenge)
         assertThat(result).isInstanceOf(RegistrationResult.Registered::class.java)
     }
 
-    private fun registerStepUp(vouchedBy: TestKey = device): RegistrationResult {
+    private fun registerStepUp(
+        vouchedBy: TestKey = device,
+        chainFor: (challenge: ByteArray) -> List<ByteArray> = { selfSignedChain(stepUp) },
+    ): RegistrationResult {
         val challenge = backend.issueRegistrationChallenge(device.keyId)
         val proof = vouchedBy.sign(
             ReferenceSigningScheme.keyBindingInput(ReferenceSigningScheme.ACTION_ADD_STEP_UP, challenge, stepUp.keyId),
         )
-        return backend.registerKey(KeyRole.STEP_UP, stepUp.encodedPublicKey, emptyList(), challenge, device.keyId, proof)
+        return backend.registerKey(KeyRole.STEP_UP, stepUp.encodedPublicKey, chainFor(challenge), challenge, device.keyId, proof)
     }
 
     private fun removeStepUp(vouchedBy: TestKey = device): Boolean {
@@ -44,8 +49,6 @@ class ReferenceBackendTest {
         )
         return backend.removeStepUpKey(device.keyId, challenge, proof)
     }
-
-    private fun evidence(level: DeviceRiskLevel) = RiskEvidence(level, emptySet(), simulated = true)
 
     private fun paymentRequest(
         nonce: String,
@@ -65,7 +68,7 @@ class ReferenceBackendTest {
     )
 
     private fun allowedNonce(): String =
-        (backend.beginPayment(device.keyId, evidence(DeviceRiskLevel.LOW)) as PaymentAuthorization.Proceed).nonce
+        (backend.beginPayment(device.keyId, DeviceRiskLevel.LOW) as PaymentAuthorization.Proceed).nonce
 
     private fun verificationRequest(key: TestKey = device): SignedRequest = key.sign(
         signer.prepare(
@@ -117,7 +120,7 @@ class ReferenceBackendTest {
     fun `high risk is blocked before any challenge is issued`() {
         registerDevice()
 
-        val authorization = backend.beginPayment(device.keyId, evidence(DeviceRiskLevel.HIGH))
+        val authorization = backend.beginPayment(device.keyId, DeviceRiskLevel.HIGH)
 
         assertThat(authorization).isEqualTo(PaymentAuthorization.Blocked(DeviceRiskLevel.HIGH))
     }
@@ -126,7 +129,7 @@ class ReferenceBackendTest {
     fun `medium risk with a step-up key must be signed by that key`() {
         registerDevice()
         assertThat(registerStepUp()).isInstanceOf(RegistrationResult.Registered::class.java)
-        val authorization = backend.beginPayment(device.keyId, evidence(DeviceRiskLevel.MEDIUM)) as PaymentAuthorization.Proceed
+        val authorization = backend.beginPayment(device.keyId, DeviceRiskLevel.MEDIUM) as PaymentAuthorization.Proceed
 
         val signedByDeviceKey = backend.submitPayment(paymentRequest(authorization.nonce).asReceived())
         val signedByStepUpKey = backend.submitPayment(paymentRequest(authorization.nonce, key = stepUp).asReceived())
@@ -140,7 +143,7 @@ class ReferenceBackendTest {
     @Test
     fun `medium risk without a step-up key needs a signed tap confirmation`() {
         registerDevice()
-        val authorization = backend.beginPayment(device.keyId, evidence(DeviceRiskLevel.MEDIUM)) as PaymentAuthorization.Proceed
+        val authorization = backend.beginPayment(device.keyId, DeviceRiskLevel.MEDIUM) as PaymentAuthorization.Proceed
 
         val unconfirmed = backend.submitPayment(paymentRequest(authorization.nonce).asReceived())
         val tapped = backend.submitPayment(
@@ -155,7 +158,7 @@ class ReferenceBackendTest {
     @Test
     fun `adding the tap header after signing breaks the signature`() {
         registerDevice()
-        val authorization = backend.beginPayment(device.keyId, evidence(DeviceRiskLevel.MEDIUM)) as PaymentAuthorization.Proceed
+        val authorization = backend.beginPayment(device.keyId, DeviceRiskLevel.MEDIUM) as PaymentAuthorization.Proceed
         val request = paymentRequest(authorization.nonce).asReceived().let {
             it.copy(headers = it.headers + (ReferenceSigningScheme.HEADER_CONFIRMATION to ReferenceSigningScheme.CONFIRMATION_TAP))
         }
@@ -199,7 +202,7 @@ class ReferenceBackendTest {
         registerDevice()
         val request = verificationRequest().asReceived()
 
-        val late = backend.authenticate(request, receivedAt = clock.now.plus(backend.allowedClockSkew).plusSeconds(1))
+        val late = backend.authenticate(request, receivedAt = clock.now.plus(ReferenceBackend.ALLOWED_CLOCK_SKEW).plusSeconds(1))
 
         assertThat(late).isEqualTo(VerificationResult.Rejected(RejectionReason.OUTSIDE_TIME_WINDOW))
     }
@@ -269,9 +272,10 @@ class ReferenceBackendTest {
     @Test
     fun `a registration challenge works only once`() {
         val challenge = backend.issueRegistrationChallenge()
-        backend.registerKey(KeyRole.DEVICE, device.encodedPublicKey, emptyList(), challenge)
+        backend.registerKey(KeyRole.DEVICE, device.encodedPublicKey, selfSignedChain(device), challenge)
+        val other = TestKey()
 
-        val again = backend.registerKey(KeyRole.DEVICE, TestKey().encodedPublicKey, emptyList(), challenge)
+        val again = backend.registerKey(KeyRole.DEVICE, other.encodedPublicKey, selfSignedChain(other), challenge)
 
         assertThat(again).isInstanceOf(RegistrationResult.Refused::class.java)
     }
@@ -281,7 +285,7 @@ class ReferenceBackendTest {
         val result = backend.registerKey(
             KeyRole.STEP_UP,
             stepUp.encodedPublicKey,
-            emptyList(),
+            selfSignedChain(stepUp),
             backend.issueRegistrationChallenge("k_unknown"),
             deviceKeyId = "k_unknown",
         )
@@ -290,8 +294,8 @@ class ReferenceBackendTest {
     }
 
     @Test
-    fun `a key without attestation is registered but reported as unattested`() {
-        val result = backend.registerKey(KeyRole.DEVICE, device.encodedPublicKey, emptyList(), backend.issueRegistrationChallenge())
+    fun `a key with only its own self-signed certificate is registered as unattested`() {
+        val result = backend.registerKey(KeyRole.DEVICE, device.encodedPublicKey, selfSignedChain(device), backend.issueRegistrationChallenge())
 
         assertThat((result as RegistrationResult.Registered).attestation.isAttested).isFalse()
     }
@@ -303,7 +307,7 @@ class ReferenceBackendTest {
         val result = registerStepUp(vouchedBy = TestKey())
 
         assertThat(result).isInstanceOf(RegistrationResult.Refused::class.java)
-        val authorization = backend.beginPayment(device.keyId, evidence(DeviceRiskLevel.MEDIUM)) as PaymentAuthorization.Proceed
+        val authorization = backend.beginPayment(device.keyId, DeviceRiskLevel.MEDIUM) as PaymentAuthorization.Proceed
         assertThat(authorization.confirmation).isEqualTo(RequiredConfirmation.TAP)
     }
 
@@ -313,9 +317,9 @@ class ReferenceBackendTest {
         registerStepUp()
 
         val forged = removeStepUp(vouchedBy = TestKey())
-        val stillStepUp = (backend.beginPayment(device.keyId, evidence(DeviceRiskLevel.MEDIUM)) as PaymentAuthorization.Proceed).confirmation
+        val stillStepUp = (backend.beginPayment(device.keyId, DeviceRiskLevel.MEDIUM) as PaymentAuthorization.Proceed).confirmation
         val genuine = removeStepUp()
-        val afterRemoval = (backend.beginPayment(device.keyId, evidence(DeviceRiskLevel.MEDIUM)) as PaymentAuthorization.Proceed).confirmation
+        val afterRemoval = (backend.beginPayment(device.keyId, DeviceRiskLevel.MEDIUM) as PaymentAuthorization.Proceed).confirmation
 
         assertThat(forged).isFalse()
         assertThat(stillStepUp).isEqualTo(RequiredConfirmation.STEP_UP_KEY)
@@ -327,7 +331,7 @@ class ReferenceBackendTest {
     fun `a registered key cannot be registered again`() {
         registerDevice()
 
-        val again = backend.registerKey(KeyRole.DEVICE, device.encodedPublicKey, emptyList(), backend.issueRegistrationChallenge())
+        val again = backend.registerKey(KeyRole.DEVICE, device.encodedPublicKey, selfSignedChain(device), backend.issueRegistrationChallenge())
 
         assertThat(again).isInstanceOf(RegistrationResult.Refused::class.java)
     }
@@ -372,12 +376,129 @@ class ReferenceBackendTest {
         val other = TestKey()
         registerDevice()
         registerDevice(other)
-        val otherNonce = (backend.beginPayment(other.keyId, evidence(DeviceRiskLevel.LOW)) as PaymentAuthorization.Proceed).nonce
+        val otherNonce = (backend.beginPayment(other.keyId, DeviceRiskLevel.LOW) as PaymentAuthorization.Proceed).nonce
 
         backend.submitPayment(paymentRequest(allowedNonce()).asReceived())
         val fromOther = backend.submitPayment(paymentRequest(otherNonce, key = other).asReceived())
 
         assertThat((fromOther as PaymentResponse.Processed).replayed).isFalse()
         assertThat(backend.chargedPayments).isEqualTo(2)
+    }
+
+    @Test
+    fun `a key without a certificate chain is refused`() {
+        val result = backend.registerKey(KeyRole.DEVICE, device.encodedPublicKey, emptyList(), backend.issueRegistrationChallenge())
+
+        assertThat(result).isInstanceOf(RegistrationResult.Refused::class.java)
+    }
+
+    @Test
+    fun `an attested key is registered with its attestation`() {
+        val challenge = backend.issueRegistrationChallenge()
+        val chain = TestAttestation().chainFor(device.pair.public, challenge)
+
+        val result = backend.registerKey(KeyRole.DEVICE, device.encodedPublicKey, chain, challenge)
+
+        assertThat((result as RegistrationResult.Registered).attestation.isVerified).isTrue()
+    }
+
+    @Test
+    fun `an attestation made for another challenge is refused`() {
+        val chain = TestAttestation().chainFor(device.pair.public, backend.issueRegistrationChallenge())
+
+        val result = backend.registerKey(KeyRole.DEVICE, device.encodedPublicKey, chain, backend.issueRegistrationChallenge())
+
+        assertThat(result).isInstanceOf(RegistrationResult.Refused::class.java)
+    }
+
+    @Test
+    fun `an attestation that certifies a different key is refused`() {
+        val challenge = backend.issueRegistrationChallenge()
+        val chain = TestAttestation().chainFor(TestKey().pair.public, challenge)
+
+        val result = backend.registerKey(KeyRole.DEVICE, device.encodedPublicKey, chain, challenge)
+
+        assertThat(result).isInstanceOf(RegistrationResult.Refused::class.java)
+    }
+
+    @Test
+    fun `an attestation whose certificates don't chain up is refused`() {
+        val challenge = backend.issueRegistrationChallenge()
+        val leaf = TestAttestation().chainFor(device.pair.public, challenge).first()
+        val unrelatedRoot = TestAttestation().chainFor(TestKey().pair.public, challenge).last()
+
+        val result = backend.registerKey(KeyRole.DEVICE, device.encodedPublicKey, listOf(leaf, unrelatedRoot), challenge)
+
+        assertThat(result).isInstanceOf(RegistrationResult.Refused::class.java)
+    }
+
+    @Test
+    fun `an attested device's step-up key must be attested by the same root and require authentication`() {
+        val attestation = TestAttestation()
+        val deviceChallenge = backend.issueRegistrationChallenge()
+        backend.registerKey(KeyRole.DEVICE, device.encodedPublicKey, attestation.chainFor(device.pair.public, deviceChallenge), deviceChallenge)
+
+        val unattested = registerStepUp()
+        val otherRoot = registerStepUp { challenge -> TestAttestation().chainFor(stepUp.pair.public, challenge, requiresAuthentication = true) }
+        val noAuthentication = registerStepUp { challenge -> attestation.chainFor(stepUp.pair.public, challenge, requiresAuthentication = false) }
+        val genuine = registerStepUp { challenge -> attestation.chainFor(stepUp.pair.public, challenge, requiresAuthentication = true) }
+
+        assertThat(unattested).isInstanceOf(RegistrationResult.Refused::class.java)
+        assertThat(otherRoot).isInstanceOf(RegistrationResult.Refused::class.java)
+        assertThat(noAuthentication).isInstanceOf(RegistrationResult.Refused::class.java)
+        assertThat(genuine).isInstanceOf(RegistrationResult.Registered::class.java)
+    }
+
+    @Test
+    fun `registering a new step-up key retires the old one`() {
+        registerDevice()
+        registerStepUp()
+        val oldStepUp = stepUp
+        val newStepUp = TestKey()
+        val challenge = backend.issueRegistrationChallenge(device.keyId)
+        val proof = device.sign(ReferenceSigningScheme.keyBindingInput(ReferenceSigningScheme.ACTION_ADD_STEP_UP, challenge, newStepUp.keyId))
+        backend.registerKey(KeyRole.STEP_UP, newStepUp.encodedPublicKey, selfSignedChain(newStepUp), challenge, device.keyId, proof)
+        val nonce = (backend.beginPayment(device.keyId, DeviceRiskLevel.MEDIUM) as PaymentAuthorization.Proceed).nonce
+
+        val signedByOldKey = backend.submitPayment(paymentRequest(nonce, key = oldStepUp).asReceived())
+
+        assertThat(signedByOldKey).isEqualTo(PaymentResponse.Rejected(RejectionReason.UNKNOWN_KEY))
+    }
+
+    @Test
+    fun `a timestamp that isn't an instant is rejected`() {
+        registerDevice()
+        val request = verificationRequest().asReceived().let {
+            it.copy(headers = it.headers + (ReferenceSigningScheme.HEADER_TIMESTAMP to "yesterday"))
+        }
+
+        assertThat(backend.authenticate(request)).isEqualTo(VerificationResult.Rejected(RejectionReason.MALFORMED_TIMESTAMP))
+    }
+
+    @Test
+    fun `a payment without an idempotency key is rejected`() {
+        registerDevice()
+        val unkeyed = device.sign(
+            signer.prepare(payload, nonce = allowedNonce(), keyId = device.keyId, timestamp = clock.now.toString()),
+        )
+
+        assertThat(backend.submitPayment(unkeyed.asReceived())).isEqualTo(PaymentResponse.Rejected(RejectionReason.MISSING_HEADERS))
+        assertThat(backend.chargedPayments).isEqualTo(0)
+    }
+
+    @Test
+    fun `another device's payment challenge is unknown here and stays usable by its owner`() {
+        val other = TestKey()
+        registerDevice()
+        registerDevice(other)
+        val othersNonce = (backend.beginPayment(other.keyId, DeviceRiskLevel.LOW) as PaymentAuthorization.Proceed).nonce
+
+        val borrowed = backend.submitPayment(
+            paymentRequest(othersNonce, confirmation = ReferenceSigningScheme.CONFIRMATION_TAP).asReceived(),
+        )
+        val owners = backend.submitPayment(paymentRequest(othersNonce, key = other).asReceived())
+
+        assertThat(borrowed).isEqualTo(PaymentResponse.Rejected(RejectionReason.UNKNOWN_CHALLENGE))
+        assertThat(owners).isInstanceOf(PaymentResponse.Processed::class.java)
     }
 }

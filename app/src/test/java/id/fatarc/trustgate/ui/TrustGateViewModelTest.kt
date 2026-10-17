@@ -11,7 +11,6 @@ import id.fatarc.trustgate.core.security.TrustGateSecurityService
 import id.fatarc.trustgate.domain.events.SecurityEventType
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.risk.RiskScorer
-import id.fatarc.trustgate.domain.risk.RiskSignal
 import id.fatarc.trustgate.domain.risk.SignalCategory
 import id.fatarc.trustgate.domain.risk.SignalSeverity
 import id.fatarc.trustgate.domain.signing.KeyRole
@@ -22,6 +21,7 @@ import id.fatarc.trustgate.testing.InMemorySecureValueStore
 import id.fatarc.trustgate.testing.InMemorySecurityEventRepository
 import id.fatarc.trustgate.testing.MutableSignalCollector
 import id.fatarc.trustgate.testing.SoftwareKeyProvider
+import id.fatarc.trustgate.testing.riskSignal
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -34,6 +34,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import java.security.KeyStoreException
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TrustGateViewModelTest {
@@ -74,11 +75,11 @@ class TrustGateViewModelTest {
     private fun TestScope.start(): TrustGateViewModel = viewModel().also { lastViewModel = it }
 
     private fun mediumRisk() {
-        collector.signals = listOf(signal("test_keys", SignalCategory.ROOT, SignalSeverity.MEDIUM))
+        collector.signals = listOf(riskSignal("test_keys", SignalSeverity.MEDIUM, SignalCategory.ROOT))
     }
 
     private fun highRisk() {
-        collector.signals = listOf(signal("debugger_connected", SignalCategory.DEBUGGER, SignalSeverity.HIGH))
+        collector.signals = listOf(riskSignal("debugger_connected", SignalSeverity.HIGH, SignalCategory.DEBUGGER))
     }
 
     @Test
@@ -92,6 +93,49 @@ class TrustGateViewModelTest {
         val charged = payment.submission as Submission.Charged
         assertThat(charged.signedWith).isEqualTo(KeyRole.DEVICE)
         assertThat(backend.chargedPayments).isEqualTo(1)
+    }
+
+    @Test
+    fun `an allowed action shows it is sending until the payment comes back`() = runTest(dispatcher) {
+        val viewModel = start()
+        viewModel.setSimulateLostResponse(true)
+
+        viewModel.attemptPayment()
+        runCurrent() // The first response was lost; the retry is waiting out its backoff.
+        val whileSending = payment
+        advanceUntilIdle()
+
+        assertThat(whileSending.latestDecision).isEqualTo(PaymentDecisionState.Allowed(DeviceRiskLevel.LOW))
+        assertThat(whileSending.isSending).isTrue()
+        assertThat(payment.isSending).isFalse()
+        assertThat(payment.submission).isInstanceOf(Submission.Charged::class.java)
+    }
+
+    @Test
+    fun `checking the device while a payment is on its way keeps the payment's result`() = runTest(dispatcher) {
+        val viewModel = start()
+        viewModel.setSimulateLostResponse(true)
+
+        viewModel.attemptPayment()
+        runCurrent() // The retry is waiting out its backoff.
+        viewModel.refreshRisk()
+        advanceUntilIdle()
+
+        assertThat(payment.submission).isInstanceOf(Submission.Charged::class.java)
+        assertThat(backend.chargedPayments).isEqualTo(1)
+    }
+
+    @Test
+    fun `keys that can't be confirmed are shown as an error, not as registered`() = runTest(dispatcher) {
+        val viewModel = start()
+
+        keys.keystoreError = KeyStoreException("Keystore is busy")
+        viewModel.attemptPayment()
+        advanceUntilIdle()
+
+        assertThat(viewModel.uiState.value.keys.keys).isNull()
+        assertThat(viewModel.uiState.value.keys.errorMessage).isEqualTo("Keystore is busy")
+        assertThat(backend.chargedPayments).isEqualTo(0)
     }
 
     @Test
@@ -174,6 +218,8 @@ class TrustGateViewModelTest {
 
         assertThat(payment.latestDecision).isEqualTo(PaymentDecisionState.Blocked(DeviceRiskLevel.HIGH))
         assertThat(backend.chargedPayments).isEqualTo(0)
+        val blocked = events.events.value.last { it.type == SecurityEventType.SENSITIVE_ACTION_BLOCKED }
+        assertThat(blocked.metadata["decidedBy"]).isEqualTo("app")
     }
 
     @Test
@@ -190,6 +236,9 @@ class TrustGateViewModelTest {
 
         assertThat(payment.latestDecision).isEqualTo(PaymentDecisionState.Idle)
         assertThat(payment.submission).isNull()
+        // The payment that was already sent still runs to an outcome and is logged.
+        assertThat(backend.chargedPayments).isEqualTo(1)
+        assertThat(events.events.value.map { it.type }).contains(SecurityEventType.PAYMENT_SUBMITTED)
     }
 
     @Test
@@ -259,13 +308,4 @@ class TrustGateViewModelTest {
             PaymentDecisionState.ConfirmationRequired(DeviceRiskLevel.MEDIUM, ConfirmationMethod.DEVICE_CREDENTIAL),
         )
     }
-
-    private fun signal(id: String, category: SignalCategory, severity: SignalSeverity) = RiskSignal(
-        id = id,
-        name = id,
-        category = category,
-        severity = severity,
-        detected = true,
-        explanation = "test signal",
-    )
 }
