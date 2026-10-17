@@ -19,3 +19,10 @@ interface SecureValueStore {
 
     fun storeShowSignalsOnHome(enabled: Boolean)
 }
+
+/** Names of the stored values. Each is bound into its value's encryption, so renaming one loses the value. */
+object SecureValueNames {
+    const val SESSION_TOKEN = "session_token"
+    const val LAST_RISK_LEVEL = "last_risk_level"
+    const val SHOW_SIGNALS_ON_HOME = "show_signals_on_home"
+}

@@ -17,14 +17,13 @@ import id.fatarc.trustgate.data.securityevent.PersistedSecurityEventRepository
 import id.fatarc.trustgate.domain.events.SecurityEventRepository
 import id.fatarc.trustgate.domain.risk.RiskScorer
 import id.fatarc.trustgate.domain.signing.ReferenceRequestSigner
-import id.fatarc.trustgate.domain.signing.RequestSigner
 
 class TrustGateAppContainer(
     context: Context,
 ) {
     val securityEventRepository: SecurityEventRepository = PersistedSecurityEventRepository(context)
     val secureValueStore: SecureValueStore = KeystoreSecureValueStore(context)
-    val requestSigner: RequestSigner = ReferenceRequestSigner()
+    val requestSigner = ReferenceRequestSigner()
 
     // One backend for the app's lifetime, so registered keys and spent challenges persist across screens.
     val backend = ReferenceBackend()

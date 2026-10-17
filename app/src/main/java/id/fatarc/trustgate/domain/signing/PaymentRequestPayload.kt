@@ -33,10 +33,8 @@ class PreparedRequest(
     val keyId: String,
     val idempotencyKey: String?,
     val confirmation: String?,
-    private val signingBytes: ByteArray,
+    val signingInput: ByteArray,
 ) {
-    val signingInput: ByteArray get() = signingBytes.copyOf()
-
     fun signedWith(signature: ByteArray): SignedRequest {
         val encodedSignature = ReferenceSigningScheme.encode(signature)
         return SignedRequest(

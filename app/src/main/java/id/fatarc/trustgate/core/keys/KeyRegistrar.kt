@@ -14,7 +14,6 @@ import kotlinx.coroutines.withContext
 data class KeySet(
     val device: RegisteredKey,
     val stepUp: RegisteredKey?,
-    /** Why there's no step-up key, when there isn't one. */
     val stepUpUnavailableReason: String?,
 )
 

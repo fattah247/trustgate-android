@@ -93,7 +93,7 @@ class AndroidDeviceKeyProvider(
         if (keyStore.containsAlias(role.alias)) keyStore.deleteEntry(role.alias)
     }
 
-    override fun hasKey(role: KeyRole): Boolean = runCatching { keyStore.containsAlias(role.alias) }.getOrDefault(false)
+    override fun hasKey(role: KeyRole): Boolean = keyStore.containsAlias(role.alias)
 
     override fun signWithDeviceKey(data: ByteArray): ByteArray =
         Signature.getInstance(ReferenceSigningScheme.SIGNATURE_ALGORITHM).run {

@@ -8,18 +8,11 @@ import java.security.Signature
 /** A freshly generated key pair's public half, with the certificate chain that attests it. */
 class GeneratedKey(
     val role: KeyRole,
-    encodedPublicKey: ByteArray,
-    attestationChain: List<ByteArray>,
+    val encodedPublicKey: ByteArray,
+    val attestationChain: List<ByteArray>,
     /** Where Keystore says the private key lives. */
     val protection: SecurityLevel,
-) {
-    private val publicKey = encodedPublicKey.copyOf()
-    private val chain = attestationChain.map { it.copyOf() }
-
-    val encodedPublicKey: ByteArray get() = publicKey.copyOf()
-
-    val attestationChain: List<ByteArray> get() = chain.map { it.copyOf() }
-}
+)
 
 /** A key the backend accepted, as the app shows it. */
 data class RegisteredKey(

@@ -19,6 +19,7 @@ import id.fatarc.trustgate.core.keys.StepUpKeyInvalidatedException
 import id.fatarc.trustgate.core.security.AssessmentTrigger
 import id.fatarc.trustgate.core.security.ConfirmationMethod
 import id.fatarc.trustgate.core.security.TrustGateSecurityService
+import id.fatarc.trustgate.core.storage.SecureValueNames
 import id.fatarc.trustgate.core.storage.SecureValueStore
 import id.fatarc.trustgate.core.storage.SecurityStorageSnapshot
 import id.fatarc.trustgate.data.securityevent.AuditLogExport
@@ -26,10 +27,10 @@ import id.fatarc.trustgate.domain.events.SecurityEventRepository
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.risk.DeviceRiskReport
 import id.fatarc.trustgate.domain.risk.scenarioRiskReport
-import id.fatarc.trustgate.domain.signing.ReferencePayment
 import id.fatarc.trustgate.domain.signing.KeyRole
+import id.fatarc.trustgate.domain.signing.ReferencePayment
+import id.fatarc.trustgate.domain.signing.ReferenceRequestSigner
 import id.fatarc.trustgate.domain.signing.ReferenceSigningScheme
-import id.fatarc.trustgate.domain.signing.RequestSigner
 import id.fatarc.trustgate.domain.signing.SignedRequest
 import id.fatarc.trustgate.domain.signing.VerificationResult
 import id.fatarc.trustgate.domain.signing.asReceived
@@ -56,7 +57,7 @@ class TrustGateViewModel(
     private val securityService: TrustGateSecurityService,
     private val eventRepository: SecurityEventRepository,
     private val secureValueStore: SecureValueStore,
-    private val requestSigner: RequestSigner,
+    private val requestSigner: ReferenceRequestSigner,
     private val backend: ReferenceBackend,
     private val keyProvider: DeviceKeyProvider,
     private val keyRegistrar: KeyRegistrar,
@@ -360,9 +361,9 @@ class TrustGateViewModel(
                 }
             }.rethrowCancellation().onSuccess { snapshot ->
                 val storedKeys = buildList {
-                    add("session_token")
-                    if (report != null) add("last_risk_level")
-                    add("show_signals_on_home")
+                    add(SecureValueNames.SESSION_TOKEN)
+                    if (report != null) add(SecureValueNames.LAST_RISK_LEVEL)
+                    add(SecureValueNames.SHOW_SIGNALS_ON_HOME)
                 }
                 applyStorageSnapshot(snapshot)
                 showMessage("Saved ${storedKeys.size} values to encrypted storage")

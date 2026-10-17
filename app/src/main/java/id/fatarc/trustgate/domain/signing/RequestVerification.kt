@@ -34,7 +34,7 @@ enum class RejectionReason {
     /** Signed too long before, or too far after, the moment it arrived. */
     OUTSIDE_TIME_WINDOW,
 
-    /** No registered device key has this key ID. */
+    /** No registered key has this key ID. */
     UNKNOWN_KEY,
 
     /** The signature doesn't cover what arrived: something changed after signing, or another key signed it. */

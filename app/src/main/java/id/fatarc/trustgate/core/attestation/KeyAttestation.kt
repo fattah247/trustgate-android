@@ -30,15 +30,11 @@ class KeyDescription(
     val attestationVersion: Int,
     val attestationSecurityLevel: SecurityLevel,
     val keymasterSecurityLevel: SecurityLevel,
-    attestationChallenge: ByteArray,
+    val attestationChallenge: ByteArray,
     val rootOfTrust: RootOfTrust?,
     /** The key can only be used after the person authenticates, as enforced at [keymasterSecurityLevel]. */
     val userAuthRequired: Boolean,
-) {
-    private val challenge = attestationChallenge.copyOf()
-
-    val attestationChallenge: ByteArray get() = challenge.copyOf()
-}
+)
 
 /** What the backend learned from a key's attestation certificate chain. */
 data class AttestationReport(

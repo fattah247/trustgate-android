@@ -106,6 +106,11 @@ class TrustGateSecurityService(
 
     suspend fun recordKeyRegistered(key: RegisteredKey) {
         val attestation = key.attestation
+        val (status, summary) = when {
+            attestation.isVerified -> "verified" to ", with a verified attestation."
+            attestation.isAttested -> "unverified" to ", but its attestation didn't fully verify."
+            else -> "none" to " without attestation."
+        }
         eventRepository.record(
             SecurityEvent(
                 type = SecurityEventType.KEY_REGISTERED,
@@ -116,19 +121,13 @@ class TrustGateSecurityService(
                             KeyRole.STEP_UP -> "Step-up key registered; it signs only after the person authenticates"
                         },
                     )
-                    append(
-                        when {
-                            attestation.isVerified -> ", with a verified attestation."
-                            attestation.isAttested -> ", but its attestation didn't fully verify."
-                            else -> " without attestation."
-                        },
-                    )
+                    append(summary)
                 },
                 metadata = buildMap {
                     put("keyId", key.keyId)
                     put("role", key.role.name.lowercase())
                     put("protection", key.protection.name.lowercase())
-                    put("attestation", if (attestation.isVerified) "verified" else if (attestation.isAttested) "unverified" else "none")
+                    put("attestation", status)
                     attestation.description?.rootOfTrust?.let { root ->
                         put("verifiedBoot", root.verifiedBootState.name.lowercase())
                         put("bootloaderLocked", root.deviceLocked.toString())
@@ -203,7 +202,7 @@ class TrustGateSecurityService(
         )
     }
 
-    suspend fun recordSignedRequest(request: SignedRequest, forProtectedAction: Boolean = false) {
+    suspend fun recordSignedRequest(request: SignedRequest, forProtectedAction: Boolean) {
         eventRepository.record(
             SecurityEvent(
                 type = SecurityEventType.REQUEST_SIGNED,
