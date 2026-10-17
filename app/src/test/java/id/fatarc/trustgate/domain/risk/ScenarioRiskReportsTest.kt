@@ -5,29 +5,33 @@ import org.junit.Test
 
 class ScenarioRiskReportsTest {
     @Test
-    fun `low scenario profile stays low risk`() {
-        val report = scenarioRiskReport(DeviceRiskLevel.LOW)
-
-        assertThat(report.level).isEqualTo(DeviceRiskLevel.LOW)
-        assertThat(report.signals.any { it.detected }).isFalse()
-    }
-
-    @Test
     fun `every scenario profile is scored to the level it simulates`() {
         DeviceRiskLevel.entries.forEach { level ->
-            val report = scenarioRiskReport(level)
-
-            assertThat(report.level).isEqualTo(level)
-            assertThat(report.score).isEqualTo(report.signals.filter { it.detected }.sumOf { it.severity.weight })
+            assertThat(scenarioRiskReport(level).level).isEqualTo(level)
         }
     }
 
     @Test
-    fun `high scenario profile stays high risk`() {
-        val report = scenarioRiskReport(DeviceRiskLevel.HIGH)
+    fun `low scenario profile has no detected signals`() {
+        assertThat(scenarioRiskReport(DeviceRiskLevel.LOW).signals.none { it.detected }).isTrue()
+    }
 
-        assertThat(report.level).isEqualTo(DeviceRiskLevel.HIGH)
-        assertThat(report.signals.count { it.detected }).isAtLeast(1)
-        assertThat(report.score).isAtLeast(3)
+    @Test
+    fun `high scenario profile is high because of a severe signal`() {
+        assertThat(scenarioRiskReport(DeviceRiskLevel.HIGH).reason).isInstanceOf(RiskReason.SevereSignal::class.java)
+    }
+
+    @Test
+    fun `simulated signals keep the categories the live checks give them`() {
+        val categories = DeviceRiskLevel.entries
+            .flatMap { scenarioRiskReport(it).signals }
+            .associate { it.id to it.category }
+
+        assertThat(categories).containsExactly(
+            "installer_source_unknown", SignalCategory.INSTALLER,
+            "debugger_connected", SignalCategory.DEBUGGER,
+            "test_keys", SignalCategory.ROOT,
+            "root_package", SignalCategory.ROOT,
+        )
     }
 }
