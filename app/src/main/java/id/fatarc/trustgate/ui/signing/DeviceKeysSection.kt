@@ -7,18 +7,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ErrorOutline
-import androidx.compose.material.icons.outlined.Fingerprint
-import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import id.fatarc.trustgate.core.attestation.AttestationReport
-import id.fatarc.trustgate.core.attestation.SecurityLevel
 import id.fatarc.trustgate.core.attestation.VerifiedBootState
 import id.fatarc.trustgate.core.keys.RegisteredKey
 import id.fatarc.trustgate.domain.signing.KeyRole
@@ -59,10 +55,10 @@ fun DeviceKeysSection(keys: KeysUiState) {
                     )
                 } else {
                     ListRow(
-                        headline = "Step-up key",
+                        headline = KeyRole.STEP_UP.title(),
                         supporting = registered.stepUpUnavailableReason ?: "Not set up.",
                         supportingColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        leadingIcon = Icons.Outlined.Fingerprint,
+                        leadingIcon = KeyRole.STEP_UP.icon(),
                         trailing = { Trailing("Not set up") },
                     )
                 }
@@ -112,23 +108,6 @@ private fun Trailing(text: String) {
         style = MaterialTheme.typography.labelMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-}
-
-fun KeyRole.title(): String = when (this) {
-    KeyRole.DEVICE -> "Device key"
-    KeyRole.STEP_UP -> "Step-up key"
-}
-
-fun KeyRole.icon(): ImageVector = when (this) {
-    KeyRole.DEVICE -> Icons.Outlined.Key
-    KeyRole.STEP_UP -> Icons.Outlined.Fingerprint
-}
-
-fun SecurityLevel.label(): String = when (this) {
-    SecurityLevel.STRONGBOX -> "StrongBox"
-    SecurityLevel.TRUSTED_ENVIRONMENT -> "Secure hardware"
-    SecurityLevel.SOFTWARE -> "Software"
-    SecurityLevel.UNKNOWN -> "Unknown"
 }
 
 private fun AttestationReport.summary(): String {

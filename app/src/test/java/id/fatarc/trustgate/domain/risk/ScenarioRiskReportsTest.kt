@@ -25,13 +25,14 @@ class ScenarioRiskReportsTest {
     fun `simulated signals keep the categories the live checks give them`() {
         val categories = DeviceRiskLevel.entries
             .flatMap { scenarioRiskReport(it).signals }
-            .associate { it.id to it.category }
+            .map { it.id to it.category }
+            .toSet()
 
         assertThat(categories).containsExactly(
-            "installer_source_unknown", SignalCategory.INSTALLER,
-            "debugger_connected", SignalCategory.DEBUGGER,
-            "test_keys", SignalCategory.ROOT,
-            "root_package", SignalCategory.ROOT,
+            "installer_source_unknown" to SignalCategory.INSTALLER,
+            "debugger_connected" to SignalCategory.DEBUGGER,
+            "test_keys" to SignalCategory.ROOT,
+            "root_package" to SignalCategory.ROOT,
         )
     }
 }

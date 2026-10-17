@@ -50,8 +50,6 @@ class ReferenceBackendTest {
         return backend.removeStepUpKey(device.keyId, challenge, proof)
     }
 
-    
-
     private fun paymentRequest(
         nonce: String,
         key: TestKey = device,
@@ -486,5 +484,21 @@ class ReferenceBackendTest {
 
         assertThat(backend.submitPayment(unkeyed.asReceived())).isEqualTo(PaymentResponse.Rejected(RejectionReason.MISSING_HEADERS))
         assertThat(backend.chargedPayments).isEqualTo(0)
+    }
+
+    @Test
+    fun `another device's payment challenge is unknown here and stays usable by its owner`() {
+        val other = TestKey()
+        registerDevice()
+        registerDevice(other)
+        val othersNonce = (backend.beginPayment(other.keyId, DeviceRiskLevel.LOW) as PaymentAuthorization.Proceed).nonce
+
+        val borrowed = backend.submitPayment(
+            paymentRequest(othersNonce, confirmation = ReferenceSigningScheme.CONFIRMATION_TAP).asReceived(),
+        )
+        val owners = backend.submitPayment(paymentRequest(othersNonce, key = other).asReceived())
+
+        assertThat(borrowed).isEqualTo(PaymentResponse.Rejected(RejectionReason.UNKNOWN_CHALLENGE))
+        assertThat(owners).isInstanceOf(PaymentResponse.Processed::class.java)
     }
 }

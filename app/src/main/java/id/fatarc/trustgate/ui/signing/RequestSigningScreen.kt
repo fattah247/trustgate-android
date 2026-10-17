@@ -19,7 +19,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import id.fatarc.trustgate.core.backend.ReferenceBackend
-import id.fatarc.trustgate.domain.signing.RejectionReason
 import id.fatarc.trustgate.domain.signing.VerificationResult
 import id.fatarc.trustgate.ui.CodeTextStyle
 import id.fatarc.trustgate.ui.CopyButton
@@ -220,29 +219,3 @@ private fun VerificationRow(
     )
 }
 
-fun RejectionReason.shortLabel(): String = when (this) {
-    RejectionReason.MISSING_HEADERS -> "headers missing"
-    RejectionReason.MALFORMED_TIMESTAMP -> "bad timestamp"
-    RejectionReason.OUTSIDE_TIME_WINDOW -> "too late"
-    RejectionReason.UNKNOWN_KEY -> "unknown key"
-    RejectionReason.SIGNATURE_MISMATCH -> "signature mismatch"
-    RejectionReason.UNKNOWN_CHALLENGE -> "unknown challenge"
-    RejectionReason.CHALLENGE_REUSED -> "replayed"
-    RejectionReason.CONFIRMATION_REQUIRED -> "confirmation missing"
-    RejectionReason.IDEMPOTENCY_CONFLICT -> "idempotency conflict"
-    RejectionReason.MALFORMED_BODY -> "unreadable body"
-}
-
-/** What the rejection means for someone trying to abuse the request. */
-fun RejectionReason.sentence(): String = when (this) {
-    RejectionReason.MISSING_HEADERS -> "A signing header was missing or malformed."
-    RejectionReason.MALFORMED_TIMESTAMP -> "The timestamp couldn't be read, so freshness can't be checked."
-    RejectionReason.OUTSIDE_TIME_WINDOW -> "It was signed too long before it arrived, so a held-back request can't be used later."
-    RejectionReason.UNKNOWN_KEY -> "The backend never registered the key that signed it."
-    RejectionReason.SIGNATURE_MISMATCH -> "What arrived isn't what was signed, so an edited request can't get through."
-    RejectionReason.UNKNOWN_CHALLENGE -> "The nonce isn't a challenge the backend issued to this device, or it expired."
-    RejectionReason.CHALLENGE_REUSED -> "This one-time challenge was already used, so a captured request can't be sent twice."
-    RejectionReason.CONFIRMATION_REQUIRED -> "The backend asked for confirmation and the request wasn't signed with it."
-    RejectionReason.IDEMPOTENCY_CONFLICT -> "The idempotency key was already used for a different payment."
-    RejectionReason.MALFORMED_BODY -> "The body isn't a payment the backend can process, so nothing was charged."
-}
