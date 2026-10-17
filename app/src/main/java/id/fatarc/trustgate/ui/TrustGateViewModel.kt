@@ -423,12 +423,14 @@ class TrustGateViewModel(
     private fun assessRisk(trigger: AssessmentTrigger, announceResult: Boolean) {
         if (assessmentJob?.isActive == true) return
         assessmentJob = viewModelScope.launch {
+            // A payment already on its way keeps its result; the new verdict applies to the next action.
+            val resetDecision = actionJob?.isActive != true
             val scenarioLevel = _uiState.value.risk.scenarioLevel
             if (scenarioLevel != null) {
-                applyRiskReport(report = scenarioRiskReport(scenarioLevel), source = RiskReportSource.SCENARIO)
+                applyRiskReport(report = scenarioRiskReport(scenarioLevel), source = RiskReportSource.SCENARIO, resetDecision = resetDecision)
                 return@launch
             }
-            val report = assessLiveDevice(trigger = trigger, resetDecision = true) ?: return@launch
+            val report = assessLiveDevice(trigger = trigger, resetDecision = resetDecision) ?: return@launch
             if (announceResult) {
                 showMessage("Check complete · ${report.level.label()}")
             }
@@ -557,7 +559,7 @@ class TrustGateViewModel(
             }
             .onFailure { error ->
                 _uiState.update { current ->
-                    current.copy(keys = current.keys.copy(errorMessage = error.message ?: "The device key couldn't be prepared."))
+                    current.copy(keys = KeysUiState(errorMessage = error.message ?: "The device key couldn't be prepared."))
                 }
             }
             .getOrNull()
@@ -598,12 +600,12 @@ class TrustGateViewModel(
         return when (val response = outcome.response) {
             null -> Submission.NoResponse(outcome.attempts)
             is PaymentResponse.Rejected -> {
-                addVerificationRecord(signed, sentByProtectedAction(VerificationResult.Rejected(response.reason), outcome.lostResponses))
+                addVerificationRecord(signed, protectedActionRecord(VerificationResult.Rejected(response.reason), outcome.lostResponses))
                 Submission.Refused(response.reason)
             }
 
             is PaymentResponse.Processed -> {
-                addVerificationRecord(signed, sentByProtectedAction(VerificationResult.Accepted, outcome.lostResponses))
+                addVerificationRecord(signed, protectedActionRecord(VerificationResult.Accepted, outcome.lostResponses))
                 Submission.Charged(
                     paymentId = response.payment.id,
                     signedWith = response.payment.signedWith,
@@ -632,7 +634,7 @@ class TrustGateViewModel(
         }
     }
 
-    private fun sentByProtectedAction(result: VerificationResult, lostResponses: Int) = VerificationRecord(
+    private fun protectedActionRecord(result: VerificationResult, lostResponses: Int) = VerificationRecord(
         attempt = VerificationAttempt.AS_SIGNED,
         result = result,
         at = Instant.now(),

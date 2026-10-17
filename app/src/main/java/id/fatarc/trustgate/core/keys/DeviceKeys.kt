@@ -44,7 +44,10 @@ interface DeviceKeyProvider {
 
     fun delete(role: KeyRole)
 
-    /** Whether the key for [role] still exists; the system deletes step-up keys when the lock is removed. */
+    /**
+     * Whether the key for [role] still exists; the system deletes step-up keys when the lock is
+     * removed. Throws when Keystore can't be read, which isn't the same as the key being gone.
+     */
     fun hasKey(role: KeyRole): Boolean
 
     /** Signs with the device key, which needs no user authentication. */

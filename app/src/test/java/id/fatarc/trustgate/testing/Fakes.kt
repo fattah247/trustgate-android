@@ -77,7 +77,13 @@ class SoftwareKeyProvider(
         keys.remove(role)
     }
 
-    override fun hasKey(role: KeyRole): Boolean = role in keys
+    /** Makes Keystore unreadable, the way a busy or failing secure element can be for a moment. */
+    var keystoreError: Exception? = null
+
+    override fun hasKey(role: KeyRole): Boolean {
+        keystoreError?.let { throw it }
+        return role in keys
+    }
 
     override fun signWithDeviceKey(data: ByteArray): ByteArray = keys.getValue(KeyRole.DEVICE).sign(data)
 

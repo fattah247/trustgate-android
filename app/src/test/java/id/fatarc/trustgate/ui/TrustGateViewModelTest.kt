@@ -34,6 +34,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import java.security.KeyStoreException
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TrustGateViewModelTest {
@@ -108,6 +109,33 @@ class TrustGateViewModelTest {
         assertThat(whileSending.isSending).isTrue()
         assertThat(payment.isSending).isFalse()
         assertThat(payment.submission).isInstanceOf(Submission.Charged::class.java)
+    }
+
+    @Test
+    fun `checking the device while a payment is on its way keeps the payment's result`() = runTest(dispatcher) {
+        val viewModel = start()
+        viewModel.setSimulateLostResponse(true)
+
+        viewModel.attemptPayment()
+        runCurrent() // The retry is waiting out its backoff.
+        viewModel.refreshRisk()
+        advanceUntilIdle()
+
+        assertThat(payment.submission).isInstanceOf(Submission.Charged::class.java)
+        assertThat(backend.chargedPayments).isEqualTo(1)
+    }
+
+    @Test
+    fun `keys that can't be confirmed are shown as an error, not as registered`() = runTest(dispatcher) {
+        val viewModel = start()
+
+        keys.keystoreError = KeyStoreException("Keystore is busy")
+        viewModel.attemptPayment()
+        advanceUntilIdle()
+
+        assertThat(viewModel.uiState.value.keys.keys).isNull()
+        assertThat(viewModel.uiState.value.keys.errorMessage).isEqualTo("Keystore is busy")
+        assertThat(backend.chargedPayments).isEqualTo(0)
     }
 
     @Test
