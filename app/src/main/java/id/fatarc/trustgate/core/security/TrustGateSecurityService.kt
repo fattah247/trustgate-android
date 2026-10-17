@@ -92,6 +92,18 @@ class TrustGateSecurityService(
         )
     }
 
+    /** The device turned high risk while the person was confirming, so the app stopped before signing. */
+    suspend fun recordBlockedAfterConfirmation(report: DeviceRiskReport) {
+        eventRepository.record(
+            SecurityEvent(
+                type = SecurityEventType.SENSITIVE_ACTION_BLOCKED,
+                riskLevel = report.level,
+                message = "Sensitive action blocked after confirmation: the device turned high risk while it waited.",
+                metadata = mapOf("decidedBy" to "app"),
+            ),
+        )
+    }
+
     suspend fun recordKeyRegistered(key: RegisteredKey) {
         val attestation = key.attestation
         eventRepository.record(

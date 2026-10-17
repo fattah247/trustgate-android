@@ -95,6 +95,22 @@ class TrustGateViewModelTest {
     }
 
     @Test
+    fun `an allowed action shows it is sending until the payment comes back`() = runTest(dispatcher) {
+        val viewModel = start()
+        viewModel.setSimulateLostResponse(true)
+
+        viewModel.attemptPayment()
+        runCurrent() // The first response was lost; the retry is waiting out its backoff.
+        val whileSending = payment
+        advanceUntilIdle()
+
+        assertThat(whileSending.latestDecision).isEqualTo(PaymentDecisionState.Allowed(DeviceRiskLevel.LOW))
+        assertThat(whileSending.isSending).isTrue()
+        assertThat(payment.isSending).isFalse()
+        assertThat(payment.submission).isInstanceOf(Submission.Charged::class.java)
+    }
+
+    @Test
     fun `high risk is blocked and nothing is signed or charged`() = runTest(dispatcher) {
         highRisk()
         val viewModel = start()
@@ -174,6 +190,8 @@ class TrustGateViewModelTest {
 
         assertThat(payment.latestDecision).isEqualTo(PaymentDecisionState.Blocked(DeviceRiskLevel.HIGH))
         assertThat(backend.chargedPayments).isEqualTo(0)
+        val blocked = events.events.value.last { it.type == SecurityEventType.SENSITIVE_ACTION_BLOCKED }
+        assertThat(blocked.metadata["decidedBy"]).isEqualTo("app")
     }
 
     @Test
@@ -190,6 +208,9 @@ class TrustGateViewModelTest {
 
         assertThat(payment.latestDecision).isEqualTo(PaymentDecisionState.Idle)
         assertThat(payment.submission).isNull()
+        // The payment that was already sent still runs to an outcome and is logged.
+        assertThat(backend.chargedPayments).isEqualTo(1)
+        assertThat(events.events.value.map { it.type }).contains(SecurityEventType.PAYMENT_SUBMITTED)
     }
 
     @Test

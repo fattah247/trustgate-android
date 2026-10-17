@@ -23,7 +23,6 @@ import id.fatarc.trustgate.core.security.TrustGateSecurityService
 import id.fatarc.trustgate.core.storage.SecureValueStore
 import id.fatarc.trustgate.core.storage.SecurityStorageSnapshot
 import id.fatarc.trustgate.data.securityevent.AuditLogExport
-import id.fatarc.trustgate.domain.actiongate.SensitiveActionDecision
 import id.fatarc.trustgate.domain.events.SecurityEventRepository
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.risk.DeviceRiskReport
@@ -112,17 +111,15 @@ class TrustGateViewModel(
      * verdict is announced or logged.
      */
     fun onAppResumed() {
-        // A screen lock set or removed in Settings adds or drops the step-up key. Returning from the
-        // confirmation prompt also resumes the app, and the key must stay put while it's in use.
-        if (_uiState.value.payment.latestDecision !is PaymentDecisionState.ConfirmationRequired) {
-            viewModelScope.launch { ensureKeys() }
-        }
+        // Returning from the confirmation prompt also resumes the app. The keys must stay put while
+        // they're in use, and the action checks the device again itself.
+        if (actionJob?.isActive == true || _uiState.value.payment.latestDecision is PaymentDecisionState.ConfirmationRequired) return
+        // A screen lock set or removed in Settings adds or drops the step-up key.
+        viewModelScope.launch { ensureKeys() }
+
         val risk = _uiState.value.risk
         val previous = risk.report ?: return
-        if (risk.scenarioLevel != null || risk.isLoading) return
-        if (assessmentJob?.isActive == true || actionJob?.isActive == true) return
-        // Returning from the system lock screen also resumes the app; the action's own re-check covers that.
-        if (_uiState.value.payment.latestDecision is PaymentDecisionState.ConfirmationRequired) return
+        if (risk.scenarioLevel != null || risk.isLoading || assessmentJob?.isActive == true) return
         if (Duration.between(previous.assessedAt, Instant.now()) < RESUME_RECHECK_AFTER) return
 
         assessmentJob = viewModelScope.launch {
@@ -161,34 +158,39 @@ class TrustGateViewModel(
             val authorization = withContext(ioDispatcher) { backend.beginPayment(keys.device.keyId, evidence) }
             runCatching { securityService.recordGateDecision(report, authorization.decision) }.rethrowCancellation()
 
-            when (authorization) {
-                is PaymentAuthorization.Blocked -> updateDecision(PaymentDecisionState.Blocked(report.level))
-                is PaymentAuthorization.Proceed -> when (authorization.confirmation) {
-                    RequiredConfirmation.NONE -> {
-                        val pending = PendingPayment(authorization.nonce, keys.device.keyId, KeyRole.DEVICE, null, newIdempotencyKey())
-                        val submission = signAndSubmit(pending, keyProvider::signWithDeviceKey)
-                        // A profile switch cancels this job; don't publish a result for the old profile.
-                        ensureActive()
-                        updateDecision(PaymentDecisionState.Allowed(report.level), submission)
-                    }
+            if (authorization !is PaymentAuthorization.Proceed) {
+                updateDecision(PaymentDecisionState.Blocked(report.level))
+                return@launch
+            }
+            val keyId = when (authorization.signWith) {
+                KeyRole.DEVICE -> keys.device.keyId
+                KeyRole.STEP_UP -> keys.stepUp?.keyId
+                    ?: return@launch abandonAction("The step-up key isn't registered, so the action didn't run.")
+            }
+            val pending = PendingPayment(
+                nonce = authorization.nonce,
+                keyId = keyId,
+                signWith = authorization.signWith,
+                confirmation = ReferenceSigningScheme.CONFIRMATION_TAP.takeIf { authorization.confirmation == RequiredConfirmation.TAP },
+                idempotencyKey = newIdempotencyKey(),
+            )
+            when (authorization.confirmation) {
+                RequiredConfirmation.NONE -> {
+                    updateDecision(PaymentDecisionState.Allowed(report.level))
+                    val submission = signAndSubmit(pending, keyProvider::signWithDeviceKey)
+                    // A profile switch cancels this job; don't publish a result for the old profile.
+                    ensureActive()
+                    publishSubmission(submission)
+                }
 
-                    RequiredConfirmation.STEP_UP_KEY -> {
-                        val stepUp = keys.stepUp
-                            ?: return@launch abandonAction("The step-up key isn't registered, so the action didn't run.")
-                        pendingPayment = PendingPayment(authorization.nonce, stepUp.keyId, KeyRole.STEP_UP, null, newIdempotencyKey())
-                        updateDecision(PaymentDecisionState.ConfirmationRequired(report.level, ConfirmationMethod.DEVICE_CREDENTIAL))
-                    }
+                RequiredConfirmation.STEP_UP_KEY -> {
+                    pendingPayment = pending
+                    updateDecision(PaymentDecisionState.ConfirmationRequired(report.level, ConfirmationMethod.DEVICE_CREDENTIAL))
+                }
 
-                    RequiredConfirmation.TAP -> {
-                        pendingPayment = PendingPayment(
-                            nonce = authorization.nonce,
-                            keyId = keys.device.keyId,
-                            signWith = KeyRole.DEVICE,
-                            confirmation = ReferenceSigningScheme.CONFIRMATION_TAP,
-                            idempotencyKey = newIdempotencyKey(),
-                        )
-                        updateDecision(PaymentDecisionState.ConfirmationRequired(report.level, ConfirmationMethod.TAP))
-                    }
+                RequiredConfirmation.TAP -> {
+                    pendingPayment = pending
+                    updateDecision(PaymentDecisionState.ConfirmationRequired(report.level, ConfirmationMethod.TAP))
                 }
             }
         }
@@ -242,7 +244,7 @@ class TrustGateViewModel(
             val report = reportForSensitiveAction()
                 ?: return@launch abandonAction("The device couldn't be checked, so the action didn't run.")
             if (report.level == DeviceRiskLevel.HIGH) {
-                runCatching { securityService.recordGateDecision(report, SensitiveActionDecision.BLOCK) }.rethrowCancellation()
+                runCatching { securityService.recordBlockedAfterConfirmation(report) }.rethrowCancellation()
                 updateDecision(PaymentDecisionState.Blocked(report.level))
                 return@launch
             }
@@ -253,13 +255,7 @@ class TrustGateViewModel(
 
             val submission = signAndSubmit(pending, sign)
             ensureActive()
-            _uiState.update { current ->
-                if (current.payment.latestDecision is PaymentDecisionState.Confirmed) {
-                    current.copy(payment = current.payment.copy(submission = submission))
-                } else {
-                    current
-                }
-            }
+            publishSubmission(submission)
         }
     }
 
@@ -363,7 +359,7 @@ class TrustGateViewModel(
             val report = _uiState.value.risk.report
             val showSignalsOnHome = _uiState.value.storage.snapshot.showSignalsOnHome
             runCatching {
-                writeStorage {
+                withStorage {
                     secureValueStore.storeSessionToken("tg-session-${UUID.randomUUID().toString().take(8)}")
                     report?.let { secureValueStore.storeLastRiskLevel(it.level) }
                     secureValueStore.storeShowSignalsOnHome(showSignalsOnHome)
@@ -399,10 +395,10 @@ class TrustGateViewModel(
         }
         viewModelScope.launch {
             runCatching {
-                writeStorage { secureValueStore.storeShowSignalsOnHome(enabled) }
+                withStorage { secureValueStore.storeShowSignalsOnHome(enabled) }
             }.rethrowCancellation().onFailure { error ->
                 // Show what is actually stored rather than guessing at the previous value.
-                val stored = runCatching { writeStorage { secureValueStore.readSnapshot() } }.getOrNull()
+                val stored = runCatching { withStorage { secureValueStore.readSnapshot() } }.getOrNull()
                 _uiState.update { current ->
                     current.copy(
                         storage = current.storage.copy(
@@ -482,7 +478,7 @@ class TrustGateViewModel(
     private fun loadStorageSnapshot(announce: Boolean) {
         viewModelScope.launch {
             runCatching {
-                withContext(ioDispatcher) { secureValueStore.readSnapshot() }
+                withStorage { secureValueStore.readSnapshot() }
             }.rethrowCancellation().onSuccess { snapshot ->
                 applyStorageSnapshot(snapshot)
                 when {
@@ -547,11 +543,16 @@ class TrustGateViewModel(
         }
     }
 
-    private fun updateDecision(decision: PaymentDecisionState, submission: Submission? = null) {
+    private fun updateDecision(decision: PaymentDecisionState) {
         _uiState.update { current ->
-            current.copy(
-                payment = PaymentUiState(latestDecision = decision, decidedAt = Instant.now(), submission = submission),
-            )
+            current.copy(payment = PaymentUiState(latestDecision = decision, decidedAt = Instant.now()))
+        }
+    }
+
+    /** Adds what happened to the payment to the decision that let it through, unless that was reset meanwhile. */
+    private fun publishSubmission(submission: Submission) {
+        _uiState.update { current ->
+            if (current.payment.isSending) current.copy(payment = current.payment.copy(submission = submission)) else current
         }
     }
 
@@ -707,8 +708,8 @@ class TrustGateViewModel(
 
     private fun newIdempotencyKey(): String = "pay_" + UUID.randomUUID().toString().replace("-", "")
 
-    /** Storage calls run one at a time, in order, so quick toggles can't land out of order. */
-    private suspend fun <T> writeStorage(block: () -> T): T = storageLock.withLock {
+    /** Storage calls run one at a time, in order, so a reload can't land between a toggle and its write. */
+    private suspend fun <T> withStorage(block: () -> T): T = storageLock.withLock {
         withContext(ioDispatcher) { block() }
     }
 

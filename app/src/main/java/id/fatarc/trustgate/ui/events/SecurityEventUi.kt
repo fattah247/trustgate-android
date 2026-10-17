@@ -188,7 +188,11 @@ fun metadataValue(key: String, value: String): String = when {
         else -> value
     }
     key == "reason" -> value.replace('_', ' ').replaceFirstChar { it.titlecase() }
-    key == "decidedBy" -> if (value == "reference-backend") "Reference backend" else value
+    key == "decidedBy" -> when (value) {
+        "reference-backend" -> "Reference backend"
+        "app" -> "This app"
+        else -> value
+    }
     key == "role" -> if (value == "step_up") "Step-up key" else "Device key"
     key == "protection" -> when (value) {
         "strongbox" -> "StrongBox"

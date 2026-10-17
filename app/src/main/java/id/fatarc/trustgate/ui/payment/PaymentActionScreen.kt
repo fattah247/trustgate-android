@@ -239,7 +239,8 @@ private fun ActionCard(
         )
         Button(
             onClick = onAttemptPayment,
-            enabled = !risk.isLoading && payment.latestDecision !is PaymentDecisionState.ConfirmationRequired,
+            enabled = !risk.isLoading && !payment.isSending &&
+                payment.latestDecision !is PaymentDecisionState.ConfirmationRequired,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 16.dp),

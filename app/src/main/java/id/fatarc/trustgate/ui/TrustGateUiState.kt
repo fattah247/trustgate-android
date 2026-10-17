@@ -53,7 +53,12 @@ data class PaymentUiState(
     val decidedAt: Instant? = null,
     /** What happened to the request once the gate let the action through. */
     val submission: Submission? = null,
-)
+) {
+    /** The gate let the action through and the payment hasn't come back yet. */
+    val isSending: Boolean
+        get() = submission == null &&
+            (latestDecision is PaymentDecisionState.Allowed || latestDecision is PaymentDecisionState.Confirmed)
+}
 
 /** What happened to the payment a permitted action sent. */
 sealed interface Submission {
