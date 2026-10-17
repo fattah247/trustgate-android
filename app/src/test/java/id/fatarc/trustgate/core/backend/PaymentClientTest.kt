@@ -10,11 +10,13 @@ import id.fatarc.trustgate.domain.signing.asReceived
 import id.fatarc.trustgate.testing.MutableClock
 import id.fatarc.trustgate.testing.TestKey
 import id.fatarc.trustgate.testing.selfSignedChain
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import kotlin.random.Random
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class PaymentClientTest {
     private val clock = MutableClock()
     private val backend = ReferenceBackend(clock = clock)

@@ -145,7 +145,7 @@ private fun DrawScope.drawGate(
     drawCircle(structure, radius = 6.5f * u, center = p(83f, 24f))
     val arch = Path().apply {
         moveTo(17f * u, 36f * u)
-        quadraticBezierTo(50f * u, -2f * u, 83f * u, 36f * u)
+        quadraticTo(50f * u, -2f * u, 83f * u, 36f * u)
     }
     drawPath(arch, color = structure, style = Stroke(width = 6f * u, cap = StrokeCap.Round))
 
