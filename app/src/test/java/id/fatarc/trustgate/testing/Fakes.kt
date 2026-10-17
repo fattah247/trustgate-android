@@ -76,7 +76,7 @@ class SoftwareKeyProvider(
     override fun generate(role: KeyRole, attestationChallenge: ByteArray): GeneratedKey {
         val key = TestKey().also { keys[role] = it }
         if (role == KeyRole.STEP_UP) stepUpInvalidated = false
-        return GeneratedKey(role, key.encodedPublicKey, emptyList(), SecurityLevel.SOFTWARE)
+        return GeneratedKey(role, key.encodedPublicKey, selfSignedChain(key), SecurityLevel.SOFTWARE)
     }
 
     override fun delete(role: KeyRole) {

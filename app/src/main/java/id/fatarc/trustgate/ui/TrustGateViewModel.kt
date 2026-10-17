@@ -11,7 +11,6 @@ import id.fatarc.trustgate.core.backend.PaymentResponse
 import id.fatarc.trustgate.core.backend.ReferenceBackend
 import id.fatarc.trustgate.core.backend.ReferenceTransport
 import id.fatarc.trustgate.core.backend.RequiredConfirmation
-import id.fatarc.trustgate.core.backend.RiskEvidence
 import id.fatarc.trustgate.core.crypto.PinningConfig
 import id.fatarc.trustgate.core.keys.DeviceKeyProvider
 import id.fatarc.trustgate.core.keys.KeyRegistrar
@@ -26,7 +25,6 @@ import id.fatarc.trustgate.data.securityevent.AuditLogExport
 import id.fatarc.trustgate.domain.events.SecurityEventRepository
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.risk.DeviceRiskReport
-import id.fatarc.trustgate.domain.risk.flaggedSignalIds
 import id.fatarc.trustgate.domain.risk.scenarioRiskReport
 import id.fatarc.trustgate.domain.signing.ReferencePayment
 import id.fatarc.trustgate.domain.signing.KeyRole
@@ -70,7 +68,7 @@ class TrustGateViewModel(
     private val _uiState = MutableStateFlow(
         TrustGateUiState(
             pinningSummary = buildPinningSummary(pinningConfig),
-            verifierWindowMinutes = backend.allowedClockSkew.toMinutes(),
+            verifierWindowMinutes = ReferenceBackend.ALLOWED_CLOCK_SKEW.toMinutes(),
         ),
     )
     val uiState: StateFlow<TrustGateUiState> = _uiState.asStateFlow()
@@ -150,12 +148,7 @@ class TrustGateViewModel(
                 ?: return@launch abandonAction("The device couldn't be checked, so the action didn't run.")
             val keys = ensureKeys()
                 ?: return@launch abandonAction("The device key isn't ready, so the action didn't run.")
-            val evidence = RiskEvidence(
-                level = report.level,
-                flaggedSignalIds = report.flaggedSignalIds(),
-                simulated = _uiState.value.risk.source == RiskReportSource.SCENARIO,
-            )
-            val authorization = withContext(ioDispatcher) { backend.beginPayment(keys.device.keyId, evidence) }
+            val authorization = withContext(ioDispatcher) { backend.beginPayment(keys.device.keyId, report.level) }
             runCatching { securityService.recordGateDecision(report, authorization.decision) }.rethrowCancellation()
 
             if (authorization !is PaymentAuthorization.Proceed) {
@@ -337,7 +330,7 @@ class TrustGateViewModel(
                 ) to now
                 // Arrives just past the window the backend allows, as a delayed or captured request would.
                 VerificationAttempt.DELIVERED_LATE ->
-                    request.asReceived() to now.plus(backend.allowedClockSkew).plus(LATE_DELIVERY_MARGIN)
+                    request.asReceived() to now.plus(ReferenceBackend.ALLOWED_CLOCK_SKEW).plus(LATE_DELIVERY_MARGIN)
             }
             val result = withContext(ioDispatcher) { backend.authenticate(received, receivedAt) }
             recordVerification(request, attempt, result, sentByProtectedAction = false)

@@ -9,20 +9,23 @@ import id.fatarc.trustgate.domain.signing.ReferenceRequestSigner
 import id.fatarc.trustgate.domain.signing.asReceived
 import id.fatarc.trustgate.testing.MutableClock
 import id.fatarc.trustgate.testing.TestKey
+import id.fatarc.trustgate.testing.selfSignedChain
+import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
+import kotlin.random.Random
 
 class PaymentClientTest {
     private val clock = MutableClock()
     private val backend = ReferenceBackend(clock = clock)
-    private val transport = ReferenceTransport(backend, clock)
+    private val transport = ReferenceTransport(backend)
     private val device = TestKey()
 
     private fun signedPayment(): ReceivedRequest {
-        backend.registerKey(KeyRole.DEVICE, device.encodedPublicKey, emptyList(), backend.issueRegistrationChallenge())
+        backend.registerKey(KeyRole.DEVICE, device.encodedPublicKey, selfSignedChain(device), backend.issueRegistrationChallenge())
         val authorization = backend.beginPayment(
             device.keyId,
-            RiskEvidence(DeviceRiskLevel.LOW, emptySet(), simulated = true),
+            DeviceRiskLevel.LOW,
         ) as PaymentAuthorization.Proceed
         return device.sign(
             ReferenceRequestSigner().prepare(
@@ -61,10 +64,36 @@ class PaymentClientTest {
     fun `when every response is lost the outcome is reported as unknown`() = runTest {
         val silent = PaymentTransport { throw ResponseLostException() }
 
-        val outcome = PaymentClient(silent, maxAttempts = 3).submit(signedPayment())
+        val outcome = PaymentClient(silent).submit(signedPayment())
 
         assertThat(outcome.response).isNull()
         assertThat(outcome.attempts).isEqualTo(3)
         assertThat(outcome.lostResponses).isEqualTo(3)
+    }
+
+    @Test
+    fun `retries back off exponentially and don't wait after the last attempt`() = runTest {
+        val silent = PaymentTransport { throw ResponseLostException() }
+
+        PaymentClient(silent, baseDelayMillis = 400, random = NoJitter).submit(signedPayment())
+
+        assertThat(currentTime).isEqualTo(400L + 800L)
+    }
+
+    @Test
+    fun `only a lost response is retried`() = runTest {
+        var attempts = 0
+        val failing = PaymentTransport {
+            attempts++
+            throw IllegalStateException("not a network failure")
+        }
+
+        runCatching { PaymentClient(failing).submit(signedPayment()) }
+
+        assertThat(attempts).isEqualTo(1)
+    }
+
+    private object NoJitter : Random() {
+        override fun nextBits(bitCount: Int): Int = 0
     }
 }

@@ -65,8 +65,9 @@ object ReferenceSigningScheme {
 
     fun sha256Hex(value: String): String = sha256Hex(value.toByteArray(StandardCharsets.UTF_8))
 
-    fun sha256Hex(value: ByteArray): String =
-        MessageDigest.getInstance("SHA-256").digest(value).joinToString("") { "%02x".format(it) }
+    fun sha256Hex(value: ByteArray): String = hex(MessageDigest.getInstance("SHA-256").digest(value))
+
+    fun hex(bytes: ByteArray): String = bytes.joinToString("") { "%02x".format(it) }
 
     fun encode(bytes: ByteArray): String = Base64.getEncoder().encodeToString(bytes)
 

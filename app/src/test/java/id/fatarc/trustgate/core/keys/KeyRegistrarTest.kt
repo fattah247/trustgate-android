@@ -4,7 +4,6 @@ import com.google.common.truth.Truth.assertThat
 import id.fatarc.trustgate.core.backend.PaymentAuthorization
 import id.fatarc.trustgate.core.backend.ReferenceBackend
 import id.fatarc.trustgate.core.backend.RequiredConfirmation
-import id.fatarc.trustgate.core.backend.RiskEvidence
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.testing.SoftwareKeyProvider
@@ -18,8 +17,7 @@ class KeyRegistrarTest {
     private val registrar = KeyRegistrar(keys, backend, Dispatchers.Unconfined)
 
     private fun mediumRiskConfirmation(deviceKeyId: String): RequiredConfirmation =
-        (backend.beginPayment(deviceKeyId, RiskEvidence(DeviceRiskLevel.MEDIUM, emptySet(), simulated = true)) as PaymentAuthorization.Proceed)
-            .confirmation
+        (backend.beginPayment(deviceKeyId, DeviceRiskLevel.MEDIUM) as PaymentAuthorization.Proceed).confirmation
 
     @Test
     fun `both keys are registered when a screen lock is set`() = runTest {
