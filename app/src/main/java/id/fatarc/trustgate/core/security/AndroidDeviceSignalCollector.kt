@@ -22,6 +22,7 @@ class AndroidDeviceSignalCollector(
             "/system/app/Superuser.apk",
             "/system/bin/.ext/su",
         )
+        // Keep in step with the manifest's <queries>: Android 11+ can't see packages it doesn't declare.
         val rootPackages = listOf(
             "com.topjohnwu.magisk",
             "eu.chainfire.supersu",
