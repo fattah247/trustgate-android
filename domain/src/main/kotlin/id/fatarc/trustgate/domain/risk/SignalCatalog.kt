@@ -3,7 +3,10 @@ package id.fatarc.trustgate.domain.risk
 /** A signal the app checks for, with the severity the server scores it at. */
 class SignalDefinition(
     val id: String,
+    /** What was found, such as "Emulator". */
     val name: String,
+    /** What a pass means, such as "Real phone, not an emulator". */
+    val passedName: String,
     val category: SignalCategory,
     val severity: SignalSeverity,
     val explanation: String,
@@ -24,36 +27,36 @@ class SignalDefinition(
  */
 object SignalCatalog {
     val ROOT_SU_PATH = SignalDefinition(
-        "root_su_path", "Suspicious su path", SignalCategory.ROOT, SignalSeverity.HIGH,
-        "Known su binaries usually indicate a rooted or modified device.",
+        "root_su_path", "Rooted", "No root access", SignalCategory.ROOT, SignalSeverity.HIGH,
+        "A root tool is on this phone, so other apps could take full control of it.",
     )
     val ROOT_PACKAGE = SignalDefinition(
-        "root_package", "Root management package", SignalCategory.ROOT, SignalSeverity.HIGH,
-        "Root management tools can weaken assumptions about the app runtime.",
+        "root_package", "Root app installed", "No root apps", SignalCategory.ROOT, SignalSeverity.HIGH,
+        "Apps like Magisk give anything that asks full control of the phone.",
     )
     val TEST_KEYS = SignalDefinition(
-        "test_keys", "Test-keys build tags", SignalCategory.ROOT, SignalSeverity.MEDIUM,
-        "Test builds can be easier to tamper with than normal production builds.",
+        "test_keys", "Test build of Android", "Official Android build", SignalCategory.ROOT, SignalSeverity.MEDIUM,
+        "The phone runs a test version of Android, which is easier to tamper with.",
     )
     val SYSTEM_PARTITION_WRITABLE = SignalDefinition(
-        "system_partition_writable", "Writable system partition", SignalCategory.ROOT, SignalSeverity.MEDIUM,
-        "A writable system partition can be a sign of device modification.",
+        "system_partition_writable", "System files changeable", "System files untouched", SignalCategory.ROOT, SignalSeverity.MEDIUM,
+        "Android's own files can be changed, so the system may have been modified.",
     )
     val EMULATOR_FINGERPRINT = SignalDefinition(
-        "emulator_fingerprint", "Known emulator build strings", SignalCategory.EMULATOR, SignalSeverity.MEDIUM,
-        "Build properties line up with common emulator characteristics.",
+        "emulator_fingerprint", "Emulator", "Real phone, not an emulator", SignalCategory.EMULATOR, SignalSeverity.MEDIUM,
+        "This isn't a real phone, and an emulator can fake what it reports.",
     )
     val DEBUGGER_CONNECTED = SignalDefinition(
-        "debugger_connected", "Debugger attached", SignalCategory.DEBUGGER, SignalSeverity.HIGH,
-        "A connected debugger can change runtime behavior and inspection visibility.",
+        "debugger_connected", "Debugger attached", "No debugger attached", SignalCategory.DEBUGGER, SignalSeverity.HIGH,
+        "A debugger can read and change the app while it runs.",
     )
     val APP_DEBUGGABLE = SignalDefinition(
-        "app_debuggable", "App debuggable flag", SignalCategory.DEBUGGER, SignalSeverity.MEDIUM,
-        "Debuggable builds are useful for development but reduce trust for sensitive actions.",
+        "app_debuggable", "Debug version of the app", "Release version of the app", SignalCategory.DEBUGGER, SignalSeverity.MEDIUM,
+        "This copy of the app was built for development, which lets tools look inside it.",
     )
     val INSTALLER_SOURCE_UNKNOWN = SignalDefinition(
-        "installer_source_unknown", "Installer source unknown", SignalCategory.INSTALLER, SignalSeverity.LOW,
-        "Unknown install source is a signal to review, not an automatic block.",
+        "installer_source_unknown", "Not from an app store", "Installed from an app store", SignalCategory.INSTALLER, SignalSeverity.LOW,
+        "The app wasn't installed from a store, so it could be a modified copy.",
     )
 
     val all: List<SignalDefinition> = listOf(
@@ -70,4 +73,7 @@ object SignalCatalog {
     private val byId = all.associateBy { it.id }
 
     fun definition(id: String): SignalDefinition? = byId[id]
+
+    /** How a check reads once it has passed; falls back to [RiskSignal.name] for signals outside the catalog. */
+    fun passedName(signal: RiskSignal): String = byId[signal.id]?.passedName ?: signal.name
 }

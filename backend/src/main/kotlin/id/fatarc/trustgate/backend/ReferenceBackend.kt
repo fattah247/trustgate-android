@@ -195,14 +195,14 @@ class ReferenceBackend(
     ): PaymentAuthorization = store.transaction {
         fun refuse(reason: String) = PaymentAuthorization.Blocked(DeviceRiskLevel.HIGH, listOf(reason))
         val key = store.key(deviceKeyId)?.takeIf { it.role == KeyRole.DEVICE }
-            ?: return@transaction refuse("This device key isn't registered.")
-        if (!verifySignature(key, evidence.toByteArray(), signature)) return@transaction refuse("The evidence wasn't signed by this device's key.")
+            ?: return@transaction refuse("Unknown phone")
+        if (!verifySignature(key, evidence.toByteArray(), signature)) return@transaction refuse("Report not signed by this phone")
         val report = runCatching { TrustGateJson.decodeFromString(DeviceEvidence.serializer(), evidence) }.getOrNull()
             ?.takeIf { it.deviceKeyId == deviceKeyId }
-            ?: return@transaction refuse("The evidence couldn't be read.")
+            ?: return@transaction refuse("Report unreadable")
         val collectedAt = runCatching { Instant.parse(report.collectedAt) }.getOrNull()
         if (collectedAt == null || Duration.between(collectedAt, receivedAt).abs() > ReferenceSigningScheme.TIME_WINDOW) {
-            return@transaction refuse("The evidence is out of date.")
+            return@transaction refuse("Report out of date")
         }
         val assessment = policy.risk.assess(report, ReferenceSigningScheme.sha256Hex(evidence), integrityToken, receivedAt)
         authorization(deviceKeyId, assessment.level, assessment.reasons)

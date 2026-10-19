@@ -56,7 +56,7 @@ class PaymentAuthorizationTest {
         val authorization = backendWith(developmentPolicy).authorize(evidence(), signedBy = TestKey())
 
         assertThat(authorization.decision).isEqualTo(SensitiveActionDecision.BLOCK)
-        assertThat(authorization.reasons.single()).contains("wasn't signed")
+        assertThat(authorization.reasons.single()).contains("not signed")
     }
 
     @Test
@@ -82,7 +82,7 @@ class PaymentAuthorizationTest {
         val authorization = backendWith(strict(verdict = null)).authorize(evidence, token = MOCK_INTEGRITY_TOKEN_PREFIX + ReferenceSigningScheme.sha256Hex(evidence))
 
         assertThat(authorization.decision).isEqualTo(SensitiveActionDecision.BLOCK)
-        assertThat(authorization.reasons.joinToString()).contains("simulated")
+        assertThat(authorization.reasons.joinToString()).contains("Demo phones not accepted")
     }
 
     @Test
@@ -131,6 +131,6 @@ class PaymentAuthorizationTest {
         val authorization = backendWith(developmentPolicy).authorize(evidence, token = MOCK_INTEGRITY_TOKEN_PREFIX + ReferenceSigningScheme.sha256Hex(evidence))
 
         assertThat(authorization.decision).isEqualTo(SensitiveActionDecision.ALLOW)
-        assertThat(authorization.reasons.joinToString()).contains("mock")
+        assertThat(authorization.reasons.joinToString()).contains("test mode")
     }
 }
