@@ -20,15 +20,20 @@ class AttestationPolicy(
     val minimumOsPatchLevel: Int?,
     /** Accept a key with only its own self-signed certificate, from a device that can't attest. */
     val allowUnattested: Boolean,
+    /** Refuse attested keys while there's no recent copy of Google's status list to check them against. */
+    val requireRevocationList: Boolean = false,
 ) {
     fun trustsRoot(report: AttestationReport): Boolean = report.rootKeyFingerprint in trustedRootKeys
 
-    /** Why [report] can't be accepted, or null when it can. */
-    fun problemWith(report: AttestationReport, revocations: RevocationList): String? {
+    /** Why [report] can't be accepted, or null when it can. [revocations] is null when no recent copy exists. */
+    fun problemWith(report: AttestationReport, revocations: RevocationList?): String? {
         if (report.chainLength == 0) return "The key came without a certificate chain."
         if (!report.wellFormed) return "The attestation chain couldn't be read."
-        report.certificateSerials.firstOrNull { revocations.statusOf(it) != null }?.let { serial ->
-            return "Google lists a certificate in this chain as ${revocations.statusOf(serial)?.status?.lowercase()} ($serial)."
+        if (revocations == null && requireRevocationList && report.isAttested) {
+            return "Google's revocation list couldn't be refreshed, so the attestation can't be checked."
+        }
+        report.certificateSerials.firstOrNull { revocations?.statusOf(it) != null }?.let { serial ->
+            return "Google lists a certificate in this chain as ${revocations?.statusOf(serial)?.status?.lowercase()} ($serial)."
         }
 
         val description = report.description
@@ -75,6 +80,7 @@ class AttestationPolicy(
             requireVerifiedBoot = true,
             minimumOsPatchLevel = minimumOsPatchLevel,
             allowUnattested = false,
+            requireRevocationList = true,
         )
 
         fun development(packageName: String, signingCertificateDigests: Set<String>) = AttestationPolicy(

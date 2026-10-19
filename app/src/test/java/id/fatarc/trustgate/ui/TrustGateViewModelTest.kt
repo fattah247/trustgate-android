@@ -5,7 +5,6 @@ import id.fatarc.trustgate.backend.ReferenceBackend
 import id.fatarc.trustgate.core.backend.BackendTransport
 import id.fatarc.trustgate.core.backend.InProcessTrustGateApi
 import id.fatarc.trustgate.core.backend.PaymentClient
-import id.fatarc.trustgate.core.crypto.PinningConfig
 import id.fatarc.trustgate.core.keys.KeyRegistrar
 import id.fatarc.trustgate.core.security.ConfirmationMethod
 import id.fatarc.trustgate.core.security.TrustGateSecurityService
@@ -68,7 +67,6 @@ class TrustGateViewModelTest {
         keyRegistrar = KeyRegistrar(keys, api, dispatcher),
         transport = transport,
         paymentClient = PaymentClient(transport, baseDelayMillis = 100),
-        pinningConfig = PinningConfig(),
         ioDispatcher = dispatcher,
     ).also { advanceUntilIdle() }
 

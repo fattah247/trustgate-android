@@ -8,7 +8,6 @@ import id.fatarc.trustgate.TrustGateAppContainer
 import id.fatarc.trustgate.core.backend.BackendTransport
 import id.fatarc.trustgate.core.backend.PaymentClient
 import id.fatarc.trustgate.core.backend.TrustGateApi
-import id.fatarc.trustgate.core.crypto.PinningConfig
 import id.fatarc.trustgate.core.keys.DeviceKeyProvider
 import id.fatarc.trustgate.core.keys.KeyRegistrar
 import id.fatarc.trustgate.core.keys.KeySet
@@ -48,6 +47,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.IOException
 import java.security.Signature
 import java.time.Duration
 import java.time.Instant
@@ -63,11 +63,10 @@ class TrustGateViewModel(
     private val keyRegistrar: KeyRegistrar,
     private val transport: BackendTransport,
     private val paymentClient: PaymentClient,
-    pinningConfig: PinningConfig,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(
-        TrustGateUiState(pinning = pinningConfig),
+        TrustGateUiState(),
     )
     val uiState: StateFlow<TrustGateUiState> = _uiState.asStateFlow()
 
@@ -578,7 +577,7 @@ class TrustGateViewModel(
             }
             .onFailure { error ->
                 _uiState.update { current ->
-                    current.copy(keys = KeysUiState(errorMessage = error.message ?: "The device key couldn't be prepared."))
+                    current.copy(keys = KeysUiState(errorMessage = keyProblem(error)))
                 }
             }
             .getOrNull()
@@ -611,9 +610,11 @@ class TrustGateViewModel(
         // Once a payment is sent it runs to an outcome and is logged, even if the screen moves on,
         // so a charge is never left without a record.
         val outcome = withContext(NonCancellable + ioDispatcher) {
-            paymentClient.submit(signed.asReceived()).also { outcome ->
-                runCatching { securityService.recordPayment(signed, outcome) }
-            }
+            runCatching { paymentClient.submit(signed.asReceived()) }
+                .onSuccess { outcome -> runCatching { securityService.recordPayment(signed, outcome) } }
+        }.getOrElse { error ->
+            // The server refused the request outright; resending the same one wouldn't change that.
+            return Submission.NotSent(error.message ?: "The server refused the payment.")
         }
 
         return when (val response = outcome.response) {
@@ -683,6 +684,15 @@ class TrustGateViewModel(
         showMessage(message)
     }
 
+    private fun keyProblem(error: Throwable): String = when (error) {
+        is IOException -> if (BuildConfig.DEBUG) {
+            "The TrustGate server at ${BuildConfig.SERVER_URL} can't be reached. Start it with ./gradlew :server:run."
+        } else {
+            "The TrustGate server can't be reached."
+        }
+        else -> error.message ?: "The device key couldn't be prepared."
+    }
+
     private fun newIdempotencyKey(): String = "pay_" + UUID.randomUUID().toString().replace("-", "")
 
     /** Storage calls run one at a time, in order, so a reload can't land between a toggle and its write. */
@@ -720,7 +730,6 @@ class TrustGateViewModelFactory(
             keyRegistrar = container.keyRegistrar,
             transport = container.transport,
             paymentClient = container.paymentClient,
-            pinningConfig = container.pinningConfig,
         ) as T
     }
 }

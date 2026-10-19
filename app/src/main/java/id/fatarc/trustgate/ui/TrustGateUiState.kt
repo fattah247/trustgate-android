@@ -1,6 +1,5 @@
 package id.fatarc.trustgate.ui
 
-import id.fatarc.trustgate.core.crypto.PinningConfig
 import id.fatarc.trustgate.core.keys.KeySet
 import id.fatarc.trustgate.core.security.ConfirmationMethod
 import id.fatarc.trustgate.core.storage.SecurityStorageSnapshot
@@ -22,7 +21,6 @@ data class TrustGateUiState(
     val keys: KeysUiState = KeysUiState(),
     /** Drop the first response to each payment, as a timeout would, to show retries are safe. */
     val simulateLostResponse: Boolean = false,
-    val pinning: PinningConfig = PinningConfig(),
     val userMessage: UserMessage? = null,
 )
 

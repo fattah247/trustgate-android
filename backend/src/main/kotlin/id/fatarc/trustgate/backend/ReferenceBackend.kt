@@ -1,9 +1,14 @@
 package id.fatarc.trustgate.backend
 
 import id.fatarc.trustgate.backend.attestation.AttestationPolicy
-import id.fatarc.trustgate.backend.attestation.AttestationReport
 import id.fatarc.trustgate.backend.attestation.KeyAttestationVerifier
 import id.fatarc.trustgate.backend.attestation.RevocationList
+import id.fatarc.trustgate.backend.store.BackendStore
+import id.fatarc.trustgate.backend.store.ChallengePurpose
+import id.fatarc.trustgate.backend.store.InMemoryBackendStore
+import id.fatarc.trustgate.backend.store.LedgerEntry
+import id.fatarc.trustgate.backend.store.StoredChallenge
+import id.fatarc.trustgate.backend.store.StoredKey
 import id.fatarc.trustgate.backend.attestation.toSummary
 import id.fatarc.trustgate.domain.actiongate.SensitiveActionDecision
 import id.fatarc.trustgate.domain.actiongate.SensitiveActionGate
@@ -32,70 +37,45 @@ import kotlinx.serialization.json.Json
 
 /**
  * The server's part: it registers device keys from their attestation, issues one-time challenges,
- * makes the gate decision, and processes payments idempotently.
+ * makes the gate decision, and processes payments idempotently. Each call runs in one [store]
+ * transaction, so a crash can't leave a challenge spent without the payment it paid for.
  */
 class ReferenceBackend(
     private val policy: AttestationPolicy,
     private val clock: Clock = Clock.systemUTC(),
     /** The latest copy of Google's status list; the server refreshes it in the background. */
-    private val revocations: () -> RevocationList = { RevocationList.EMPTY },
+    private val revocations: () -> RevocationList? = { RevocationList.EMPTY },
+    private val store: BackendStore = InMemoryBackendStore(),
 ) {
     private val gate = SensitiveActionGate()
     private val random = SecureRandom()
 
-    private class KeyEntry(
-        val keyId: String,
-        val role: KeyRole,
-        val publicKey: PublicKey,
-        /** The device key this key belongs to; a device key belongs to itself. */
-        val deviceKeyId: String,
-        val attestation: AttestationReport,
-    )
-
-    private enum class Purpose { REGISTRATION, VERIFICATION, PAYMENT }
-
-    private class Challenge(
-        val purpose: Purpose,
-        /** The device the challenge was issued to; null only for registering a new device key. */
-        val deviceKeyId: String?,
-        val confirmation: RequiredConfirmation,
-        val expiresAt: Instant,
-    )
-
-    private class LedgerEntry(val fingerprint: String, val payment: Payment)
-
-    private val keys = HashMap<String, KeyEntry>()
-    private val stepUpKeyFor = HashMap<String, String>()
-    private val outstanding = HashMap<String, Challenge>()
-    private val used = HashMap<String, Instant>()
-    private val ledger = HashMap<String, LedgerEntry>()
-
     /** How many payments were actually charged, however many requests arrived. */
-    val chargedPayments: Int @Synchronized get() = ledger.size
+    val chargedPayments: Int @Synchronized get() = store.transaction { store.ledgerSize() }
 
     /**
      * A one-time registration challenge. Pass [deviceKeyId] to add or remove that device's step-up
      * key; those operations also need a signature from the device key.
      */
     @Synchronized
-    fun issueRegistrationChallenge(deviceKeyId: String? = null): ByteArray {
+    fun issueRegistrationChallenge(deviceKeyId: String? = null): ByteArray = store.transaction {
         val bytes = ByteArray(32).also(random::nextBytes)
-        outstanding[ReferenceSigningScheme.encode(bytes)] = Challenge(
-            purpose = Purpose.REGISTRATION,
-            deviceKeyId = deviceKeyId,
-            confirmation = RequiredConfirmation.NONE,
-            expiresAt = clock.instant().plus(CHALLENGE_LIFETIME),
+        store.putChallenge(
+            StoredChallenge(
+                nonce = ReferenceSigningScheme.encode(bytes),
+                purpose = ChallengePurpose.REGISTRATION,
+                deviceKeyId = deviceKeyId,
+                confirmation = RequiredConfirmation.NONE,
+                expiresAt = clock.instant().plus(CHALLENGE_LIFETIME),
+            ),
         )
-        return bytes
+        bytes
     }
 
     /**
-     * Registers a key from its certificate chain. A chain that doesn't verify, certifies another key,
-     * or carries another challenge is refused. Only a key's own self-signed certificate, which is what
-     * Keystore returns without attestation support, is accepted as unattested.
-     *
-     * A step-up key must be vouched for by its device: [deviceKeyProof] is the device key's
-     * signature over [ReferenceSigningScheme.keyBindingInput] for this challenge and key.
+     * Registers a key from its certificate chain, as [policy] allows. A step-up key must be vouched
+     * for by its device: [deviceKeyProof] is the device key's signature over
+     * [ReferenceSigningScheme.keyBindingInput] for this challenge and key.
      */
     @Synchronized
     fun registerKey(
@@ -105,37 +85,55 @@ class ReferenceBackend(
         challenge: ByteArray,
         deviceKeyId: String? = null,
         deviceKeyProof: ByteArray? = null,
+    ): RegistrationResult = store.transaction {
+        register(role, encodedPublicKey, attestationChain, challenge, deviceKeyId, deviceKeyProof)
+    }
+
+    private fun register(
+        role: KeyRole,
+        encodedPublicKey: ByteArray,
+        attestationChain: List<ByteArray>,
+        challenge: ByteArray,
+        deviceKeyId: String?,
+        deviceKeyProof: ByteArray?,
     ): RegistrationResult {
         if (!spendRegistrationChallenge(challenge, deviceKeyId)) {
             return RegistrationResult.Refused("The registration challenge doesn't match this request, or has expired.")
         }
-
-        val publicKey = decodePublicKey(encodedPublicKey)
-            ?: return RegistrationResult.Refused("The public key couldn't be read.")
+        decodePublicKey(encodedPublicKey) ?: return RegistrationResult.Refused("The public key couldn't be read.")
         val keyId = ReferenceSigningScheme.keyIdFor(encodedPublicKey)
-        if (keyId in keys) return RegistrationResult.Refused("This key is already registered.")
+        if (store.key(keyId) != null) return RegistrationResult.Refused("This key is already registered.")
 
         val attestation = KeyAttestationVerifier.verify(attestationChain, encodedPublicKey, challenge)
         policy.problemWith(attestation, revocations())?.let { return RegistrationResult.Refused(it) }
 
+        fun stored(owner: String) = StoredKey(
+            keyId = keyId,
+            role = role,
+            encodedPublicKey = encodedPublicKey,
+            deviceKeyId = owner,
+            attested = attestation.isAttested,
+            rootKeyFingerprint = attestation.rootKeyFingerprint,
+            registeredAt = clock.instant(),
+        )
         when (role) {
             KeyRole.DEVICE -> {
                 if (deviceKeyId != null) return RegistrationResult.Refused("A device key can't belong to another key.")
-                keys[keyId] = KeyEntry(keyId, role, publicKey, deviceKeyId = keyId, attestation = attestation)
+                store.putKey(stored(owner = keyId))
             }
 
             KeyRole.STEP_UP -> {
-                val owner = deviceKeyId?.let(keys::get)?.takeIf { it.role == KeyRole.DEVICE }
+                val owner = deviceKeyId?.let(store::key)?.takeIf { it.role == KeyRole.DEVICE }
                     ?: return RegistrationResult.Refused("A step-up key needs a registered device key.")
                 val vouched = deviceKeyProof != null && verifySignature(
-                    owner.publicKey,
+                    owner,
                     ReferenceSigningScheme.keyBindingInput(ReferenceSigningScheme.ACTION_ADD_STEP_UP, challenge, keyId),
                     deviceKeyProof,
                 )
                 if (!vouched) return RegistrationResult.Refused("The device key didn't vouch for this step-up key.")
-                if (owner.attestation.isAttested) {
+                if (owner.attested) {
                     if (!attestation.isAttested) return RegistrationResult.Refused("An attested device needs an attested step-up key.")
-                    if (attestation.rootKeyFingerprint != owner.attestation.rootKeyFingerprint) {
+                    if (attestation.rootKeyFingerprint != owner.rootKeyFingerprint) {
                         return RegistrationResult.Refused("The step-up key was attested by a different root than the device key.")
                     }
                 }
@@ -147,9 +145,9 @@ class ReferenceBackend(
                 if ((description?.authTimeoutSeconds ?: 0) > 0) {
                     return RegistrationResult.Refused("The key stays unlocked for a while after one authentication instead of asking for each signature.")
                 }
-                stepUpKeyFor[owner.keyId]?.let(keys::remove)
-                keys[keyId] = KeyEntry(keyId, role, publicKey, deviceKeyId = owner.keyId, attestation = attestation)
-                stepUpKeyFor[owner.keyId] = keyId
+                store.stepUpKeyOf(owner.keyId)?.let(store::deleteKey)
+                store.putKey(stored(owner = owner.keyId))
+                store.setStepUpKey(owner.keyId, keyId)
             }
         }
         return RegistrationResult.Registered(keyId, role, attestation.toSummary(trustedRoot = policy.trustsRoot(attestation)))
@@ -160,23 +158,25 @@ class ReferenceBackend(
      * The device key must sign the request, or anyone who knew its key ID could downgrade it.
      */
     @Synchronized
-    fun removeStepUpKey(deviceKeyId: String, challenge: ByteArray, deviceKeyProof: ByteArray): Boolean {
-        if (!spendRegistrationChallenge(challenge, deviceKeyId)) return false
-        val owner = keys[deviceKeyId]?.takeIf { it.role == KeyRole.DEVICE } ?: return false
+    fun removeStepUpKey(deviceKeyId: String, challenge: ByteArray, deviceKeyProof: ByteArray): Boolean = store.transaction {
+        if (!spendRegistrationChallenge(challenge, deviceKeyId)) return@transaction false
+        val owner = store.key(deviceKeyId)?.takeIf { it.role == KeyRole.DEVICE } ?: return@transaction false
         val vouched = verifySignature(
-            owner.publicKey,
+            owner,
             ReferenceSigningScheme.keyBindingInput(ReferenceSigningScheme.ACTION_REMOVE_STEP_UP, challenge, deviceKeyId),
             deviceKeyProof,
         )
-        if (!vouched) return false
-        stepUpKeyFor.remove(deviceKeyId)?.let(keys::remove)
-        return true
+        if (!vouched) return@transaction false
+        store.stepUpKeyOf(deviceKeyId)?.let(store::deleteKey)
+        store.setStepUpKey(deviceKeyId, null)
+        true
     }
 
     /** A one-time challenge for signing a request only to have it checked, with nothing charged. */
     @Synchronized
-    fun issueVerificationChallenge(deviceKeyId: String): String =
-        issueChallenge(Purpose.VERIFICATION, deviceKeyId, RequiredConfirmation.NONE)
+    fun issueVerificationChallenge(deviceKeyId: String): String = store.transaction {
+        issueChallenge(ChallengePurpose.VERIFICATION, deviceKeyId, RequiredConfirmation.NONE)
+    }
 
     /**
      * Decides whether a protected action may run, here rather than in the app, and hands back the
@@ -184,21 +184,21 @@ class ReferenceBackend(
      * the device reports about itself; a production backend derives it from a Play Integrity verdict.
      */
     @Synchronized
-    fun beginPayment(deviceKeyId: String, level: DeviceRiskLevel): PaymentAuthorization {
-        return when (val decision = gate.decide(level)) {
+    fun beginPayment(deviceKeyId: String, level: DeviceRiskLevel): PaymentAuthorization = store.transaction {
+        when (val decision = gate.decide(level)) {
             SensitiveActionDecision.BLOCK -> PaymentAuthorization.Blocked(level)
             SensitiveActionDecision.ALLOW,
             SensitiveActionDecision.REQUIRE_CONFIRMATION,
             -> {
                 val stepUp = decision == SensitiveActionDecision.REQUIRE_CONFIRMATION
-                val hasStepUpKey = stepUpKeyFor.containsKey(deviceKeyId)
+                val hasStepUpKey = store.stepUpKeyOf(deviceKeyId) != null
                 val signWith = if (stepUp && hasStepUpKey) KeyRole.STEP_UP else KeyRole.DEVICE
                 val confirmation = when {
                     !stepUp -> RequiredConfirmation.NONE
                     hasStepUpKey -> RequiredConfirmation.STEP_UP_KEY
                     else -> RequiredConfirmation.TAP
                 }
-                val nonce = issueChallenge(Purpose.PAYMENT, deviceKeyId, confirmation)
+                val nonce = issueChallenge(ChallengePurpose.PAYMENT, deviceKeyId, confirmation)
                 PaymentAuthorization.Proceed(decision, nonce, signWith, confirmation)
             }
         }
@@ -206,16 +206,16 @@ class ReferenceBackend(
 
     /** Checks a signed request against a verification challenge and spends it, charging nothing. */
     @Synchronized
-    fun authenticate(request: ReceivedRequest, receivedAt: Instant = clock.instant()): VerificationResult {
+    fun authenticate(request: ReceivedRequest, receivedAt: Instant = clock.instant()): VerificationResult = store.transaction {
         val key = when (val check = checkSignature(request, receivedAt)) {
-            is SignatureCheck.Failed -> return VerificationResult.Rejected(check.reason)
+            is SignatureCheck.Failed -> return@transaction VerificationResult.Rejected(check.reason)
             is SignatureCheck.Passed -> check.key
         }
         val nonce = request.header(ReferenceSigningScheme.HEADER_NONCE).orEmpty()
-        challengeFor(nonce, Purpose.VERIFICATION, key.deviceKeyId, receivedAt)
-            ?: return VerificationResult.Rejected(missingChallengeReason(nonce))
-        spend(nonce, receivedAt)
-        return VerificationResult.Accepted
+        challengeFor(nonce, ChallengePurpose.VERIFICATION, key.deviceKeyId, receivedAt)
+            ?: return@transaction VerificationResult.Rejected(missingChallengeReason(nonce))
+        store.spendChallenge(nonce, receivedAt)
+        VerificationResult.Accepted
     }
 
     /**
@@ -223,7 +223,11 @@ class ReferenceBackend(
      * original result back, even though its challenge was spent the first time.
      */
     @Synchronized
-    fun submitPayment(request: ReceivedRequest, receivedAt: Instant = clock.instant()): PaymentResponse {
+    fun submitPayment(request: ReceivedRequest, receivedAt: Instant = clock.instant()): PaymentResponse = store.transaction {
+        pay(request, receivedAt)
+    }
+
+    private fun pay(request: ReceivedRequest, receivedAt: Instant): PaymentResponse {
         val key = when (val check = checkSignature(request, receivedAt)) {
             is SignatureCheck.Failed -> return PaymentResponse.Rejected(check.reason)
             is SignatureCheck.Passed -> check.key
@@ -231,11 +235,10 @@ class ReferenceBackend(
         val idempotencyKey = request.header(ReferenceSigningScheme.HEADER_IDEMPOTENCY_KEY)
             ?.takeIf { it.isNotBlank() }
             ?: return PaymentResponse.Rejected(RejectionReason.MISSING_HEADERS)
-        // Scoped to the device, so one device's keys can't collide with or probe another's.
-        val ledgerKey = key.deviceKeyId + ":" + idempotencyKey
         val fingerprint = listOf(request.path, ReferenceSigningScheme.sha256Hex(request.body)).joinToString("|")
 
-        ledger[ledgerKey]?.let { entry ->
+        // Scoped to the device, so one device's keys can't collide with or probe another's.
+        store.ledgerEntry(key.deviceKeyId, idempotencyKey)?.let { entry ->
             return if (entry.fingerprint == fingerprint) {
                 PaymentResponse.Processed(entry.payment, replayed = true)
             } else {
@@ -248,7 +251,7 @@ class ReferenceBackend(
             ?: return PaymentResponse.Rejected(RejectionReason.MALFORMED_BODY)
 
         val nonce = request.header(ReferenceSigningScheme.HEADER_NONCE).orEmpty()
-        val challenge = challengeFor(nonce, Purpose.PAYMENT, key.deviceKeyId, receivedAt)
+        val challenge = challengeFor(nonce, ChallengePurpose.PAYMENT, key.deviceKeyId, receivedAt)
             ?: return PaymentResponse.Rejected(missingChallengeReason(nonce))
         val confirmed = when (challenge.confirmation) {
             RequiredConfirmation.NONE -> key.role == KeyRole.DEVICE
@@ -257,7 +260,7 @@ class ReferenceBackend(
                 request.header(ReferenceSigningScheme.HEADER_CONFIRMATION) == ReferenceSigningScheme.CONFIRMATION_TAP
         }
         if (!confirmed) return PaymentResponse.Rejected(RejectionReason.CONFIRMATION_REQUIRED)
-        spend(nonce, receivedAt)
+        store.spendChallenge(nonce, receivedAt)
 
         val payment = Payment(
             id = "PAY-" + ReferenceSigningScheme.sha256Hex(nonce + idempotencyKey).take(8).uppercase(),
@@ -267,12 +270,12 @@ class ReferenceBackend(
             confirmation = challenge.confirmation,
             processedAt = receivedAt.toString(),
         )
-        ledger[ledgerKey] = LedgerEntry(fingerprint, payment)
+        store.putLedgerEntry(key.deviceKeyId, idempotencyKey, LedgerEntry(fingerprint, payment))
         return PaymentResponse.Processed(payment, replayed = false)
     }
 
     private sealed interface SignatureCheck {
-        class Passed(val key: KeyEntry) : SignatureCheck
+        class Passed(val key: StoredKey) : SignatureCheck
 
         class Failed(val reason: RejectionReason) : SignatureCheck
     }
@@ -299,7 +302,7 @@ class ReferenceBackend(
         if (Duration.between(signedAt, receivedAt).abs() > ReferenceSigningScheme.TIME_WINDOW) {
             return SignatureCheck.Failed(RejectionReason.OUTSIDE_TIME_WINDOW)
         }
-        val key = keys[keyId] ?: return SignatureCheck.Failed(RejectionReason.UNKNOWN_KEY)
+        val key = store.key(keyId) ?: return SignatureCheck.Failed(RejectionReason.UNKNOWN_KEY)
         val input = ReferenceSigningScheme.signingInput(
             method = request.method,
             path = request.path,
@@ -312,16 +315,16 @@ class ReferenceBackend(
         )
         val presented = ReferenceSigningScheme.decodeOrNull(signature)
             ?: return SignatureCheck.Failed(RejectionReason.SIGNATURE_MISMATCH)
-        return if (verifySignature(key.publicKey, input, presented)) {
+        return if (verifySignature(key, input, presented)) {
             SignatureCheck.Passed(key)
         } else {
             SignatureCheck.Failed(RejectionReason.SIGNATURE_MISMATCH)
         }
     }
 
-    private fun verifySignature(publicKey: PublicKey, data: ByteArray, signature: ByteArray): Boolean = runCatching {
+    private fun verifySignature(key: StoredKey, data: ByteArray, signature: ByteArray): Boolean = runCatching {
         Signature.getInstance(ReferenceSigningScheme.SIGNATURE_ALGORITHM).run {
-            initVerify(publicKey)
+            initVerify(checkNotNull(decodePublicKey(key.encodedPublicKey)))
             update(data)
             verify(signature)
         }
@@ -331,42 +334,33 @@ class ReferenceBackend(
      * The live challenge [nonce] names, if it was issued for [purpose] to [deviceKeyId]. Nothing is
      * spent, so a request that fails a later check can't burn a genuine request's challenge.
      */
-    private fun challengeFor(nonce: String, purpose: Purpose, deviceKeyId: String?, at: Instant): Challenge? {
-        prune(at)
-        return outstanding[nonce]?.takeIf {
+    private fun challengeFor(nonce: String, purpose: ChallengePurpose, deviceKeyId: String?, at: Instant): StoredChallenge? {
+        // Spent nonces are kept only to tell a replay from an unknown nonce; removing a spent
+        // challenge from the live set is what refuses the replay.
+        store.prune(
+            challengesExpiredBefore = at.minus(ReferenceSigningScheme.TIME_WINDOW),
+            spentBefore = at.minus(CHALLENGE_LIFETIME.plus(ReferenceSigningScheme.TIME_WINDOW.multipliedBy(2))),
+        )
+        return store.challenge(nonce)?.takeIf {
             it.purpose == purpose && it.deviceKeyId == deviceKeyId && !it.expiresAt.isBefore(at)
         }
     }
 
-    private fun spend(nonce: String, at: Instant) {
-        outstanding.remove(nonce)
-        used[nonce] = at
-    }
-
     private fun missingChallengeReason(nonce: String): RejectionReason =
-        if (nonce in used) RejectionReason.CHALLENGE_REUSED else RejectionReason.UNKNOWN_CHALLENGE
+        if (store.isSpent(nonce)) RejectionReason.CHALLENGE_REUSED else RejectionReason.UNKNOWN_CHALLENGE
 
     private fun spendRegistrationChallenge(challenge: ByteArray, deviceKeyId: String?): Boolean {
         val nonce = ReferenceSigningScheme.encode(challenge)
         val now = clock.instant()
-        challengeFor(nonce, Purpose.REGISTRATION, deviceKeyId, now) ?: return false
-        spend(nonce, now)
+        challengeFor(nonce, ChallengePurpose.REGISTRATION, deviceKeyId, now) ?: return false
+        store.spendChallenge(nonce, now)
         return true
     }
 
-    private fun issueChallenge(purpose: Purpose, deviceKeyId: String, confirmation: RequiredConfirmation): String {
+    private fun issueChallenge(purpose: ChallengePurpose, deviceKeyId: String, confirmation: RequiredConfirmation): String {
         val nonce = ReferenceSigningScheme.hex(ByteArray(16).also(random::nextBytes))
-        outstanding[nonce] = Challenge(purpose, deviceKeyId, confirmation, clock.instant().plus(CHALLENGE_LIFETIME))
+        store.putChallenge(StoredChallenge(nonce, purpose, deviceKeyId, confirmation, clock.instant().plus(CHALLENGE_LIFETIME)))
         return nonce
-    }
-
-    /**
-     * Removing a spent challenge from [outstanding] is what refuses a replay; [used] only remembers
-     * it long enough to say so instead of calling it unknown.
-     */
-    private fun prune(now: Instant) {
-        outstanding.entries.removeAll { it.value.expiresAt.isBefore(now.minus(ReferenceSigningScheme.TIME_WINDOW)) }
-        used.entries.removeAll { it.value.isBefore(now.minus(CHALLENGE_LIFETIME.plus(ReferenceSigningScheme.TIME_WINDOW.multipliedBy(2)))) }
     }
 
     private fun decodePublicKey(encoded: ByteArray): PublicKey? = runCatching {

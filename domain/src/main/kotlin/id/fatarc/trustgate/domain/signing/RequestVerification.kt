@@ -1,5 +1,8 @@
 package id.fatarc.trustgate.domain.signing
 
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+
 /** What a server actually receives: the wire request, without any of the signer's derived fields. */
 data class ReceivedRequest(
     val method: String,
@@ -18,9 +21,14 @@ fun SignedRequest.asReceived(): ReceivedRequest = ReceivedRequest(
     body = canonicalBody,
 )
 
+@Serializable
 sealed interface VerificationResult {
+    @Serializable
+    @SerialName("accepted")
     data object Accepted : VerificationResult
 
+    @Serializable
+    @SerialName("rejected")
     data class Rejected(val reason: RejectionReason) : VerificationResult
 }
 

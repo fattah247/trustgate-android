@@ -12,11 +12,9 @@ import id.fatarc.trustgate.BuildConfig
 import id.fatarc.trustgate.ui.BulletItem
 import id.fatarc.trustgate.ui.ScreenScaffold
 import id.fatarc.trustgate.ui.Section
-import id.fatarc.trustgate.ui.TrustGateUiState
 
 @Composable
 fun AboutScreen(
-    uiState: TrustGateUiState,
     onNavigateUp: () -> Unit,
 ) {
     ScreenScaffold(
@@ -55,16 +53,18 @@ fun AboutScreen(
             }
         }
 
-        item(key = "pinning") {
+        item(key = "server") {
             Section(
-                title = "Certificate pinning",
+                title = "Server",
                 footer = "Version ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
             ) {
                 Text(
-                    text = if (uiState.pinning.enabled) {
-                        "Pinning is on for ${uiState.pinning.host}. A real deployment also needs a plan for rotating pins."
-                    } else {
-                        "Pinning for ${uiState.pinning.host} is written but turned off, so this build works without a pinned server."
+                    text = when {
+                        BuildConfig.SERVER_URL.isBlank() -> "This build has no TrustGate server configured."
+                        BuildConfig.SERVER_PINNED ->
+                            "Talks to ${BuildConfig.SERVER_URL} over HTTPS, pinned to the server's key. A certificate for any " +
+                                "other key is refused, even one a user-installed authority signed."
+                        else -> "Talks to ${BuildConfig.SERVER_URL} over HTTPS, trusting the system's certificate authorities."
                     },
                     modifier = Modifier.padding(16.dp),
                     style = MaterialTheme.typography.bodyLarge,

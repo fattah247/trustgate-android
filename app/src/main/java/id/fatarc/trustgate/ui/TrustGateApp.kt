@@ -221,7 +221,6 @@ fun TrustGateApp(
                                 }
                                 composable(Routes.ABOUT) {
                                     AboutScreen(
-                                        uiState = uiState,
                                         onNavigateUp = dropUnlessResumed { navController.navigateUp() },
                                     )
                                 }

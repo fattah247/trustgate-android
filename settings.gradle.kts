@@ -15,5 +15,5 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "trustgate-android"
-include(":app", ":domain", ":backend")
+include(":app", ":domain", ":backend", ":server")
 
