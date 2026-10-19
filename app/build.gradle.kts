@@ -28,6 +28,8 @@ android {
         versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // Google Cloud project linked to Play Integrity; without one, debug builds send a mock token.
+        buildConfigField("long", "PLAY_INTEGRITY_PROJECT_NUMBER", "${providers.gradleProperty("trustgate.cloudProjectNumber").getOrElse("0")}L")
     }
 
     buildTypes {
@@ -90,6 +92,7 @@ dependencies {
     // Step-up confirmation with the device's biometrics or screen lock for medium-risk actions.
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("androidx.fragment:fragment-ktx:1.8.5")
+    implementation("com.google.android.play:integrity:1.4.0")
     implementation(project(":domain"))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")

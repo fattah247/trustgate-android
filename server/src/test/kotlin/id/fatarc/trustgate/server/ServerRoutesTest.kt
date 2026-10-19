@@ -23,6 +23,7 @@ import id.fatarc.trustgate.domain.signing.SignedRequest
 import id.fatarc.trustgate.domain.signing.VerificationResult
 import id.fatarc.trustgate.testing.TestKey
 import id.fatarc.trustgate.testing.developmentPolicy
+import id.fatarc.trustgate.testing.evidenceJson
 import id.fatarc.trustgate.testing.selfSignedChain
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
@@ -85,7 +86,9 @@ class ServerRoutesTest {
     private suspend fun HttpClient.signedPayment(): SignedRequest {
         val authorization = call<PaymentAuthorizationRequest, PaymentAuthorization>(
             TrustGateRoutes.AUTHORIZE_PAYMENT,
-            PaymentAuthorizationRequest(device.keyId, DeviceRiskLevel.LOW),
+            evidenceJson(device.keyId, DeviceRiskLevel.LOW, Instant.now()).let { evidence ->
+                PaymentAuthorizationRequest(device.keyId, evidence, base64(device.sign(evidence.toByteArray())))
+            },
         ) as PaymentAuthorization.Proceed
         return device.sign(
             signer.prepare(ReferencePayment.payload(), authorization.nonce, device.keyId, Instant.now().toString(), idempotencyKey = "idem-1"),

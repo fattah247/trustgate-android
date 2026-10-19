@@ -8,6 +8,7 @@ import id.fatarc.trustgate.TrustGateAppContainer
 import id.fatarc.trustgate.core.backend.BackendTransport
 import id.fatarc.trustgate.core.backend.PaymentClient
 import id.fatarc.trustgate.core.backend.TrustGateApi
+import id.fatarc.trustgate.core.integrity.IntegrityTokenSource
 import id.fatarc.trustgate.core.keys.DeviceKeyProvider
 import id.fatarc.trustgate.core.keys.KeyRegistrar
 import id.fatarc.trustgate.core.keys.KeySet
@@ -19,9 +20,13 @@ import id.fatarc.trustgate.core.storage.SecureValueNames
 import id.fatarc.trustgate.core.storage.SecureValueStore
 import id.fatarc.trustgate.core.storage.SecurityStorageSnapshot
 import id.fatarc.trustgate.data.securityevent.AuditLogExport
+import id.fatarc.trustgate.domain.api.DeviceEvidence
 import id.fatarc.trustgate.domain.api.PaymentAuthorization
+import id.fatarc.trustgate.domain.api.PaymentAuthorizationRequest
 import id.fatarc.trustgate.domain.api.PaymentResponse
+import id.fatarc.trustgate.domain.api.ReportedSignal
 import id.fatarc.trustgate.domain.api.RequiredConfirmation
+import id.fatarc.trustgate.domain.api.TrustGateJson
 import id.fatarc.trustgate.domain.events.SecurityEventRepository
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.risk.DeviceRiskReport
@@ -63,6 +68,7 @@ class TrustGateViewModel(
     private val keyRegistrar: KeyRegistrar,
     private val transport: BackendTransport,
     private val paymentClient: PaymentClient,
+    private val integrityTokens: IntegrityTokenSource,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(
@@ -145,13 +151,15 @@ class TrustGateViewModel(
                 ?: return@launch abandonAction("The device couldn't be checked, so the action didn't run.")
             val keys = ensureKeys()
                 ?: return@launch abandonAction("The device key isn't ready, so the action didn't run.")
-            val authorization = runCatching { withContext(ioDispatcher) { api.authorizePayment(keys.device.keyId, report.level) } }
+            val authorization = runCatching { withContext(ioDispatcher) { api.authorizePayment(authorizationRequest(report, keys.device.keyId)) } }
                 .rethrowCancellation()
                 .getOrElse { return@launch abandonAction("The backend couldn't be reached, so the action didn't run.") }
-            runCatching { securityService.recordGateDecision(report, authorization.decision) }.rethrowCancellation()
+            // The backend's own level counts from here on; the device's report was only evidence.
+            val level = authorization.level
+            runCatching { securityService.recordGateDecision(level, authorization.decision, authorization.reasons) }.rethrowCancellation()
 
             if (authorization !is PaymentAuthorization.Proceed) {
-                updateDecision(PaymentDecisionState.Blocked(report.level))
+                updateDecision(PaymentDecisionState.Blocked(level), authorization.reasons)
                 return@launch
             }
             val keyId = when (authorization.signWith) {
@@ -168,7 +176,7 @@ class TrustGateViewModel(
             )
             when (authorization.confirmation) {
                 RequiredConfirmation.NONE -> {
-                    updateDecision(PaymentDecisionState.Allowed(report.level))
+                    updateDecision(PaymentDecisionState.Allowed(level), authorization.reasons)
                     val submission = signAndSubmit(pending, keyProvider::signWithDeviceKey)
                     // A profile switch cancels this job; don't publish a result for the old profile.
                     ensureActive()
@@ -177,12 +185,12 @@ class TrustGateViewModel(
 
                 RequiredConfirmation.STEP_UP_KEY -> {
                     pendingPayment = pending
-                    updateDecision(PaymentDecisionState.ConfirmationRequired(report.level, ConfirmationMethod.DEVICE_CREDENTIAL))
+                    updateDecision(PaymentDecisionState.ConfirmationRequired(level, ConfirmationMethod.DEVICE_CREDENTIAL), authorization.reasons)
                 }
 
                 RequiredConfirmation.TAP -> {
                     pendingPayment = pending
-                    updateDecision(PaymentDecisionState.ConfirmationRequired(report.level, ConfirmationMethod.TAP))
+                    updateDecision(PaymentDecisionState.ConfirmationRequired(level, ConfirmationMethod.TAP), authorization.reasons)
                 }
             }
         }
@@ -229,7 +237,7 @@ class TrustGateViewModel(
         val pending = pendingPayment?.takeIf { decision.method == method } ?: return
         pendingPayment = null
         // Leave the confirmation state first so a second tap cannot record a second approval.
-        updateDecision(PaymentDecisionState.Confirmed(decision.riskLevel))
+        updateDecision(PaymentDecisionState.Confirmed(decision.riskLevel), _uiState.value.payment.reasons)
         assessmentJob?.cancel()
         actionJob = viewModelScope.launch {
             // The device may have changed while the person was confirming, so check it again before approving.
@@ -551,10 +559,33 @@ class TrustGateViewModel(
         }
     }
 
-    private fun updateDecision(decision: PaymentDecisionState) {
+    private fun updateDecision(decision: PaymentDecisionState, reasons: List<String> = emptyList()) {
         _uiState.update { current ->
-            current.copy(payment = PaymentUiState(latestDecision = decision, decidedAt = Instant.now()))
+            current.copy(payment = PaymentUiState(latestDecision = decision, decidedAt = Instant.now(), reasons = reasons))
         }
+    }
+
+    /**
+     * What the device reports about itself, signed by its key, with a Play Integrity token bound to
+     * that exact report. Without a token the backend weighs the signals alone.
+     */
+    private suspend fun authorizationRequest(report: DeviceRiskReport, deviceKeyId: String): PaymentAuthorizationRequest {
+        val evidence = TrustGateJson.encodeToString(
+            DeviceEvidence.serializer(),
+            DeviceEvidence(
+                deviceKeyId = deviceKeyId,
+                collectedAt = Instant.now().toString(),
+                signals = report.signals.map { ReportedSignal(it.id, it.detected) },
+                simulated = _uiState.value.risk.source == RiskReportSource.SCENARIO,
+            ),
+        )
+        val integrityToken = runCatching { integrityTokens.token(ReferenceSigningScheme.sha256Hex(evidence)) }.rethrowCancellation().getOrNull()
+        return PaymentAuthorizationRequest(
+            deviceKeyId = deviceKeyId,
+            evidence = evidence,
+            signature = ReferenceSigningScheme.encode(keyProvider.signWithDeviceKey(evidence.toByteArray())),
+            integrityToken = integrityToken,
+        )
     }
 
     /** Adds what happened to the payment to the decision that let it through, unless that was reset meanwhile. */
@@ -730,6 +761,7 @@ class TrustGateViewModelFactory(
             keyRegistrar = container.keyRegistrar,
             transport = container.transport,
             paymentClient = container.paymentClient,
+            integrityTokens = container.integrityTokens,
         ) as T
     }
 }

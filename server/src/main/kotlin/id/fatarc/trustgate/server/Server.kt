@@ -14,11 +14,15 @@ fun main() {
     val config = ServerConfig.fromEnvironment()
     val store = SqliteBackendStore(config.database)
     val revocations = RevocationCache(config.revocationUrl, File(config.database.absoluteFile.parentFile, "attestation-status.json"))
-    val backend = ReferenceBackend(policy = config.policy(), revocations = revocations::current, store = store)
+    val integrity = config.playIntegrityCredentials?.let { PlayIntegrityVerifier(config.packageName, it) }
+    val backend = ReferenceBackend(policy = config.policy(integrity), revocations = revocations::current, store = store)
     val password = config.keystorePassword.toCharArray()
     val keyStore = KeyStore.getInstance(config.keystore, password)
     val log = LoggerFactory.getLogger("trustgate")
-    log.info("Enforcing the {} attestation policy for {}.", config.policyName, config.packageName)
+    log.info("Enforcing the {} policy for {}.", config.policyName, config.packageName)
+    if (config.policyName == ServerConfig.STRICT && integrity == null) {
+        log.warn("No Play Integrity credentials: every integrity token will count as unverifiable.")
+    }
 
     val environment = applicationEngineEnvironment {
         this.log = log

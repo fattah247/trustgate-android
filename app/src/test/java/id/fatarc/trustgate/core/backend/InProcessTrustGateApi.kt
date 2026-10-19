@@ -1,9 +1,10 @@
 package id.fatarc.trustgate.core.backend
 
 import id.fatarc.trustgate.backend.ReferenceBackend
-import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
+import id.fatarc.trustgate.domain.api.PaymentAuthorizationRequest
 import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.domain.signing.ReceivedRequest
+import java.util.Base64
 
 /** Runs the backend inside the app process, with no network in between. */
 class InProcessTrustGateApi(private val backend: ReferenceBackend) : TrustGateApi {
@@ -23,7 +24,12 @@ class InProcessTrustGateApi(private val backend: ReferenceBackend) : TrustGateAp
 
     override suspend fun verificationChallenge(deviceKeyId: String) = backend.issueVerificationChallenge(deviceKeyId)
 
-    override suspend fun authorizePayment(deviceKeyId: String, level: DeviceRiskLevel) = backend.beginPayment(deviceKeyId, level)
+    override suspend fun authorizePayment(request: PaymentAuthorizationRequest) = backend.authorizePayment(
+        deviceKeyId = request.deviceKeyId,
+        evidence = request.evidence,
+        signature = Base64.getDecoder().decode(request.signature),
+        integrityToken = request.integrityToken,
+    )
 
     override suspend fun checkRequest(request: ReceivedRequest) = backend.authenticate(request)
 

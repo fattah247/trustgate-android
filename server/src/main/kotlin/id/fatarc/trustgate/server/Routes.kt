@@ -89,7 +89,13 @@ fun Application.trustGateModule(backend: ReferenceBackend, health: ServerHealth)
 
         post(TrustGateRoutes.AUTHORIZE_PAYMENT) {
             val request = call.receive<PaymentAuthorizationRequest>()
-            call.respond<PaymentAuthorization>(backend.beginPayment(request.deviceKeyId, request.level))
+            val authorization = backend.authorizePayment(
+                deviceKeyId = request.deviceKeyId,
+                evidence = request.evidence,
+                signature = bytes(request.signature),
+                integrityToken = request.integrityToken,
+            )
+            call.respond<PaymentAuthorization>(authorization)
         }
 
         post(TrustGateRoutes.PAYMENT) {

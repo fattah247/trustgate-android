@@ -268,7 +268,7 @@ private fun DecisionResult(
         val outcome = current.outcome() ?: return@AnimatedContent
         NoticeCard(
             title = outcome.title,
-            body = outcome.body,
+            body = if (current.reasons.isEmpty()) outcome.body else outcome.body + "\n\nBackend: " + current.reasons.joinToString(" "),
             caption = current.decidedAt?.let(formats::preciseTime),
             tone = outcome.tone,
             icon = outcome.icon,

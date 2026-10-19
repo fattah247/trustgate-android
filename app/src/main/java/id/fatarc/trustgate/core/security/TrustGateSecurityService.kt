@@ -7,6 +7,7 @@ import id.fatarc.trustgate.domain.api.PaymentResponse
 import id.fatarc.trustgate.domain.events.SecurityEvent
 import id.fatarc.trustgate.domain.events.SecurityEventRepository
 import id.fatarc.trustgate.domain.events.SecurityEventType
+import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.risk.DeviceRiskReport
 import id.fatarc.trustgate.domain.risk.DeviceSignalCollector
 import id.fatarc.trustgate.domain.risk.RiskScorer
@@ -80,14 +81,17 @@ class TrustGateSecurityService(
         return report
     }
 
-    /** Logs the gate decision the backend made for this report. */
-    suspend fun recordGateDecision(report: DeviceRiskReport, decision: SensitiveActionDecision) {
+    /** Logs the gate decision the backend made, at the risk level it assessed, and why. */
+    suspend fun recordGateDecision(level: DeviceRiskLevel, decision: SensitiveActionDecision, reasons: List<String>) {
         eventRepository.record(
             SecurityEvent(
                 type = decision.toSecurityEventType(),
-                riskLevel = report.level,
+                riskLevel = level,
                 message = decision.toAuditMessage(),
-                metadata = mapOf("decidedBy" to "reference-backend"),
+                metadata = buildMap {
+                    put("decidedBy", "reference-backend")
+                    if (reasons.isNotEmpty()) put("reasons", reasons.joinToString(" "))
+                },
             ),
         )
     }

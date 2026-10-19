@@ -40,7 +40,7 @@ class TrustGateSecurityServiceTest {
         val service = serviceWith(repository, listOf(riskSignal("debugger_connected", SignalSeverity.HIGH, SignalCategory.DEBUGGER)))
 
         val report = service.assessDeviceRisk()
-        service.recordGateDecision(report, SensitiveActionGate().decide(report.level))
+        service.recordGateDecision(report.level, SensitiveActionGate().decide(report.level), reasons = emptyList())
 
         assertThat(repository.events.value.last().type).isEqualTo(SecurityEventType.SENSITIVE_ACTION_BLOCKED)
     }
@@ -141,7 +141,7 @@ class TrustGateSecurityServiceTest {
         )
 
         val report = service.assessDeviceRisk()
-        service.recordGateDecision(report, SensitiveActionGate().decide(report.level))
+        service.recordGateDecision(report.level, SensitiveActionGate().decide(report.level), reasons = emptyList())
         service.cancelSensitiveAction(report)
 
         assertThat(repository.events.value.takeLast(2).map { it.type }).containsExactly(

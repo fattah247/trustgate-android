@@ -18,22 +18,30 @@ enum class RequiredConfirmation {
     TAP,
 }
 
+/** The backend's answer to a protected action: its own risk level, why, and what the request needs. */
 @Serializable
 sealed interface PaymentAuthorization {
     val decision: SensitiveActionDecision
+    val level: DeviceRiskLevel
+    val reasons: List<String>
 
     @Serializable
     @SerialName("proceed")
     data class Proceed(
         override val decision: SensitiveActionDecision,
+        override val level: DeviceRiskLevel,
         val nonce: String,
         val signWith: KeyRole,
         val confirmation: RequiredConfirmation,
+        override val reasons: List<String> = emptyList(),
     ) : PaymentAuthorization
 
     @Serializable
     @SerialName("blocked")
-    data class Blocked(val level: DeviceRiskLevel) : PaymentAuthorization {
+    data class Blocked(
+        override val level: DeviceRiskLevel,
+        override val reasons: List<String> = emptyList(),
+    ) : PaymentAuthorization {
         override val decision: SensitiveActionDecision get() = SensitiveActionDecision.BLOCK
     }
 }

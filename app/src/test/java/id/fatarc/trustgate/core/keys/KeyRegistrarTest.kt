@@ -8,6 +8,7 @@ import id.fatarc.trustgate.domain.api.RequiredConfirmation
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.testing.SoftwareKeyProvider
+import id.fatarc.trustgate.testing.authorize
 import id.fatarc.trustgate.testing.developmentPolicy
 import java.security.KeyStoreException
 import kotlinx.coroutines.Dispatchers
@@ -20,7 +21,7 @@ class KeyRegistrarTest {
     private val registrar = KeyRegistrar(keys, InProcessTrustGateApi(backend), Dispatchers.Unconfined)
 
     private fun mediumRiskConfirmation(deviceKeyId: String): RequiredConfirmation =
-        (backend.beginPayment(deviceKeyId, DeviceRiskLevel.MEDIUM) as PaymentAuthorization.Proceed).confirmation
+        (backend.authorize(deviceKeyId, keys::signWithDeviceKey, DeviceRiskLevel.MEDIUM) as PaymentAuthorization.Proceed).confirmation
 
     @Test
     fun `both keys are registered when a screen lock is set`() = runTest {

@@ -49,6 +49,8 @@ data class PaymentUiState(
     val decidedAt: Instant? = null,
     /** What happened to the request once the gate let the action through. */
     val submission: Submission? = null,
+    /** Why the backend decided as it did. */
+    val reasons: List<String> = emptyList(),
 ) {
     /** The gate let the action through and the payment hasn't come back yet. */
     val isSending: Boolean

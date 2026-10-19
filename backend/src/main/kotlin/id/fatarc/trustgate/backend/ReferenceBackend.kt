@@ -1,6 +1,5 @@
 package id.fatarc.trustgate.backend
 
-import id.fatarc.trustgate.backend.attestation.AttestationPolicy
 import id.fatarc.trustgate.backend.attestation.KeyAttestationVerifier
 import id.fatarc.trustgate.backend.attestation.RevocationList
 import id.fatarc.trustgate.backend.store.BackendStore
@@ -12,11 +11,13 @@ import id.fatarc.trustgate.backend.store.StoredKey
 import id.fatarc.trustgate.backend.attestation.toSummary
 import id.fatarc.trustgate.domain.actiongate.SensitiveActionDecision
 import id.fatarc.trustgate.domain.actiongate.SensitiveActionGate
+import id.fatarc.trustgate.domain.api.DeviceEvidence
 import id.fatarc.trustgate.domain.api.Payment
 import id.fatarc.trustgate.domain.api.PaymentAuthorization
 import id.fatarc.trustgate.domain.api.PaymentResponse
 import id.fatarc.trustgate.domain.api.RegistrationResult
 import id.fatarc.trustgate.domain.api.RequiredConfirmation
+import id.fatarc.trustgate.domain.api.TrustGateJson
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.domain.signing.PaymentRequestPayload
@@ -41,7 +42,7 @@ import kotlinx.serialization.json.Json
  * transaction, so a crash can't leave a challenge spent without the payment it paid for.
  */
 class ReferenceBackend(
-    private val policy: AttestationPolicy,
+    private val policy: BackendPolicy,
     private val clock: Clock = Clock.systemUTC(),
     /** The latest copy of Google's status list; the server refreshes it in the background. */
     private val revocations: () -> RevocationList? = { RevocationList.EMPTY },
@@ -105,7 +106,7 @@ class ReferenceBackend(
         if (store.key(keyId) != null) return RegistrationResult.Refused("This key is already registered.")
 
         val attestation = KeyAttestationVerifier.verify(attestationChain, encodedPublicKey, challenge)
-        policy.problemWith(attestation, revocations())?.let { return RegistrationResult.Refused(it) }
+        policy.attestation.problemWith(attestation, revocations())?.let { return RegistrationResult.Refused(it) }
 
         fun stored(owner: String) = StoredKey(
             keyId = keyId,
@@ -150,7 +151,7 @@ class ReferenceBackend(
                 store.setStepUpKey(owner.keyId, keyId)
             }
         }
-        return RegistrationResult.Registered(keyId, role, attestation.toSummary(trustedRoot = policy.trustsRoot(attestation)))
+        return RegistrationResult.Registered(keyId, role, attestation.toSummary(trustedRoot = policy.attestation.trustsRoot(attestation)))
     }
 
     /**
@@ -179,14 +180,37 @@ class ReferenceBackend(
     }
 
     /**
-     * Decides whether a protected action may run, here rather than in the app, and hands back the
-     * challenge the request must sign together with the key it must be signed with. [level] is what
-     * the device reports about itself; a production backend derives it from a Play Integrity verdict.
+     * Decides whether a protected action may run, here rather than in the app. [evidence] is the
+     * [DeviceEvidence] JSON exactly as the device key signed it, and [integrityToken] a Play Integrity
+     * token bound to its hash. The answer carries the challenge the payment must sign and the key
+     * it must be signed with.
      */
     @Synchronized
-    fun beginPayment(deviceKeyId: String, level: DeviceRiskLevel): PaymentAuthorization = store.transaction {
-        when (val decision = gate.decide(level)) {
-            SensitiveActionDecision.BLOCK -> PaymentAuthorization.Blocked(level)
+    fun authorizePayment(
+        deviceKeyId: String,
+        evidence: String,
+        signature: ByteArray,
+        integrityToken: String?,
+        receivedAt: Instant = clock.instant(),
+    ): PaymentAuthorization = store.transaction {
+        fun refuse(reason: String) = PaymentAuthorization.Blocked(DeviceRiskLevel.HIGH, listOf(reason))
+        val key = store.key(deviceKeyId)?.takeIf { it.role == KeyRole.DEVICE }
+            ?: return@transaction refuse("This device key isn't registered.")
+        if (!verifySignature(key, evidence.toByteArray(), signature)) return@transaction refuse("The evidence wasn't signed by this device's key.")
+        val report = runCatching { TrustGateJson.decodeFromString(DeviceEvidence.serializer(), evidence) }.getOrNull()
+            ?.takeIf { it.deviceKeyId == deviceKeyId }
+            ?: return@transaction refuse("The evidence couldn't be read.")
+        val collectedAt = runCatching { Instant.parse(report.collectedAt) }.getOrNull()
+        if (collectedAt == null || Duration.between(collectedAt, receivedAt).abs() > ReferenceSigningScheme.TIME_WINDOW) {
+            return@transaction refuse("The evidence is out of date.")
+        }
+        val assessment = policy.risk.assess(report, ReferenceSigningScheme.sha256Hex(evidence), integrityToken, receivedAt)
+        authorization(deviceKeyId, assessment.level, assessment.reasons)
+    }
+
+    private fun authorization(deviceKeyId: String, level: DeviceRiskLevel, reasons: List<String>): PaymentAuthorization {
+        return when (val decision = gate.decide(level)) {
+            SensitiveActionDecision.BLOCK -> PaymentAuthorization.Blocked(level, reasons)
             SensitiveActionDecision.ALLOW,
             SensitiveActionDecision.REQUIRE_CONFIRMATION,
             -> {
@@ -199,7 +223,7 @@ class ReferenceBackend(
                     else -> RequiredConfirmation.TAP
                 }
                 val nonce = issueChallenge(ChallengePurpose.PAYMENT, deviceKeyId, confirmation)
-                PaymentAuthorization.Proceed(decision, nonce, signWith, confirmation)
+                PaymentAuthorization.Proceed(decision, level, nonce, signWith, confirmation, reasons)
             }
         }
     }

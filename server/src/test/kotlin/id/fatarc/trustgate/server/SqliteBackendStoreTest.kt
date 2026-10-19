@@ -13,6 +13,7 @@ import id.fatarc.trustgate.domain.signing.RejectionReason
 import id.fatarc.trustgate.domain.signing.asReceived
 import id.fatarc.trustgate.testing.MutableClock
 import id.fatarc.trustgate.testing.TestKey
+import id.fatarc.trustgate.testing.authorize
 import id.fatarc.trustgate.testing.developmentPolicy
 import id.fatarc.trustgate.testing.selfSignedChain
 import java.io.File
@@ -39,7 +40,7 @@ class SqliteBackendStoreTest {
         val challenge = before.issueRegistrationChallenge()
         assertThat(before.registerKey(KeyRole.DEVICE, device.encodedPublicKey, selfSignedChain(device), challenge))
             .isInstanceOf(RegistrationResult.Registered::class.java)
-        val nonce = (before.beginPayment(device.keyId, DeviceRiskLevel.LOW) as PaymentAuthorization.Proceed).nonce
+        val nonce = (before.authorize(device, DeviceRiskLevel.LOW, clock.now) as PaymentAuthorization.Proceed).nonce
         val payment = device.sign(
             ReferenceRequestSigner().prepare(ReferencePayment.payload(), nonce, device.keyId, clock.now.toString(), idempotencyKey = "idem-1"),
         ).asReceived()

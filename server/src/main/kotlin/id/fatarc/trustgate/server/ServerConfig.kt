@@ -1,10 +1,11 @@
 package id.fatarc.trustgate.server
 
-import id.fatarc.trustgate.backend.attestation.AttestationPolicy
+import id.fatarc.trustgate.backend.BackendPolicy
 import id.fatarc.trustgate.backend.attestation.RevocationList
+import id.fatarc.trustgate.backend.integrity.IntegrityVerifier
 import java.io.File
 
-/** Read from the environment. With no policy named the server enforces [AttestationPolicy.strict]. */
+/** Read from the environment. With no policy named the server enforces [BackendPolicy.strict]. */
 class ServerConfig(
     val host: String,
     val port: Int,
@@ -17,10 +18,12 @@ class ServerConfig(
     val minimumOsPatchLevel: Int?,
     /** Where Google's status list is fetched from; null turns fetching off. */
     val revocationUrl: String?,
+    /** A Google service account allowed to decode this app's Play Integrity tokens. */
+    val playIntegrityCredentials: File?,
 ) {
-    fun policy(): AttestationPolicy = when (policyName) {
-        STRICT -> AttestationPolicy.strict(packageName, signingCertificateDigests, minimumOsPatchLevel)
-        DEVELOPMENT -> AttestationPolicy.development(packageName, signingCertificateDigests)
+    fun policy(integrity: IntegrityVerifier?): BackendPolicy = when (policyName) {
+        STRICT -> BackendPolicy.strict(packageName, signingCertificateDigests, integrity, minimumOsPatchLevel)
+        DEVELOPMENT -> BackendPolicy.development(packageName, signingCertificateDigests)
         else -> error("Unknown policy \"$policyName\"; use $STRICT or $DEVELOPMENT.")
     }
 
@@ -43,6 +46,7 @@ class ServerConfig(
                     .split(',').map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet(),
                 minimumOsPatchLevel = env["TRUSTGATE_MIN_PATCH_LEVEL"]?.toInt(),
                 revocationUrl = env["TRUSTGATE_REVOCATION_URL"].let { if (it == "off") null else it ?: RevocationList.URL },
+                playIntegrityCredentials = env["TRUSTGATE_PLAY_INTEGRITY_CREDENTIALS"]?.let(::File),
             )
         }
     }

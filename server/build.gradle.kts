@@ -37,6 +37,8 @@ dependencies {
     implementation("io.ktor:ktor-server-call-logging-jvm:$ktorVersion")
     implementation("org.xerial:sqlite-jdbc:3.46.1.0")
     implementation("ch.qos.logback:logback-classic:1.5.6")
+    // Service-account access tokens for Google's Play Integrity API.
+    implementation("com.google.auth:google-auth-library-oauth2-http:1.23.0")
 
     testImplementation(testFixtures(project(":backend")))
     testImplementation("io.ktor:ktor-server-test-host-jvm:$ktorVersion")

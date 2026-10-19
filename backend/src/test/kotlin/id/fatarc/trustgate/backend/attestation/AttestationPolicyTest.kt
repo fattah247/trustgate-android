@@ -51,7 +51,7 @@ class AttestationPolicyTest {
         val chain: (PublicKey) -> List<ByteArray> = { attestation.chainFor(it, challenge, securityLevel = 0) }
 
         assertThat(problem(chain = chain)).contains("secure hardware")
-        assertThat(problem(policy = developmentPolicy, chain = chain)).isNull()
+        assertThat(problem(policy = developmentPolicy.attestation, chain = chain)).isNull()
     }
 
     @Test
@@ -79,6 +79,6 @@ class AttestationPolicyTest {
         val selfSigned: (PublicKey) -> List<ByteArray> = { selfSignedChain(key) }
 
         assertThat(problem(chain = selfSigned)).contains("only attested keys")
-        assertThat(problem(policy = developmentPolicy, chain = selfSigned)).isNull()
+        assertThat(problem(policy = developmentPolicy.attestation, chain = selfSigned)).isNull()
     }
 }

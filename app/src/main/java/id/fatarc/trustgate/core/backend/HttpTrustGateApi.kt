@@ -13,7 +13,6 @@ import id.fatarc.trustgate.domain.api.TrustGateJson
 import id.fatarc.trustgate.domain.api.TrustGateRoutes
 import id.fatarc.trustgate.domain.api.VerificationChallenge
 import id.fatarc.trustgate.domain.api.VerificationChallengeRequest
-import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.domain.signing.ReceivedRequest
 import id.fatarc.trustgate.domain.signing.VerificationResult
@@ -77,8 +76,8 @@ class HttpTrustGateApi(
     override suspend fun verificationChallenge(deviceKeyId: String): String =
         post<VerificationChallengeRequest, VerificationChallenge>(TrustGateRoutes.VERIFICATION_CHALLENGE, VerificationChallengeRequest(deviceKeyId)).nonce
 
-    override suspend fun authorizePayment(deviceKeyId: String, level: DeviceRiskLevel): PaymentAuthorization =
-        post(TrustGateRoutes.AUTHORIZE_PAYMENT, PaymentAuthorizationRequest(deviceKeyId, level))
+    override suspend fun authorizePayment(request: PaymentAuthorizationRequest): PaymentAuthorization =
+        post(TrustGateRoutes.AUTHORIZE_PAYMENT, request)
 
     override suspend fun checkRequest(request: ReceivedRequest): VerificationResult = send(TrustGateRoutes.PAYMENT_CHECK, request)
 

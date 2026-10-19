@@ -1,6 +1,5 @@
 package id.fatarc.trustgate.domain.api
 
-import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.domain.signing.ReferenceSigningScheme
 import kotlinx.serialization.Serializable
@@ -29,6 +28,9 @@ object TrustGateRoutes {
         ReferenceSigningScheme.HEADER_SIGNATURE,
     )
 }
+
+/** How a debug build without Google Play marks the integrity token it makes up: this, then the request hash. */
+const val MOCK_INTEGRITY_TOKEN_PREFIX = "mock:"
 
 /** One JSON configuration for both ends, so a field added on one side is read the same on the other. */
 val TrustGateJson: Json = Json {
@@ -72,9 +74,28 @@ data class VerificationChallengeRequest(val deviceKeyId: String)
 data class VerificationChallenge(val nonce: String)
 
 @Serializable
+data class ReportedSignal(val id: String, val detected: Boolean)
+
+/** What the device reports about itself before a protected action. The server decides what it's worth. */
+@Serializable
+data class DeviceEvidence(
+    val deviceKeyId: String,
+    /** ISO-8601 instant; the server refuses evidence older than the protocol's time window. */
+    val collectedAt: String,
+    val signals: List<ReportedSignal>,
+    /** The signals come from a simulated profile the person picked rather than from this device. */
+    val simulated: Boolean = false,
+)
+
+@Serializable
 data class PaymentAuthorizationRequest(
     val deviceKeyId: String,
-    val level: DeviceRiskLevel,
+    /** [DeviceEvidence] as the exact JSON the device key signed. */
+    val evidence: String,
+    /** The device key's signature over [evidence], Base64. */
+    val signature: String,
+    /** A Play Integrity token requested with the SHA-256 of [evidence] as its request hash. */
+    val integrityToken: String? = null,
 )
 
 @Serializable

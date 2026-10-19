@@ -18,6 +18,7 @@ import id.fatarc.trustgate.domain.signing.asReceived
 import id.fatarc.trustgate.testing.MutableClock
 import id.fatarc.trustgate.testing.TestAttestation
 import id.fatarc.trustgate.testing.TestKey
+import id.fatarc.trustgate.testing.authorize
 import id.fatarc.trustgate.testing.developmentPolicy
 import id.fatarc.trustgate.testing.selfSignedChain
 import org.junit.Test
@@ -73,7 +74,7 @@ class ReferenceBackendTest {
     )
 
     private fun allowedNonce(): String =
-        (backend.beginPayment(device.keyId, DeviceRiskLevel.LOW) as PaymentAuthorization.Proceed).nonce
+        (backend.authorize(device, DeviceRiskLevel.LOW, clock.now) as PaymentAuthorization.Proceed).nonce
 
     private fun verificationRequest(key: TestKey = device): SignedRequest = key.sign(
         signer.prepare(
@@ -125,16 +126,17 @@ class ReferenceBackendTest {
     fun `high risk is blocked before any challenge is issued`() {
         registerDevice()
 
-        val authorization = backend.beginPayment(device.keyId, DeviceRiskLevel.HIGH)
+        val authorization = backend.authorize(device, DeviceRiskLevel.HIGH, clock.now)
 
-        assertThat(authorization).isEqualTo(PaymentAuthorization.Blocked(DeviceRiskLevel.HIGH))
+        assertThat(authorization).isInstanceOf(PaymentAuthorization.Blocked::class.java)
+        assertThat(authorization.level).isEqualTo(DeviceRiskLevel.HIGH)
     }
 
     @Test
     fun `medium risk with a step-up key must be signed by that key`() {
         registerDevice()
         assertThat(registerStepUp()).isInstanceOf(RegistrationResult.Registered::class.java)
-        val authorization = backend.beginPayment(device.keyId, DeviceRiskLevel.MEDIUM) as PaymentAuthorization.Proceed
+        val authorization = backend.authorize(device, DeviceRiskLevel.MEDIUM, clock.now) as PaymentAuthorization.Proceed
 
         val signedByDeviceKey = backend.submitPayment(paymentRequest(authorization.nonce).asReceived())
         val signedByStepUpKey = backend.submitPayment(paymentRequest(authorization.nonce, key = stepUp).asReceived())
@@ -148,7 +150,7 @@ class ReferenceBackendTest {
     @Test
     fun `medium risk without a step-up key needs a signed tap confirmation`() {
         registerDevice()
-        val authorization = backend.beginPayment(device.keyId, DeviceRiskLevel.MEDIUM) as PaymentAuthorization.Proceed
+        val authorization = backend.authorize(device, DeviceRiskLevel.MEDIUM, clock.now) as PaymentAuthorization.Proceed
 
         val unconfirmed = backend.submitPayment(paymentRequest(authorization.nonce).asReceived())
         val tapped = backend.submitPayment(
@@ -163,7 +165,7 @@ class ReferenceBackendTest {
     @Test
     fun `adding the tap header after signing breaks the signature`() {
         registerDevice()
-        val authorization = backend.beginPayment(device.keyId, DeviceRiskLevel.MEDIUM) as PaymentAuthorization.Proceed
+        val authorization = backend.authorize(device, DeviceRiskLevel.MEDIUM, clock.now) as PaymentAuthorization.Proceed
         val request = paymentRequest(authorization.nonce).asReceived().let {
             it.copy(headers = it.headers + (ReferenceSigningScheme.HEADER_CONFIRMATION to ReferenceSigningScheme.CONFIRMATION_TAP))
         }
@@ -312,7 +314,7 @@ class ReferenceBackendTest {
         val result = registerStepUp(vouchedBy = TestKey())
 
         assertThat(result).isInstanceOf(RegistrationResult.Refused::class.java)
-        val authorization = backend.beginPayment(device.keyId, DeviceRiskLevel.MEDIUM) as PaymentAuthorization.Proceed
+        val authorization = backend.authorize(device, DeviceRiskLevel.MEDIUM, clock.now) as PaymentAuthorization.Proceed
         assertThat(authorization.confirmation).isEqualTo(RequiredConfirmation.TAP)
     }
 
@@ -322,9 +324,9 @@ class ReferenceBackendTest {
         registerStepUp()
 
         val forged = removeStepUp(vouchedBy = TestKey())
-        val stillStepUp = (backend.beginPayment(device.keyId, DeviceRiskLevel.MEDIUM) as PaymentAuthorization.Proceed).confirmation
+        val stillStepUp = (backend.authorize(device, DeviceRiskLevel.MEDIUM, clock.now) as PaymentAuthorization.Proceed).confirmation
         val genuine = removeStepUp()
-        val afterRemoval = (backend.beginPayment(device.keyId, DeviceRiskLevel.MEDIUM) as PaymentAuthorization.Proceed).confirmation
+        val afterRemoval = (backend.authorize(device, DeviceRiskLevel.MEDIUM, clock.now) as PaymentAuthorization.Proceed).confirmation
 
         assertThat(forged).isFalse()
         assertThat(stillStepUp).isEqualTo(RequiredConfirmation.STEP_UP_KEY)
@@ -381,7 +383,7 @@ class ReferenceBackendTest {
         val other = TestKey()
         registerDevice()
         registerDevice(other)
-        val otherNonce = (backend.beginPayment(other.keyId, DeviceRiskLevel.LOW) as PaymentAuthorization.Proceed).nonce
+        val otherNonce = (backend.authorize(other, DeviceRiskLevel.LOW, clock.now) as PaymentAuthorization.Proceed).nonce
 
         backend.submitPayment(paymentRequest(allowedNonce()).asReceived())
         val fromOther = backend.submitPayment(paymentRequest(otherNonce, key = other).asReceived())
@@ -463,7 +465,7 @@ class ReferenceBackendTest {
         val challenge = backend.issueRegistrationChallenge(device.keyId)
         val proof = device.sign(ReferenceSigningScheme.keyBindingInput(ReferenceSigningScheme.ACTION_ADD_STEP_UP, challenge, newStepUp.keyId))
         backend.registerKey(KeyRole.STEP_UP, newStepUp.encodedPublicKey, selfSignedChain(newStepUp), challenge, device.keyId, proof)
-        val nonce = (backend.beginPayment(device.keyId, DeviceRiskLevel.MEDIUM) as PaymentAuthorization.Proceed).nonce
+        val nonce = (backend.authorize(device, DeviceRiskLevel.MEDIUM, clock.now) as PaymentAuthorization.Proceed).nonce
 
         val signedByOldKey = backend.submitPayment(paymentRequest(nonce, key = oldStepUp).asReceived())
 
@@ -496,7 +498,7 @@ class ReferenceBackendTest {
         val other = TestKey()
         registerDevice()
         registerDevice(other)
-        val othersNonce = (backend.beginPayment(other.keyId, DeviceRiskLevel.LOW) as PaymentAuthorization.Proceed).nonce
+        val othersNonce = (backend.authorize(other, DeviceRiskLevel.LOW, clock.now) as PaymentAuthorization.Proceed).nonce
 
         val borrowed = backend.submitPayment(
             paymentRequest(othersNonce, confirmation = ReferenceSigningScheme.CONFIRMATION_TAP).asReceived(),

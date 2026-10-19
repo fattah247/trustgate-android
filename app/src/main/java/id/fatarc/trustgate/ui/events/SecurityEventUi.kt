@@ -153,6 +153,7 @@ fun metadataLabel(key: String): String = when (key) {
     "result" -> "Result"
     "reason" -> "Reason"
     "decidedBy" -> "Decided by"
+    "reasons" -> "Why"
     "keyId" -> "Key ID"
     "role" -> "Key"
     "protection" -> "Held in"

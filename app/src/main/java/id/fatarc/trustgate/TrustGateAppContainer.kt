@@ -5,6 +5,9 @@ import id.fatarc.trustgate.core.backend.BackendTransport
 import id.fatarc.trustgate.core.backend.HttpTrustGateApi
 import id.fatarc.trustgate.core.backend.PaymentClient
 import id.fatarc.trustgate.core.backend.TrustGateApi
+import id.fatarc.trustgate.core.integrity.IntegrityTokenSource
+import id.fatarc.trustgate.core.integrity.MockIntegrityTokenSource
+import id.fatarc.trustgate.core.integrity.PlayIntegrityTokenSource
 import id.fatarc.trustgate.core.keys.AndroidDeviceKeyProvider
 import id.fatarc.trustgate.core.keys.DeviceKeyProvider
 import id.fatarc.trustgate.core.keys.KeyRegistrar
@@ -29,6 +32,11 @@ class TrustGateAppContainer(
     val keyRegistrar = KeyRegistrar(keyProvider, api)
     val transport = BackendTransport(api)
     val paymentClient = PaymentClient(transport)
+    val integrityTokens: IntegrityTokenSource = when {
+        BuildConfig.PLAY_INTEGRITY_PROJECT_NUMBER > 0 -> PlayIntegrityTokenSource(context, BuildConfig.PLAY_INTEGRITY_PROJECT_NUMBER)
+        BuildConfig.DEBUG -> MockIntegrityTokenSource
+        else -> IntegrityTokenSource { null }
+    }
 
     val securityService = TrustGateSecurityService(
         signalCollector = AndroidDeviceSignalCollector(context),

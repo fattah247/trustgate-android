@@ -1,9 +1,9 @@
 package id.fatarc.trustgate.core.backend
 
 import id.fatarc.trustgate.domain.api.PaymentAuthorization
+import id.fatarc.trustgate.domain.api.PaymentAuthorizationRequest
 import id.fatarc.trustgate.domain.api.PaymentResponse
 import id.fatarc.trustgate.domain.api.RegistrationResult
-import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.domain.signing.ReceivedRequest
 import id.fatarc.trustgate.domain.signing.VerificationResult
@@ -26,7 +26,7 @@ interface TrustGateApi {
 
     suspend fun verificationChallenge(deviceKeyId: String): String
 
-    suspend fun authorizePayment(deviceKeyId: String, level: DeviceRiskLevel): PaymentAuthorization
+    suspend fun authorizePayment(request: PaymentAuthorizationRequest): PaymentAuthorization
 
     /** Checks a signed request exactly as the payment endpoint would, without charging anything. */
     suspend fun checkRequest(request: ReceivedRequest): VerificationResult

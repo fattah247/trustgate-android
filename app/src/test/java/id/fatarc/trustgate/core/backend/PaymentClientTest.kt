@@ -12,6 +12,7 @@ import id.fatarc.trustgate.domain.signing.ReferenceRequestSigner
 import id.fatarc.trustgate.domain.signing.asReceived
 import id.fatarc.trustgate.testing.MutableClock
 import id.fatarc.trustgate.testing.TestKey
+import id.fatarc.trustgate.testing.authorize
 import id.fatarc.trustgate.testing.developmentPolicy
 import id.fatarc.trustgate.testing.selfSignedChain
 import kotlin.random.Random
@@ -29,10 +30,7 @@ class PaymentClientTest {
 
     private fun signedPayment(): ReceivedRequest {
         backend.registerKey(KeyRole.DEVICE, device.encodedPublicKey, selfSignedChain(device), backend.issueRegistrationChallenge())
-        val authorization = backend.beginPayment(
-            device.keyId,
-            DeviceRiskLevel.LOW,
-        ) as PaymentAuthorization.Proceed
+        val authorization = backend.authorize(device, DeviceRiskLevel.LOW, clock.now) as PaymentAuthorization.Proceed
         return device.sign(
             ReferenceRequestSigner().prepare(
                 payload = PaymentRequestPayload(125_000, "IDR", "REF-1"),
