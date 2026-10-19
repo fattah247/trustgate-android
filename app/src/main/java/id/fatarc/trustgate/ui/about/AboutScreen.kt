@@ -18,37 +18,34 @@ fun AboutScreen(
     onNavigateUp: () -> Unit,
 ) {
     ScreenScaffold(
-        title = "About TrustGate",
+        title = "About",
         onNavigateUp = onNavigateUp,
     ) {
         item(key = "intro") {
             Text(
-                text = "A device-integrity lab. It connects client-side checks to protected actions, request " +
-                    "signing, and a local audit trail. It doesn't replace server-side enforcement.",
-                modifier = Modifier.padding(horizontal = 16.dp),
+                text = "A demo payment app that checks whether a phone is safe to pay from, while the server makes the call.",
+                modifier = Modifier.padding(horizontal = 4.dp),
                 style = MaterialTheme.typography.bodyLarge,
             )
         }
 
-        item(key = "covers") {
-            Section(title = "What it covers") {
+        item(key = "how") {
+            Section(title = "How a payment is protected") {
                 Spacer(Modifier.height(6.dp))
-                BulletItem("Runtime signals for root access, emulation, debugging, and install source.")
-                BulletItem("A risk level the backend turns into a decision: run, ask to confirm, or stop.")
-                BulletItem("Keystore keys, attested to the backend, that sign each request; the step-up key only signs after biometrics or the screen lock.")
-                BulletItem("One-time challenges and idempotent payments, so replays are refused and retries never charge twice.")
-                BulletItem("A local event log so each check and decision can be reviewed later.")
+                BulletItem("The phone checks itself for root, emulators, debuggers, and where the app came from.")
+                BulletItem("It signs that report with a key locked in its hardware.")
+                BulletItem("The server scores the report and can ask Google Play Integrity whether the app is genuine.")
+                BulletItem("The server then lets the payment through, asks you to confirm, or blocks it.")
+                BulletItem("Each request is signed, works once, and charges once.")
                 Spacer(Modifier.height(6.dp))
             }
         }
 
         item(key = "limits") {
-            Section(title = "Limits") {
+            Section(title = "What it can't do") {
                 Spacer(Modifier.height(6.dp))
-                BulletItem("Client-side checks are signals, not proof that a device can be trusted.")
-                BulletItem("The reference backend runs inside the app, so it shows what a server checks but isn't an independent authority.")
-                BulletItem("There's no Play Integrity verdict, payment processor, or fraud engine behind the demo flow.")
-                BulletItem("Advanced hooking frameworks and kernel-level compromise are out of scope.")
+                BulletItem("A phone an attacker fully controls can still lie about itself. The server's checks make that harder, not impossible.")
+                BulletItem("No real money moves.")
                 Spacer(Modifier.height(6.dp))
             }
         }
@@ -60,11 +57,9 @@ fun AboutScreen(
             ) {
                 Text(
                     text = when {
-                        BuildConfig.SERVER_URL.isBlank() -> "This build has no TrustGate server configured."
-                        BuildConfig.SERVER_PINNED ->
-                            "Talks to ${BuildConfig.SERVER_URL} over HTTPS, pinned to the server's key. A certificate for any " +
-                                "other key is refused, even one a user-installed authority signed."
-                        else -> "Talks to ${BuildConfig.SERVER_URL} over HTTPS, trusting the system's certificate authorities."
+                        BuildConfig.SERVER_URL.isBlank() -> "No server set up in this build."
+                        BuildConfig.SERVER_PINNED -> "${BuildConfig.SERVER_URL} over HTTPS. Only the server's own key is accepted."
+                        else -> "${BuildConfig.SERVER_URL} over HTTPS."
                     },
                     modifier = Modifier.padding(16.dp),
                     style = MaterialTheme.typography.bodyLarge,

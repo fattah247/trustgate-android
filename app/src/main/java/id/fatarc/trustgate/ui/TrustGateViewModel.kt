@@ -36,7 +36,6 @@ import id.fatarc.trustgate.domain.signing.ReferencePayment
 import id.fatarc.trustgate.domain.signing.ReferenceRequestSigner
 import id.fatarc.trustgate.domain.signing.ReferenceSigningScheme
 import id.fatarc.trustgate.domain.signing.SignedRequest
-import id.fatarc.trustgate.domain.signing.VerificationResult
 import id.fatarc.trustgate.domain.signing.asReceived
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -97,7 +96,7 @@ class TrustGateViewModel(
                 _uiState.update { current -> current.copy(securityEvents = events) }
             }
         }
-        loadStorageSnapshot(announce = false)
+        loadStorageSnapshot()
         assessRisk(trigger = AssessmentTrigger.LAUNCH, announceResult = false)
         viewModelScope.launch { ensureKeys() }
     }
@@ -134,7 +133,7 @@ class TrustGateViewModel(
             val levelChanged = report.level != previous.level
             applyRiskReport(report = report, source = RiskReportSource.LIVE, resetDecision = levelChanged)
             if (levelChanged) {
-                showMessage("Device risk changed: ${previous.level.label()} to ${report.level.label().lowercase()}")
+                showMessage("This phone is now ${report.level.label().lowercase()}")
             }
         }
     }
@@ -146,26 +145,26 @@ class TrustGateViewModel(
     fun attemptPayment() {
         if (actionJob?.isActive == true || assessmentJob?.isActive == true) return
         pendingPayment = null
+        _uiState.update { current -> current.copy(payment = PaymentUiState(stage = PaymentStage.CHECKING_DEVICE)) }
         actionJob = viewModelScope.launch {
-            val report = reportForSensitiveAction()
-                ?: return@launch abandonAction("The device couldn't be checked, so the action didn't run.")
-            val keys = ensureKeys()
-                ?: return@launch abandonAction("The device key isn't ready, so the action didn't run.")
+            val report = reportForSensitiveAction() ?: return@launch abandonAction("Couldn't check this phone.")
+            val keys = ensureKeys() ?: return@launch abandonAction(_uiState.value.keys.errorMessage ?: "This phone's key isn't ready.")
+            _uiState.update { current -> current.copy(payment = current.payment.copy(stage = PaymentStage.ASKING_SERVER)) }
             val authorization = runCatching { withContext(ioDispatcher) { api.authorizePayment(authorizationRequest(report, keys.device.keyId)) } }
                 .rethrowCancellation()
-                .getOrElse { return@launch abandonAction("The backend couldn't be reached, so the action didn't run.") }
+                .getOrElse { return@launch abandonAction("Couldn't reach the server.") }
             // The backend's own level counts from here on; the device's report was only evidence.
             val level = authorization.level
             runCatching { securityService.recordGateDecision(level, authorization.decision, authorization.reasons) }.rethrowCancellation()
 
             if (authorization !is PaymentAuthorization.Proceed) {
-                updateDecision(PaymentDecisionState.Blocked(level), authorization.reasons)
+                updateDecision(PaymentDecisionState.Blocked(level), authorization.reasons, PaymentStage.DONE)
                 return@launch
             }
             val keyId = when (authorization.signWith) {
                 KeyRole.DEVICE -> keys.device.keyId
                 KeyRole.STEP_UP -> keys.stepUp?.keyId
-                    ?: return@launch abandonAction("The step-up key isn't registered, so the action didn't run.")
+                    ?: return@launch abandonAction("This phone's screen-lock key isn't set up.")
             }
             val pending = PendingPayment(
                 nonce = authorization.nonce,
@@ -176,7 +175,7 @@ class TrustGateViewModel(
             )
             when (authorization.confirmation) {
                 RequiredConfirmation.NONE -> {
-                    updateDecision(PaymentDecisionState.Allowed(level), authorization.reasons)
+                    updateDecision(PaymentDecisionState.Allowed(level), authorization.reasons, PaymentStage.PAYING)
                     val submission = signAndSubmit(pending, keyProvider::signWithDeviceKey)
                     // A profile switch cancels this job; don't publish a result for the old profile.
                     ensureActive()
@@ -185,12 +184,12 @@ class TrustGateViewModel(
 
                 RequiredConfirmation.STEP_UP_KEY -> {
                     pendingPayment = pending
-                    updateDecision(PaymentDecisionState.ConfirmationRequired(level, ConfirmationMethod.DEVICE_CREDENTIAL), authorization.reasons)
+                    updateDecision(PaymentDecisionState.ConfirmationRequired(level, ConfirmationMethod.DEVICE_CREDENTIAL), authorization.reasons, PaymentStage.CONFIRMING)
                 }
 
                 RequiredConfirmation.TAP -> {
                     pendingPayment = pending
-                    updateDecision(PaymentDecisionState.ConfirmationRequired(level, ConfirmationMethod.TAP), authorization.reasons)
+                    updateDecision(PaymentDecisionState.ConfirmationRequired(level, ConfirmationMethod.TAP), authorization.reasons, PaymentStage.CONFIRMING)
                 }
             }
         }
@@ -210,11 +209,11 @@ class TrustGateViewModel(
                 // Set up a replacement now, so the next attempt doesn't wait for key generation.
                 ensureKeys()
             }
-            dismissConfirmation("Your screen lock or fingerprints changed, so the confirmation key was reset. Run the action again.")
+            dismissConfirmation("Your screen lock changed, so its key was reset. Pay again.")
             null
         } catch (error: Exception) {
             // Keystore reports trouble through several exception types; none should crash the confirmation.
-            dismissConfirmation("The confirmation key couldn't be used. Run the action again.")
+            dismissConfirmation("Couldn't use the screen-lock key. Pay again.")
             null
         }
     }
@@ -237,21 +236,20 @@ class TrustGateViewModel(
         val pending = pendingPayment?.takeIf { decision.method == method } ?: return
         pendingPayment = null
         // Leave the confirmation state first so a second tap cannot record a second approval.
-        updateDecision(PaymentDecisionState.Confirmed(decision.riskLevel), _uiState.value.payment.reasons)
+        updateDecision(PaymentDecisionState.Confirmed(decision.riskLevel, method), _uiState.value.payment.reasons, PaymentStage.PAYING)
         assessmentJob?.cancel()
         actionJob = viewModelScope.launch {
             // The device may have changed while the person was confirming, so check it again before approving.
-            val report = reportForSensitiveAction()
-                ?: return@launch abandonAction("The device couldn't be checked, so the action didn't run.")
+            val report = reportForSensitiveAction() ?: return@launch abandonAction("Couldn't check this phone again.")
             if (report.level == DeviceRiskLevel.HIGH) {
                 runCatching { securityService.recordBlockedAfterConfirmation(report) }.rethrowCancellation()
-                updateDecision(PaymentDecisionState.Blocked(report.level))
+                updateDecision(PaymentDecisionState.Blocked(report.level), listOf("Became high risk while waiting"), PaymentStage.DONE)
                 return@launch
             }
             val recorded = runCatching {
                 securityService.confirmSensitiveAction(report, method)
             }.rethrowCancellation().isSuccess
-            if (!recorded) return@launch abandonAction("The confirmation couldn't be recorded, so the action didn't run.")
+            if (!recorded) return@launch abandonAction("Couldn't record your confirmation.")
 
             val submission = signAndSubmit(pending, sign)
             ensureActive()
@@ -264,7 +262,7 @@ class TrustGateViewModel(
         val decision = _uiState.value.payment.latestDecision as? PaymentDecisionState.ConfirmationRequired ?: return
         val report = _uiState.value.risk.report
         pendingPayment = null
-        updateDecision(PaymentDecisionState.Cancelled(decision.riskLevel, problem))
+        updateDecision(PaymentDecisionState.Cancelled(decision.riskLevel, problem), _uiState.value.payment.reasons, PaymentStage.DONE)
         if (report != null) {
             viewModelScope.launch {
                 runCatching { securityService.cancelSensitiveAction(report) }
@@ -303,49 +301,51 @@ class TrustGateViewModel(
         }
     }
 
-    /** Signs a request with the device key against a fresh verification challenge, charging nothing. */
-    fun signReferenceRequest() {
+    /**
+     * Signs a fresh request against a verification challenge and attacks the server with it:
+     * sends it twice, edits it after signing, or delivers a copy dated past the time window.
+     */
+    fun runLabTest(test: LabTest) {
+        if (_uiState.value.lab.running != null) return
+        _uiState.update { current -> current.copy(lab = current.lab.copy(running = test)) }
         viewModelScope.launch {
-            val keys = ensureKeys() ?: return@launch failSigning("The device key isn't ready.")
-            runCatching {
-                withContext(ioDispatcher) {
-                    val nonce = api.verificationChallenge(keys.device.keyId)
+            val outcome = runCatching {
+                val keys = checkNotNull(ensureKeys()) { _uiState.value.keys.errorMessage ?: "This phone's key isn't ready." }
+                val request = withContext(ioDispatcher) {
                     val prepared = requestSigner.prepare(
                         payload = ReferencePayment.payload(),
-                        nonce = nonce,
+                        nonce = api.verificationChallenge(keys.device.keyId),
                         keyId = keys.device.keyId,
                         timestamp = Instant.now().toString(),
                     )
                     prepared.signedWith(keyProvider.signWithDeviceKey(prepared.signingInput))
                 }
-            }.rethrowCancellation()
-                .onSuccess { publishSigned(it, forProtectedAction = false) }
-                .onFailure { failSigning(it.message ?: "The reference request couldn't be signed.") }
-        }
-    }
-
-    /** Sends the latest signed request to the backend's check endpoint, honestly or deliberately altered. */
-    fun verifyLatestRequest(attempt: VerificationAttempt) {
-        val request = _uiState.value.signing.signedRequest ?: return
-        viewModelScope.launch {
-            val sent = runCatching {
-                withContext(ioDispatcher) {
-                    val received = when (attempt) {
-                        VerificationAttempt.AS_SIGNED -> request.asReceived()
-                        // The same canonical encoding with a bigger amount, as someone editing the body in transit would send.
-                        VerificationAttempt.CHANGED_AMOUNT -> request.asReceived().copy(
+                publishSigned(request, forProtectedAction = false)
+                val sends = when (test) {
+                    LabTest.REPLAY -> listOf(request.asReceived(), request.asReceived())
+                    // The same canonical encoding with a bigger amount, as someone editing the body in transit would send.
+                    LabTest.CHANGED_AMOUNT -> listOf(
+                        request.asReceived().copy(
                             body = requestSigner.canonicalize(request.payload.copy(amountMinor = request.payload.amountMinor * 10)),
-                        )
-                        // A server can't be told when a request arrived, so send a copy signed just past the
-                        // window, which is exactly how a held-back request looks when it finally lands.
-                        VerificationAttempt.DELIVERED_LATE -> heldBackCopy(request).asReceived()
-                    }
-                    api.checkRequest(received)
+                        ),
+                    )
+                    // A server can't be told when a request arrived, so send a copy signed just past the
+                    // window, which is exactly how a held-back request looks when it finally lands.
+                    LabTest.SENT_LATE -> listOf(heldBackCopy(request).asReceived())
+                }
+                sends.map { sent -> withContext(ioDispatcher) { api.checkRequest(sent) } }.onEach { result ->
+                    runCatching { securityService.recordVerification(request, result, test.metadataValue) }.rethrowCancellation()
                 }
             }.rethrowCancellation()
-            val result = sent.getOrElse { return@launch showMessage("The backend couldn't be reached.") }
-            addVerificationRecord(request, VerificationRecord(attempt, result, at = Instant.now()))
-            runCatching { securityService.recordVerification(request, result, attempt.metadataValue) }.rethrowCancellation()
+            _uiState.update { current ->
+                current.copy(
+                    lab = current.lab.copy(
+                        running = null,
+                        results = outcome.getOrNull()?.let { current.lab.results + (test to it) } ?: current.lab.results,
+                    ),
+                )
+            }
+            outcome.exceptionOrNull()?.let { showMessage(if (it is IOException) "Couldn't reach the server." else it.message ?: "The test couldn't run.") }
         }
     }
 
@@ -375,58 +375,22 @@ class TrustGateViewModel(
     fun storeReferenceValues() {
         viewModelScope.launch {
             val report = _uiState.value.risk.report
-            val showSignalsOnHome = _uiState.value.storage.snapshot.showSignalsOnHome
             runCatching {
                 withStorage {
                     secureValueStore.storeSessionToken("tg-session-${UUID.randomUUID().toString().take(8)}")
                     report?.let { secureValueStore.storeLastRiskLevel(it.level) }
-                    secureValueStore.storeShowSignalsOnHome(showSignalsOnHome)
                     secureValueStore.readSnapshot()
                 }
             }.rethrowCancellation().onSuccess { snapshot ->
                 val storedKeys = buildList {
                     add(SecureValueNames.SESSION_TOKEN)
                     if (report != null) add(SecureValueNames.LAST_RISK_LEVEL)
-                    add(SecureValueNames.SHOW_SIGNALS_ON_HOME)
                 }
                 applyStorageSnapshot(snapshot)
-                showMessage("Saved ${storedKeys.size} values to encrypted storage")
+                showMessage("Saved, encrypted")
                 runCatching { securityService.recordSecureValueStored(keys = storedKeys) }
             }.onFailure { error ->
-                updateStorageFailure(error.message ?: "Values couldn't be written to encrypted storage.")
-            }
-        }
-    }
-
-    fun refreshStorage() {
-        loadStorageSnapshot(announce = true)
-    }
-
-    fun toggleShowSignalsOnHome(enabled: Boolean) {
-        if (_uiState.value.storage.snapshot.showSignalsOnHome == enabled) return
-        _uiState.update { current ->
-            current.copy(
-                storage = current.storage.copy(
-                    snapshot = current.storage.snapshot.copy(showSignalsOnHome = enabled),
-                ),
-            )
-        }
-        viewModelScope.launch {
-            runCatching {
-                withStorage { secureValueStore.storeShowSignalsOnHome(enabled) }
-            }.rethrowCancellation().onFailure { error ->
-                // Show what is actually stored rather than guessing at the previous value.
-                val stored = runCatching { withStorage { secureValueStore.readSnapshot() } }.getOrNull()
-                _uiState.update { current ->
-                    current.copy(
-                        storage = current.storage.copy(
-                            snapshot = stored ?: current.storage.snapshot.copy(showSignalsOnHome = !enabled),
-                            status = StorageStatus.Failed(
-                                error.message ?: "The display preference couldn't be saved.",
-                            ),
-                        ),
-                    )
-                }
+                updateStorageFailure(error.message ?: "Couldn't save.")
             }
         }
     }
@@ -458,7 +422,7 @@ class TrustGateViewModel(
             }
             val report = assessLiveDevice(trigger = trigger, resetDecision = resetDecision) ?: return@launch
             if (announceResult) {
-                showMessage("Check complete · ${report.level.label()}")
+                showMessage("Checked · ${report.level.label()}")
             }
         }
     }
@@ -487,24 +451,21 @@ class TrustGateViewModel(
         }.rethrowCancellation().onSuccess { report ->
             applyRiskReport(report = report, source = RiskReportSource.LIVE, resetDecision = resetDecision)
         }.onFailure { error ->
-            applyRiskFailure(error.message ?: "The device check couldn't finish.")
+            applyRiskFailure(error.message ?: "The check couldn't finish.")
         }.getOrNull()
     }
 
-    private fun loadStorageSnapshot(announce: Boolean) {
+    private fun loadStorageSnapshot() {
         viewModelScope.launch {
             runCatching {
                 withStorage { secureValueStore.readSnapshot() }
             }.rethrowCancellation().onSuccess { snapshot ->
                 applyStorageSnapshot(snapshot)
-                when {
-                    snapshot.unreadableValuesCleared > 0 -> showMessage(
-                        "${snapshot.unreadableValuesCleared} stored values couldn't be decrypted on this device and were cleared",
-                    )
-                    announce -> showMessage("Reloaded from encrypted storage")
+                if (snapshot.unreadableValuesCleared > 0) {
+                    showMessage("${snapshot.unreadableValuesCleared} saved values couldn't be unlocked on this phone and were removed")
                 }
             }.onFailure { error ->
-                updateStorageFailure(error.message ?: "Encrypted storage is unavailable.")
+                updateStorageFailure(error.message ?: "Secure storage isn't available.")
             }
         }
     }
@@ -559,9 +520,9 @@ class TrustGateViewModel(
         }
     }
 
-    private fun updateDecision(decision: PaymentDecisionState, reasons: List<String> = emptyList()) {
+    private fun updateDecision(decision: PaymentDecisionState, reasons: List<String>, stage: PaymentStage) {
         _uiState.update { current ->
-            current.copy(payment = PaymentUiState(latestDecision = decision, decidedAt = Instant.now(), reasons = reasons))
+            current.copy(payment = PaymentUiState(stage = stage, latestDecision = decision, decidedAt = Instant.now(), reasons = reasons))
         }
     }
 
@@ -591,7 +552,11 @@ class TrustGateViewModel(
     /** Adds what happened to the payment to the decision that let it through, unless that was reset meanwhile. */
     private fun publishSubmission(submission: Submission) {
         _uiState.update { current ->
-            if (current.payment.isSending) current.copy(payment = current.payment.copy(submission = submission)) else current
+            if (current.payment.stage == PaymentStage.PAYING) {
+                current.copy(payment = current.payment.copy(submission = submission, stage = PaymentStage.DONE))
+            } else {
+                current
+            }
         }
     }
 
@@ -650,13 +615,8 @@ class TrustGateViewModel(
 
         return when (val response = outcome.response) {
             null -> Submission.NoResponse(outcome.attempts)
-            is PaymentResponse.Rejected -> {
-                addVerificationRecord(signed, protectedActionRecord(VerificationResult.Rejected(response.reason), outcome.lostResponses))
-                Submission.Refused(response.reason)
-            }
-
+            is PaymentResponse.Rejected -> Submission.Refused(response.reason)
             is PaymentResponse.Processed -> {
-                addVerificationRecord(signed, protectedActionRecord(VerificationResult.Accepted, outcome.lostResponses))
                 Submission.Charged(
                     paymentId = response.payment.id,
                     signedWith = response.payment.signedWith,
@@ -668,60 +628,25 @@ class TrustGateViewModel(
     }
 
     private suspend fun publishSigned(signed: SignedRequest, forProtectedAction: Boolean) {
-        _uiState.update { current ->
-            current.copy(
-                signing = SigningUiState(
-                    signedRequest = signed,
-                    status = SigningStatus.Signed(signed.payload.merchantReference),
-                ),
-            )
-        }
+        _uiState.update { current -> current.copy(lastRequest = signed) }
         runCatching { securityService.recordSignedRequest(signed, forProtectedAction) }.rethrowCancellation()
     }
 
-    private fun failSigning(message: String) {
-        _uiState.update { current ->
-            current.copy(signing = current.signing.copy(status = SigningStatus.Failed(message)))
-        }
-    }
-
-    private fun protectedActionRecord(result: VerificationResult, lostResponses: Int) = VerificationRecord(
-        attempt = VerificationAttempt.AS_SIGNED,
-        result = result,
-        at = Instant.now(),
-        sentByProtectedAction = true,
-        lostResponses = lostResponses,
-    )
-
-    /** Lists [record] under [request], unless another request was signed since and replaced it. */
-    private fun addVerificationRecord(request: SignedRequest, record: VerificationRecord) {
-        _uiState.update { current ->
-            if (current.signing.signedRequest?.nonce != request.nonce) {
-                current
-            } else {
-                current.copy(
-                    signing = current.signing.copy(
-                        verifications = (listOf(record) + current.signing.verifications).take(MAX_VERIFICATION_RECORDS),
-                    ),
-                )
-            }
-        }
-    }
-
-    /** Clears any earlier result so it can't be mistaken for this attempt's, and says why nothing ran. */
+    /** Stops the payment at the step it reached, saying why there; nothing was charged. */
     private fun abandonAction(message: String) {
         pendingPayment = null
-        _uiState.update { current -> current.copy(payment = PaymentUiState()) }
-        showMessage(message)
+        _uiState.update { current ->
+            current.copy(payment = current.payment.copy(stage = current.payment.stage ?: PaymentStage.CHECKING_DEVICE, problem = message))
+        }
     }
 
     private fun keyProblem(error: Throwable): String = when (error) {
         is IOException -> if (BuildConfig.DEBUG) {
-            "The TrustGate server at ${BuildConfig.SERVER_URL} can't be reached. Start it with ./gradlew :server:run."
+            "Can't reach the server at ${BuildConfig.SERVER_URL}. Start it with ./gradlew :server:run."
         } else {
-            "The TrustGate server can't be reached."
+            "Can't reach the server."
         }
-        else -> error.message ?: "The device key couldn't be prepared."
+        else -> error.message ?: "This phone's key couldn't be set up."
     }
 
     private fun newIdempotencyKey(): String = "pay_" + UUID.randomUUID().toString().replace("-", "")
@@ -739,7 +664,6 @@ class TrustGateViewModel(
 
 private val RESUME_RECHECK_AFTER: Duration = Duration.ofSeconds(30)
 private val LATE_DELIVERY_MARGIN: Duration = Duration.ofMinutes(1)
-private const val MAX_VERIFICATION_RECORDS = 6
 
 /** runCatching also catches cancellation; let it propagate so cancelled work doesn't report a failure. */
 private fun <T> Result<T>.rethrowCancellation(): Result<T> = onFailure { error ->

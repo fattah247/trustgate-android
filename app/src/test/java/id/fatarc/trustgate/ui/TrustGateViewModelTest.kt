@@ -99,7 +99,7 @@ class TrustGateViewModelTest {
     }
 
     @Test
-    fun `an allowed action shows it is sending until the payment comes back`() = runTest(dispatcher) {
+    fun `an allowed payment shows the paying step until the server answers`() = runTest(dispatcher) {
         val viewModel = start()
         viewModel.setSimulateLostResponse(true)
 
@@ -109,8 +109,9 @@ class TrustGateViewModelTest {
         advanceUntilIdle()
 
         assertThat(whileSending.latestDecision).isEqualTo(PaymentDecisionState.Allowed(DeviceRiskLevel.LOW))
-        assertThat(whileSending.isSending).isTrue()
-        assertThat(payment.isSending).isFalse()
+        assertThat(whileSending.stage).isEqualTo(PaymentStage.PAYING)
+        assertThat(payment.stage).isEqualTo(PaymentStage.DONE)
+        assertThat(payment.isRunning).isFalse()
         assertThat(payment.submission).isInstanceOf(Submission.Charged::class.java)
     }
 
@@ -170,7 +171,7 @@ class TrustGateViewModelTest {
             PaymentDecisionState.ConfirmationRequired(DeviceRiskLevel.MEDIUM, ConfirmationMethod.DEVICE_CREDENTIAL),
         )
         assertThat(chargedBeforeConfirming).isEqualTo(0)
-        assertThat(payment.latestDecision).isEqualTo(PaymentDecisionState.Confirmed(DeviceRiskLevel.MEDIUM))
+        assertThat(payment.latestDecision).isEqualTo(PaymentDecisionState.Confirmed(DeviceRiskLevel.MEDIUM, ConfirmationMethod.DEVICE_CREDENTIAL))
         assertThat((payment.submission as Submission.Charged).signedWith).isEqualTo(KeyRole.STEP_UP)
         assertThat(keys.stepUpSignaturesHandedOut).isEqualTo(1)
     }
@@ -265,21 +266,32 @@ class TrustGateViewModelTest {
     }
 
     @Test
-    fun `a request checked by the backend is accepted once and its replay refused`() = runTest(dispatcher) {
+    fun `a replayed request is accepted once and then refused`() = runTest(dispatcher) {
         val viewModel = start()
 
-        viewModel.signReferenceRequest()
-        advanceUntilIdle()
-        viewModel.verifyLatestRequest(VerificationAttempt.AS_SIGNED)
-        advanceUntilIdle()
-        viewModel.verifyLatestRequest(VerificationAttempt.AS_SIGNED)
+        viewModel.runLabTest(LabTest.REPLAY)
         advanceUntilIdle()
 
-        val results = viewModel.uiState.value.signing.verifications.map { it.result }
-        assertThat(results).containsExactly(
-            VerificationResult.Rejected(RejectionReason.CHALLENGE_REUSED),
+        assertThat(viewModel.uiState.value.lab.results[LabTest.REPLAY]).containsExactly(
             VerificationResult.Accepted,
+            VerificationResult.Rejected(RejectionReason.CHALLENGE_REUSED),
         ).inOrder()
+        assertThat(viewModel.uiState.value.lastRequest).isNotNull()
+    }
+
+    @Test
+    fun `a request with a changed amount or sent too late is refused`() = runTest(dispatcher) {
+        val viewModel = start()
+
+        viewModel.runLabTest(LabTest.CHANGED_AMOUNT)
+        advanceUntilIdle()
+        viewModel.runLabTest(LabTest.SENT_LATE)
+        advanceUntilIdle()
+
+        val results = viewModel.uiState.value.lab.results
+        assertThat(results[LabTest.CHANGED_AMOUNT]).containsExactly(VerificationResult.Rejected(RejectionReason.SIGNATURE_MISMATCH))
+        assertThat(results[LabTest.SENT_LATE]).containsExactly(VerificationResult.Rejected(RejectionReason.OUTSIDE_TIME_WINDOW))
+        assertThat(viewModel.uiState.value.lab.running).isNull()
     }
 
     @Test

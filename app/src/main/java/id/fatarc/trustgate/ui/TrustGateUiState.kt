@@ -16,7 +16,9 @@ data class TrustGateUiState(
     val risk: RiskUiState = RiskUiState(),
     val securityEvents: List<SecurityEvent> = emptyList(),
     val payment: PaymentUiState = PaymentUiState(),
-    val signing: SigningUiState = SigningUiState(),
+    /** The request signed last, by a payment or a Lab test, for anyone who wants to see what was sent. */
+    val lastRequest: SignedRequest? = null,
+    val lab: LabUiState = LabUiState(),
     val storage: StorageUiState = StorageUiState(),
     val keys: KeysUiState = KeysUiState(),
     /** Drop the first response to each payment, as a timeout would, to show retries are safe. */
@@ -43,7 +45,18 @@ enum class RiskReportSource {
     SCENARIO,
 }
 
+/** The steps a payment goes through, in order. */
+enum class PaymentStage {
+    CHECKING_DEVICE,
+    ASKING_SERVER,
+    CONFIRMING,
+    PAYING,
+    DONE,
+}
+
 data class PaymentUiState(
+    /** Null until a payment is started. */
+    val stage: PaymentStage? = null,
     val latestDecision: PaymentDecisionState = PaymentDecisionState.Idle,
     /** When [latestDecision] was reached, so repeating the same outcome is still visible. */
     val decidedAt: Instant? = null,
@@ -51,11 +64,10 @@ data class PaymentUiState(
     val submission: Submission? = null,
     /** Why the backend decided as it did. */
     val reasons: List<String> = emptyList(),
+    /** Why the payment stopped at [stage] before an outcome, such as the server being unreachable. */
+    val problem: String? = null,
 ) {
-    /** The gate let the action through and the payment hasn't come back yet. */
-    val isSending: Boolean
-        get() = submission == null &&
-            (latestDecision is PaymentDecisionState.Allowed || latestDecision is PaymentDecisionState.Confirmed)
+    val isRunning: Boolean get() = stage != null && stage != PaymentStage.DONE && problem == null
 }
 
 /** What happened to the payment a permitted action sent. */
@@ -85,7 +97,7 @@ sealed interface PaymentDecisionState {
         val method: ConfirmationMethod,
     ) : PaymentDecisionState
 
-    data class Confirmed(val riskLevel: DeviceRiskLevel) : PaymentDecisionState
+    data class Confirmed(val riskLevel: DeviceRiskLevel, val method: ConfirmationMethod) : PaymentDecisionState
 
     data class Blocked(val riskLevel: DeviceRiskLevel) : PaymentDecisionState
 
@@ -93,36 +105,18 @@ sealed interface PaymentDecisionState {
     data class Cancelled(val riskLevel: DeviceRiskLevel, val problem: String? = null) : PaymentDecisionState
 }
 
-data class SigningUiState(
-    val signedRequest: SignedRequest? = null,
-    val status: SigningStatus = SigningStatus.Idle,
-    /** Attempts to get [signedRequest] past the verifier, newest first. */
-    val verifications: List<VerificationRecord> = emptyList(),
-)
-
-/** Ways to send the latest request, from honest to deliberately broken. */
-enum class VerificationAttempt(val metadataValue: String) {
-    AS_SIGNED("as-signed"),
+/** Attacks on the server the Lab runs against a freshly signed request. */
+enum class LabTest(val metadataValue: String) {
+    REPLAY("replay"),
     CHANGED_AMOUNT("changed-amount"),
-    DELIVERED_LATE("delivered-late"),
+    SENT_LATE("delivered-late"),
 }
 
-data class VerificationRecord(
-    val attempt: VerificationAttempt,
-    val result: VerificationResult,
-    val at: Instant,
-    val sentByProtectedAction: Boolean = false,
-    /** Responses lost before this one arrived; the backend charged once regardless. */
-    val lostResponses: Int = 0,
+data class LabUiState(
+    val running: LabTest? = null,
+    /** What the server answered to each send of a test, in order. */
+    val results: Map<LabTest, List<VerificationResult>> = emptyMap(),
 )
-
-sealed interface SigningStatus {
-    data object Idle : SigningStatus
-
-    data class Signed(val merchantReference: String) : SigningStatus
-
-    data class Failed(val message: String) : SigningStatus
-}
 
 data class StorageUiState(
     val snapshot: SecurityStorageSnapshot = SecurityStorageSnapshot(),

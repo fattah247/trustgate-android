@@ -48,10 +48,6 @@ class InMemorySecureValueStore : SecureValueStore {
     override fun storeLastRiskLevel(level: DeviceRiskLevel) {
         snapshot = snapshot.copy(lastRiskLevel = level)
     }
-
-    override fun storeShowSignalsOnHome(enabled: Boolean) {
-        snapshot = snapshot.copy(showSignalsOnHome = enabled)
-    }
 }
 
 /** Software keys in place of Keystore. [screenLockSet] decides whether a step-up key can exist. */

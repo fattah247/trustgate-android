@@ -118,16 +118,13 @@ private fun TapConfirmationDialog(
     AlertDialog(
         onDismissRequest = { onDismiss(null) },
         icon = { Icon(Icons.Outlined.GppMaybe, contentDescription = null) },
-        title = { Text("Continue on this device?") },
+        title = { Text("Confirm this payment?") },
         text = {
             FilterObscuredTouches()
-            Text(
-                "$reason Continue only if you trust it.\n\nThis device has no screen lock, so TrustGate can't ask " +
-                    "you to confirm with a PIN or fingerprint. Your tap is signed into the request instead.",
-            )
+            Text(reason)
         },
         confirmButton = {
-            TextButton(onClick = onConfirmTap) { Text("Continue") }
+            TextButton(onClick = onConfirmTap) { Text("Pay") }
         },
         dismissButton = {
             TextButton(onClick = { onDismiss(null) }) { Text("Cancel") }
@@ -141,9 +138,8 @@ private fun TapConfirmationDialog(
  */
 private fun stepUpPromptInfo(reason: String): BiometricPrompt.PromptInfo =
     BiometricPrompt.PromptInfo.Builder()
-        .setTitle("Confirm it's you")
-        .setSubtitle("This device needs review")
-        .setDescription("$reason Confirm to sign and send the payment.")
+        .setTitle("Confirm this payment")
+        .setDescription(reason)
         .apply {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 setAllowedAuthenticators(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)
@@ -155,9 +151,9 @@ private fun stepUpPromptInfo(reason: String): BiometricPrompt.PromptInfo =
         .build()
 
 private fun signalSummary(signalNames: List<String>): String = if (signalNames.isEmpty()) {
-    "This device needs review."
+    "The server wants your OK first."
 } else {
-    "Signals found: ${signalNames.take(3).joinToString(", ")}."
+    "The server wants your OK because it found: ${signalNames.take(2).joinToString(" and ")}."
 }
 
 private tailrec fun Context.findFragmentActivity(): FragmentActivity? = when (this) {

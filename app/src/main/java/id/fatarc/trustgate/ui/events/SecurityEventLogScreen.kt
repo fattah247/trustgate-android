@@ -102,7 +102,7 @@ fun SecurityEventLogScreen(
                 onClick = { scope.launch { shareAuditLog(context, onExportEvents) } },
                 enabled = allEvents.isNotEmpty(),
             ) {
-                Icon(Icons.Outlined.Share, contentDescription = "Share audit log")
+                Icon(Icons.Outlined.Share, contentDescription = "Share the log")
             }
             IconButton(onClick = { confirmClear = true }, enabled = allEvents.isNotEmpty()) {
                 Icon(Icons.Outlined.DeleteSweep, contentDescription = "Clear activity")
@@ -158,7 +158,7 @@ fun SecurityEventLogScreen(
 
         if (allEvents.isNotEmpty()) {
             item(key = "footer") {
-                SectionFooter(text = "TrustGate keeps the latest $SECURITY_EVENT_LIMIT events on this device.")
+                SectionFooter(text = "Keeps the latest $SECURITY_EVENT_LIMIT events, on this phone only.")
             }
         }
     }
@@ -170,7 +170,7 @@ fun SecurityEventLogScreen(
             title = { Text("Clear activity?") },
             text = {
                 Text(
-                    "All ${allEvents.size} events will be removed from this device. This can't be undone.",
+                    "All ${allEvents.size} events will be deleted. This can't be undone.",
                 )
             },
             confirmButton = {
@@ -209,15 +209,15 @@ private fun EmptyLog(
         GateMark(state = GateState.SHUT, tone = Tone.NEUTRAL, contentDescription = null, size = 88.dp)
         Spacer(Modifier.height(8.dp))
         Text(
-            text = if (filtered) "Nothing in $filterLabel yet" else "Nothing logged yet",
+            text = if (filtered) "No ${filterLabel.lowercase()} activity yet" else "Nothing here yet",
             style = MaterialTheme.typography.titleMedium,
             textAlign = TextAlign.Center,
         )
         Text(
             text = if (filtered) {
-                "Run that workflow from Gate and it shows up here."
+                "Try a payment or a Lab test."
             } else {
-                "Every check and decision lands here as it happens, with the details behind it."
+                "Checks and payments show up here."
             },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -227,7 +227,7 @@ private fun EmptyLog(
         if (filtered) {
             TextButton(onClick = onShowAll) { Text("Show all activity") }
         } else {
-            FilledTonalButton(onClick = onCheckDevice) { Text("Check this device") }
+            FilledTonalButton(onClick = onCheckDevice) { Text("Check this phone") }
         }
     }
 }
@@ -333,12 +333,12 @@ private fun EventRow(
                 ) {
                     if (instant != null) {
                         DetailLine(
-                            label = "Recorded",
+                            label = "When",
                             value = "${formats.day(formats.localDate(instant))}, ${formats.preciseTime(instant)}",
                         )
                     }
                     event.riskLevel?.let { level ->
-                        DetailLine(label = "Risk level", value = level.label())
+                        DetailLine(label = "Risk", value = level.label())
                     }
                     event.metadata.toSortedMap().forEach { (key, value) ->
                         DetailLine(
