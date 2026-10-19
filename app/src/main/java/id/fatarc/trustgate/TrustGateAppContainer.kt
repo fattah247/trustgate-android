@@ -2,6 +2,7 @@ package id.fatarc.trustgate
 
 import android.content.Context
 import id.fatarc.trustgate.backend.ReferenceBackend
+import id.fatarc.trustgate.backend.attestation.AttestationPolicy
 import id.fatarc.trustgate.core.backend.BackendTransport
 import id.fatarc.trustgate.core.backend.InProcessTrustGateApi
 import id.fatarc.trustgate.core.backend.PaymentClient
@@ -28,7 +29,9 @@ class TrustGateAppContainer(
     val requestSigner = ReferenceRequestSigner()
 
     // One backend for the app's lifetime, so registered keys and spent challenges persist across screens.
-    val api: TrustGateApi = InProcessTrustGateApi(ReferenceBackend())
+    val api: TrustGateApi = InProcessTrustGateApi(
+        ReferenceBackend(AttestationPolicy.development(BuildConfig.APPLICATION_ID, signingCertificateDigests = emptySet())),
+    )
     val keyProvider: DeviceKeyProvider = AndroidDeviceKeyProvider(context)
     val keyRegistrar = KeyRegistrar(keyProvider, api)
     val transport = BackendTransport(api)

@@ -3,7 +3,9 @@ package id.fatarc.trustgate.backend.attestation
 import com.google.common.truth.Truth.assertThat
 import id.fatarc.trustgate.testing.DerWriter.explicit
 import id.fatarc.trustgate.testing.DerWriter.integer
+import id.fatarc.trustgate.testing.DerWriter.octetString
 import id.fatarc.trustgate.testing.DerWriter.tlv
+import id.fatarc.trustgate.testing.attestationApplicationId
 import id.fatarc.trustgate.testing.keyDescription
 import id.fatarc.trustgate.testing.rootOfTrust
 import id.fatarc.trustgate.domain.api.SecurityLevel
@@ -60,5 +62,27 @@ class KeyDescriptionParserTest {
         )
 
         assertThat(description.rootOfTrust).isEqualTo(RootOfTrust(deviceLocked = false, verifiedBootState = VerifiedBootState.UNVERIFIED))
+    }
+
+    @Test
+    fun `reads the app identity, origin, patch level, and auth timeout`() {
+        val description = KeyDescriptionParser.parse(
+            keyDescription(
+                challenge,
+                softwareEnforced = listOf(explicit(709, octetString(attestationApplicationId("id.fatarc.trustgate", "0f".repeat(32))))),
+                hardwareEnforced = listOf(
+                    explicit(504, integer(2)),
+                    explicit(505, integer(30)),
+                    explicit(702, integer(0)),
+                    explicit(706, integer(202609)),
+                ),
+            ),
+        )
+
+        assertThat(description.applicationId?.packageNames).containsExactly("id.fatarc.trustgate")
+        assertThat(description.applicationId?.signatureDigests).containsExactly("0f".repeat(32))
+        assertThat(description.origin).isEqualTo(KeyOrigin.GENERATED)
+        assertThat(description.osPatchLevel).isEqualTo(202609)
+        assertThat(description.authTimeoutSeconds).isEqualTo(30)
     }
 }

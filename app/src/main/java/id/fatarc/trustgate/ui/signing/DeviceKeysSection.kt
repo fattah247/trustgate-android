@@ -119,6 +119,7 @@ private fun AttestationSummary.summary(): String {
         append(chainLength)
         append(" certificates")
         securityLevel?.let { append(", ").append(it.label().lowercase()) }
+        append(if (trustedRoot) ", Google root" else ", root not pinned")
         append(")")
         verifiedBootState?.let { state ->
             append(", boot ")

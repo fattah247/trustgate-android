@@ -18,12 +18,13 @@ import id.fatarc.trustgate.domain.signing.asReceived
 import id.fatarc.trustgate.testing.MutableClock
 import id.fatarc.trustgate.testing.TestAttestation
 import id.fatarc.trustgate.testing.TestKey
+import id.fatarc.trustgate.testing.developmentPolicy
 import id.fatarc.trustgate.testing.selfSignedChain
 import org.junit.Test
 
 class ReferenceBackendTest {
     private val clock = MutableClock()
-    private val backend = ReferenceBackend(clock = clock)
+    private val backend = ReferenceBackend(developmentPolicy, clock)
     private val signer = ReferenceRequestSigner()
     private val device = TestKey()
     private val stepUp = TestKey()
@@ -504,5 +505,18 @@ class ReferenceBackendTest {
 
         assertThat(borrowed).isEqualTo(PaymentResponse.Rejected(RejectionReason.UNKNOWN_CHALLENGE))
         assertThat(owners).isInstanceOf(PaymentResponse.Processed::class.java)
+    }
+
+    @Test
+    fun `a step-up key that stays unlocked after one authentication is refused`() {
+        val attestation = TestAttestation()
+        val deviceChallenge = backend.issueRegistrationChallenge()
+        backend.registerKey(KeyRole.DEVICE, device.encodedPublicKey, attestation.chainFor(device.pair.public, deviceChallenge), deviceChallenge)
+
+        val windowed = registerStepUp { challenge ->
+            attestation.chainFor(stepUp.pair.public, challenge, requiresAuthentication = true, authTimeoutSeconds = 300)
+        }
+
+        assertThat((windowed as RegistrationResult.Refused).reason).contains("each signature")
     }
 }

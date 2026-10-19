@@ -50,25 +50,53 @@ fun certificate(
     return sequence(tbs, ECDSA_WITH_SHA256, bitString(signature))
 }
 
+const val TEST_PACKAGE = "id.fatarc.trustgate"
+
+/** SHA-256 of the signing certificate the test app is "signed" with, lowercase hex. */
+val TEST_SIGNER_DIGEST: String = ReferenceSigningScheme.sha256Hex("test signing certificate")
+
 /** Stands in for a device's attestation: certifies keys under one root with a KeyDescription extension. */
 class TestAttestation(private val root: TestKey = TestKey()) {
     private val rootCertificate = certificate(root.pair.public, subject = "root", issuerKey = root.pair.private, issuer = "root")
 
-    fun chainFor(subjectKey: PublicKey, challenge: ByteArray, requiresAuthentication: Boolean = false): List<ByteArray> {
-        val enforced = listOf(
+    val rootKeyFingerprint: String = ReferenceSigningScheme.sha256Hex(root.encodedPublicKey)
+
+    fun chainFor(
+        subjectKey: PublicKey,
+        challenge: ByteArray,
+        requiresAuthentication: Boolean = false,
+        packageName: String = TEST_PACKAGE,
+        signerDigest: String = TEST_SIGNER_DIGEST,
+        securityLevel: Int = 1,
+        bootloaderLocked: Boolean = true,
+        verifiedBootState: Int = 0,
+        osPatchLevel: Int = 202609,
+        authTimeoutSeconds: Int? = null,
+        origin: Int = 0,
+    ): List<ByteArray> {
+        val enforced = listOfNotNull(
             if (requiresAuthentication) explicit(504, integer(2)) else explicit(503, tlv(0x05, ByteArray(0))),
-            explicit(704, rootOfTrust(locked = true, bootState = 0)),
+            authTimeoutSeconds?.let { explicit(505, integer(it)) },
+            explicit(702, integer(origin)),
+            explicit(704, rootOfTrust(locked = bootloaderLocked, bootState = verifiedBootState)),
+            explicit(706, integer(osPatchLevel)),
         )
-        val leaf = certificate(
-            subjectKey = subjectKey,
-            subject = "key",
-            issuerKey = root.pair.private,
-            issuer = "root",
-            keyDescription = keyDescription(challenge, hardwareEnforced = enforced),
-        )
+        // Keystore itself adds the app's identity, so it sits in the software-enforced list.
+        val applicationId = explicit(709, octetString(attestationApplicationId(packageName, signerDigest)))
+        val description = if (securityLevel == 0) {
+            keyDescription(challenge, securityLevel = 0, softwareEnforced = enforced + applicationId)
+        } else {
+            keyDescription(challenge, securityLevel = securityLevel, softwareEnforced = listOf(applicationId), hardwareEnforced = enforced)
+        }
+        val leaf = certificate(subjectKey, subject = "key", issuerKey = root.pair.private, issuer = "root", keyDescription = description)
         return listOf(leaf, rootCertificate)
     }
 }
+
+fun attestationApplicationId(packageName: String, signerDigest: String): ByteArray = sequence(
+    set(sequence(octetString(packageName.toByteArray()), integer(1))),
+    set(octetString(signerDigest.chunked(2).map { it.toInt(16).toByte() }.toByteArray())),
+)
 
 /** KeyDescription: version, levels, challenge, unique ID, then the software and hardware enforced lists. */
 fun keyDescription(

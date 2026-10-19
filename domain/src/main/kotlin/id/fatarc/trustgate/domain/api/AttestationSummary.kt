@@ -31,4 +31,8 @@ data class AttestationSummary(
     val verifiedBootState: VerifiedBootState? = null,
     val deviceLocked: Boolean? = null,
     val userAuthRequired: Boolean? = null,
+    /** The device's security patch level, as YYYYMM. */
+    val osPatchLevel: Int? = null,
+    /** The chain ends at one of Google's attestation roots, rather than a root this backend doesn't pin. */
+    val trustedRoot: Boolean = false,
 )

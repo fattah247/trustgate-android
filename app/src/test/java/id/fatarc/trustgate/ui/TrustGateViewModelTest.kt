@@ -22,7 +22,9 @@ import id.fatarc.trustgate.testing.InMemorySecureValueStore
 import id.fatarc.trustgate.testing.InMemorySecurityEventRepository
 import id.fatarc.trustgate.testing.MutableSignalCollector
 import id.fatarc.trustgate.testing.SoftwareKeyProvider
+import id.fatarc.trustgate.testing.developmentPolicy
 import id.fatarc.trustgate.testing.riskSignal
+import java.security.KeyStoreException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -35,7 +37,6 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
-import java.security.KeyStoreException
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TrustGateViewModelTest {
@@ -43,7 +44,7 @@ class TrustGateViewModelTest {
     private val events = InMemorySecurityEventRepository()
     private val collector = MutableSignalCollector(emptyList())
     private val keys = SoftwareKeyProvider()
-    private val backend = ReferenceBackend()
+    private val backend = ReferenceBackend(developmentPolicy)
     private val api = InProcessTrustGateApi(backend)
     private val transport = BackendTransport(api)
 

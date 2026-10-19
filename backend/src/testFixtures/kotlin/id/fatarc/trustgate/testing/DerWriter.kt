@@ -1,6 +1,7 @@
 package id.fatarc.trustgate.testing
 
 import java.io.ByteArrayOutputStream
+import java.math.BigInteger
 
 /** A minimal DER writer, enough to build attestation records and certificates by hand. */
 object DerWriter {
@@ -52,8 +53,6 @@ object DerWriter {
         else -> byteArrayOf(0x82.toByte(), (size shr 8).toByte(), size.toByte())
     }
 
-    private fun minimalBytes(value: Int): ByteArray = when {
-        value in 0..0x7F -> byteArrayOf(value.toByte())
-        else -> byteArrayOf((value shr 8).toByte(), value.toByte())
-    }
+    /** Two's-complement big-endian, without the redundant leading bytes DER forbids. */
+    private fun minimalBytes(value: Int): ByteArray = BigInteger.valueOf(value.toLong()).toByteArray()
 }

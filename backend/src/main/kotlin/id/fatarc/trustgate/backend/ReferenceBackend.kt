@@ -1,7 +1,9 @@
 package id.fatarc.trustgate.backend
 
+import id.fatarc.trustgate.backend.attestation.AttestationPolicy
 import id.fatarc.trustgate.backend.attestation.AttestationReport
 import id.fatarc.trustgate.backend.attestation.KeyAttestationVerifier
+import id.fatarc.trustgate.backend.attestation.RevocationList
 import id.fatarc.trustgate.backend.attestation.toSummary
 import id.fatarc.trustgate.domain.actiongate.SensitiveActionDecision
 import id.fatarc.trustgate.domain.actiongate.SensitiveActionGate
@@ -33,7 +35,10 @@ import kotlinx.serialization.json.Json
  * makes the gate decision, and processes payments idempotently.
  */
 class ReferenceBackend(
+    private val policy: AttestationPolicy,
     private val clock: Clock = Clock.systemUTC(),
+    /** The latest copy of Google's status list; the server refreshes it in the background. */
+    private val revocations: () -> RevocationList = { RevocationList.EMPTY },
 ) {
     private val gate = SensitiveActionGate()
     private val random = SecureRandom()
@@ -111,7 +116,7 @@ class ReferenceBackend(
         if (keyId in keys) return RegistrationResult.Refused("This key is already registered.")
 
         val attestation = KeyAttestationVerifier.verify(attestationChain, encodedPublicKey, challenge)
-        attestationProblem(attestation)?.let { return RegistrationResult.Refused(it) }
+        policy.problemWith(attestation, revocations())?.let { return RegistrationResult.Refused(it) }
 
         when (role) {
             KeyRole.DEVICE -> {
@@ -135,15 +140,19 @@ class ReferenceBackend(
                     }
                 }
                 // A step-up key whose attestation says it signs without authentication isn't a step-up key.
-                if (attestation.isAttested && attestation.description?.userAuthRequired != true) {
+                val description = attestation.description
+                if (description != null && !description.userAuthRequired) {
                     return RegistrationResult.Refused("The attestation shows this key doesn't require authentication.")
+                }
+                if ((description?.authTimeoutSeconds ?: 0) > 0) {
+                    return RegistrationResult.Refused("The key stays unlocked for a while after one authentication instead of asking for each signature.")
                 }
                 stepUpKeyFor[owner.keyId]?.let(keys::remove)
                 keys[keyId] = KeyEntry(keyId, role, publicKey, deviceKeyId = owner.keyId, attestation = attestation)
                 stepUpKeyFor[owner.keyId] = keyId
             }
         }
-        return RegistrationResult.Registered(keyId, role, attestation.toSummary())
+        return RegistrationResult.Registered(keyId, role, attestation.toSummary(trustedRoot = policy.trustsRoot(attestation)))
     }
 
     /**
@@ -317,19 +326,6 @@ class ReferenceBackend(
             verify(signature)
         }
     }.getOrDefault(false)
-
-    /** Why a presented certificate chain can't be accepted, or null when it can. */
-    private fun attestationProblem(report: AttestationReport): String? = when {
-        report.chainLength == 0 -> "The key came without a certificate chain."
-        !report.wellFormed -> "The attestation chain couldn't be read."
-        report.isAttested && !report.chainSignaturesValid -> "The attestation chain doesn't verify."
-        report.isAttested && !report.leafMatchesKey -> "The attestation certifies a different key."
-        report.isAttested && !report.challengeMatches -> "The attestation was made for another challenge."
-        report.isAttested -> null
-        // Without attestation support, Keystore returns only the key's own self-signed certificate.
-        report.chainLength == 1 && report.leafMatchesKey && report.chainSignaturesValid -> null
-        else -> "The certificate chain carries no attestation for this key."
-    }
 
     /**
      * The live challenge [nonce] names, if it was issued for [purpose] to [deviceKeyId]. Nothing is

@@ -13,6 +13,16 @@ data class RootOfTrust(
     val verifiedBootState: VerifiedBootState,
 )
 
+/** Which app a key was generated for, as Keystore attests it. */
+data class AttestationApplicationId(
+    val packageNames: Set<String>,
+    /** SHA-256 digests of the signing certificates of the app that generated the key, lowercase hex. */
+    val signatureDigests: Set<String>,
+)
+
+/** How a key came into Keystore. Only a generated key is known never to have existed outside it. */
+enum class KeyOrigin { GENERATED, DERIVED, IMPORTED, UNKNOWN, SECURELY_IMPORTED }
+
 /** The fields of Android's KeyDescription attestation extension that the backend acts on. */
 class KeyDescription(
     val attestationVersion: Int,
@@ -22,6 +32,12 @@ class KeyDescription(
     val rootOfTrust: RootOfTrust?,
     /** The key can only be used after the person authenticates, as enforced at [keymasterSecurityLevel]. */
     val userAuthRequired: Boolean,
+    /** How long the key stays usable after one authentication; null when every use needs its own. */
+    val authTimeoutSeconds: Long? = null,
+    val origin: KeyOrigin? = null,
+    /** The device's security patch level, as YYYYMM. */
+    val osPatchLevel: Int? = null,
+    val applicationId: AttestationApplicationId? = null,
 )
 
 /** What the backend learned from a key's attestation certificate chain. */
@@ -34,14 +50,16 @@ data class AttestationReport(
     /** The attestation carries the one-time challenge the backend issued for this registration. */
     val challengeMatches: Boolean,
     val description: KeyDescription?,
-    /** First 16 hex characters of the root's public key hash, for comparing against known roots. */
+    /** SHA-256 of the root's public key, lowercase hex, for comparing against pinned roots. */
     val rootKeyFingerprint: String?,
+    /** Every certificate's serial number in lowercase hex, as Google's status list names them. */
+    val certificateSerials: List<String> = emptyList(),
     /** Every certificate parsed, and the attestation extension, when present, could be read. */
     val wellFormed: Boolean = true,
 ) {
     val isAttested: Boolean get() = description != null
 
-    /** Everything checks out. Production also pins the root to Google's and consults the revocation list. */
+    /** The chain is internally sound and was made for this key and challenge; [AttestationPolicy] judges the rest. */
     val isVerified: Boolean get() = isAttested && chainSignaturesValid && leafMatchesKey && challengeMatches
 
     companion object {
@@ -56,7 +74,7 @@ data class AttestationReport(
     }
 }
 
-fun AttestationReport.toSummary(): AttestationSummary = AttestationSummary(
+fun AttestationReport.toSummary(trustedRoot: Boolean): AttestationSummary = AttestationSummary(
     attested = isAttested,
     verified = isVerified,
     chainLength = chainLength,
@@ -64,6 +82,8 @@ fun AttestationReport.toSummary(): AttestationSummary = AttestationSummary(
     verifiedBootState = description?.rootOfTrust?.verifiedBootState,
     deviceLocked = description?.rootOfTrust?.deviceLocked,
     userAuthRequired = description?.userAuthRequired,
+    osPatchLevel = description?.osPatchLevel,
+    trustedRoot = trustedRoot,
 )
 
 object KeyAttestationVerifier {
@@ -93,7 +113,8 @@ object KeyAttestationVerifier {
             leafMatchesKey = leaf.publicKey.encoded.contentEquals(expectedPublicKey),
             challengeMatches = description?.attestationChallenge?.contentEquals(expectedChallenge) == true,
             description = description,
-            rootKeyFingerprint = ReferenceSigningScheme.sha256Hex(certificates.last().publicKey.encoded).take(16),
+            rootKeyFingerprint = ReferenceSigningScheme.sha256Hex(certificates.last().publicKey.encoded),
+            certificateSerials = certificates.map { it.serialNumber.toString(16) },
             wellFormed = extension == null || description != null,
         )
     }
@@ -110,7 +131,11 @@ object KeyAttestationVerifier {
 object KeyDescriptionParser {
     private const val TAG_NO_AUTH_REQUIRED = 503
     private const val TAG_USER_AUTH_TYPE = 504
+    private const val TAG_AUTH_TIMEOUT = 505
+    private const val TAG_ORIGIN = 702
     private const val TAG_ROOT_OF_TRUST = 704
+    private const val TAG_OS_PATCH_LEVEL = 706
+    private const val TAG_ATTESTATION_APPLICATION_ID = 709
 
     fun parse(der: ByteArray): KeyDescription {
         val fields = Der.Reader(der).readElement().expectSequence().children()
@@ -118,15 +143,22 @@ object KeyDescriptionParser {
         val keymasterLevel = securityLevel(fields[3].integerValue())
         val softwareEnforced = authorizationList(fields[6])
         val hardwareEnforced = authorizationList(fields[7])
+        // Security properties count only where the key's own Keystore level enforces them.
         val enforcing = if (keymasterLevel == SecurityLevel.SOFTWARE) softwareEnforced else hardwareEnforced
+        fun anyList(tag: Int) = hardwareEnforced[tag] ?: softwareEnforced[tag]
 
         return KeyDescription(
             attestationVersion = fields[0].integerValue(),
             attestationSecurityLevel = securityLevel(fields[1].integerValue()),
             keymasterSecurityLevel = keymasterLevel,
             attestationChallenge = fields[4].content,
-            rootOfTrust = (hardwareEnforced[TAG_ROOT_OF_TRUST] ?: softwareEnforced[TAG_ROOT_OF_TRUST])?.let(::rootOfTrust),
+            rootOfTrust = anyList(TAG_ROOT_OF_TRUST)?.let(::rootOfTrust),
             userAuthRequired = TAG_USER_AUTH_TYPE in enforcing && TAG_NO_AUTH_REQUIRED !in enforcing,
+            authTimeoutSeconds = enforcing[TAG_AUTH_TIMEOUT]?.longValue(),
+            origin = enforcing[TAG_ORIGIN]?.integerValue()?.let { KeyOrigin.entries.getOrNull(it) ?: KeyOrigin.UNKNOWN },
+            osPatchLevel = anyList(TAG_OS_PATCH_LEVEL)?.integerValue(),
+            // Keystore itself fills this in, so it sits in the software-enforced list even on hardware.
+            applicationId = anyList(TAG_ATTESTATION_APPLICATION_ID)?.let(::applicationId),
         )
     }
 
@@ -135,6 +167,19 @@ object KeyDescriptionParser {
         element.expectSequence().children()
             .filter { it.tagClass == Der.CONTEXT_SPECIFIC }
             .associate { tagged -> tagged.tagNumber to Der.Reader(tagged.content).readElement() }
+
+    /**
+     * AttestationApplicationId ::= SEQUENCE { packageInfos SET OF AttestationPackageInfo, signatureDigests SET OF OCTET STRING },
+     * with AttestationPackageInfo ::= SEQUENCE { packageName OCTET STRING, version INTEGER }, wrapped in an OCTET STRING.
+     */
+    private fun applicationId(element: Der.Element): AttestationApplicationId {
+        val fields = Der.Reader(element.content).readElement().expectSequence().children()
+        require(fields.size >= 2) { "AttestationApplicationId has ${fields.size} fields, expected 2." }
+        return AttestationApplicationId(
+            packageNames = fields[0].children().mapTo(mutableSetOf()) { info -> info.children()[0].content.decodeToString() },
+            signatureDigests = fields[1].children().mapTo(mutableSetOf()) { digest -> ReferenceSigningScheme.hex(digest.content) },
+        )
+    }
 
     private fun rootOfTrust(element: Der.Element): RootOfTrust {
         val fields = element.expectSequence().children()
@@ -183,6 +228,11 @@ internal object Der {
         fun integerValue(): Int {
             require(content.isNotEmpty() && content.size <= 4) { "Integer of ${content.size} bytes is out of range." }
             return content.fold(if (content[0] < 0) -1 else 0) { acc, byte -> (acc shl 8) or (byte.toInt() and 0xFF) }
+        }
+
+        fun longValue(): Long {
+            require(content.isNotEmpty() && content.size <= 8) { "Integer of ${content.size} bytes is out of range." }
+            return content.fold(if (content[0] < 0) -1L else 0L) { acc, byte -> (acc shl 8) or (byte.toLong() and 0xFF) }
         }
 
         fun booleanValue(): Boolean = content.singleOrNull()?.let { it.toInt() != 0 } ?: error("Malformed BOOLEAN.")

@@ -8,14 +8,15 @@ import id.fatarc.trustgate.domain.api.RequiredConfirmation
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.testing.SoftwareKeyProvider
+import id.fatarc.trustgate.testing.developmentPolicy
+import java.security.KeyStoreException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
-import java.security.KeyStoreException
 
 class KeyRegistrarTest {
     private val keys = SoftwareKeyProvider()
-    private val backend = ReferenceBackend()
+    private val backend = ReferenceBackend(developmentPolicy)
     private val registrar = KeyRegistrar(keys, InProcessTrustGateApi(backend), Dispatchers.Unconfined)
 
     private fun mediumRiskConfirmation(deviceKeyId: String): RequiredConfirmation =
