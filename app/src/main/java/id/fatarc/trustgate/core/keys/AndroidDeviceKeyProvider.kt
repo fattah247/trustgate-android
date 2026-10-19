@@ -36,13 +36,13 @@ class AndroidDeviceKeyProvider(
     override fun stepUpSupport(): StepUpSupport {
         val keyguard = appContext.getSystemService(KeyguardManager::class.java)
         if (keyguard?.isDeviceSecure != true) {
-            return StepUpSupport.Unavailable("Set a screen lock to confirm protected actions with it.")
+            return StepUpSupport.Unavailable("Set a screen lock to use it.")
         }
         // Before Android 11 a key can only be bound to biometrics per use, not to the screen lock.
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R &&
             BiometricManager.from(appContext).canAuthenticate(BIOMETRIC_STRONG) != BiometricManager.BIOMETRIC_SUCCESS
         ) {
-            return StepUpSupport.Unavailable("Enroll a fingerprint to confirm protected actions on this Android version.")
+            return StepUpSupport.Unavailable("Add a fingerprint to use it on this Android version.")
         }
         return StepUpSupport.Available
     }

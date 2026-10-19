@@ -52,7 +52,7 @@ class KeyRegistrar(
                 StepUpSupport.Available -> if (stepUp == null) {
                     runCatching { register(KeyRole.STEP_UP, deviceKeyId = device.keyId) }
                         .onSuccess { stepUp = it.also(added::add) }
-                        .onFailure { unavailableReason = "The step-up key couldn't be set up: ${it.message}" }
+                        .onFailure { unavailableReason = "Couldn't set it up: ${it.message}" }
                 }
 
                 is StepUpSupport.Unavailable -> {

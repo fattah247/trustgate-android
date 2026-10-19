@@ -48,26 +48,26 @@ class TrustGateSecurityService(
         previous: DeviceRiskReport? = null,
     ): DeviceRiskReport {
         val report = riskScorer.score(signalCollector.collectSignals())
-        val activeSignals = report.signals.count { it.detected }
+        val found = problemsFound(report.signals.count { it.detected })
         when (trigger) {
             AssessmentTrigger.LAUNCH,
             AssessmentTrigger.MANUAL,
             -> {
-                recordAssessment(report, trigger, "Device risk assessed with $activeSignals active signals.")
+                recordAssessment(report, trigger, found)
                 recordDetectedSignals(report)
             }
 
             AssessmentTrigger.BEFORE_ACTION -> recordAssessment(
                 report = report,
                 trigger = trigger,
-                message = "Checked again before a protected action: $activeSignals active signals.",
+                message = "Checked again before paying. $found",
             )
 
             AssessmentTrigger.RESUME -> if (previous == null || report.differsFrom(previous)) {
                 val message = if (previous != null && previous.level != report.level) {
-                    "Risk changed from ${previous.level.name.lowercase()} to ${report.level.name.lowercase()} since the last check."
+                    "Went from ${previous.level.name.lowercase()} to ${report.level.name.lowercase()} risk while you were away."
                 } else {
-                    "Detected signals changed since the last check: $activeSignals active."
+                    "Changed while you were away. $found"
                 }
                 recordAssessment(
                     report = report,
@@ -102,7 +102,7 @@ class TrustGateSecurityService(
             SecurityEvent(
                 type = SecurityEventType.SENSITIVE_ACTION_BLOCKED,
                 riskLevel = report.level,
-                message = "Sensitive action blocked after confirmation: the device turned high risk while it waited.",
+                message = "Stopped: the phone turned high risk while you were confirming.",
                 metadata = mapOf("decidedBy" to "app"),
             ),
         )
@@ -111,21 +111,16 @@ class TrustGateSecurityService(
     suspend fun recordKeyRegistered(key: RegisteredKey) {
         val attestation = key.attestation
         val (status, summary) = when {
-            attestation.verified -> "verified" to ", with a verified attestation."
-            attestation.attested -> "unverified" to ", but its attestation didn't fully verify."
-            else -> "none" to " without attestation."
+            attestation.verified -> "verified" to "Keystore vouched for it."
+            attestation.attested -> "unverified" to "Keystore's proof didn't check out."
+            else -> "none" to "No proof from Keystore."
         }
         eventRepository.record(
             SecurityEvent(
                 type = SecurityEventType.KEY_REGISTERED,
-                message = buildString {
-                    append(
-                        when (key.role) {
-                            KeyRole.DEVICE -> "Device signing key registered"
-                            KeyRole.STEP_UP -> "Step-up key registered; it signs only after the person authenticates"
-                        },
-                    )
-                    append(summary)
+                message = when (key.role) {
+                    KeyRole.DEVICE -> "Signs every payment. $summary"
+                    KeyRole.STEP_UP -> "Signs only after your screen lock. $summary"
                 },
                 metadata = buildMap {
                     put("keyId", key.keyId)
@@ -145,12 +140,12 @@ class TrustGateSecurityService(
             SecurityEvent(
                 type = SecurityEventType.PAYMENT_SUBMITTED,
                 message = when (response) {
-                    null -> "No response after ${outcome.attempts} attempts; the payment's outcome is unknown."
-                    is PaymentResponse.Rejected -> "The backend refused the payment: ${response.reason.auditPhrase()}."
+                    null -> "No answer after ${outcome.attempts} tries. Paying again can't charge twice."
+                    is PaymentResponse.Rejected -> "Refused because ${response.reason.auditPhrase()}."
                     is PaymentResponse.Processed -> if (outcome.lostResponses > 0) {
-                        "Payment ${response.payment.id} charged once; a lost response was retried and returned the same payment."
+                        "A reply was lost and the app tried again. Charged once: ${response.payment.id}."
                     } else {
-                        "Payment ${response.payment.id} charged for ${request.payload.merchantReference}."
+                        "Charged once: ${response.payment.id}."
                     }
                 },
                 metadata = buildMap {
@@ -172,8 +167,8 @@ class TrustGateSecurityService(
                 type = SecurityEventType.SENSITIVE_ACTION_ALLOWED_AFTER_CONFIRMATION,
                 riskLevel = report.level,
                 message = when (method) {
-                    ConfirmationMethod.DEVICE_CREDENTIAL -> "Sensitive action allowed after the user confirmed with their screen lock or biometrics."
-                    ConfirmationMethod.TAP -> "Sensitive action allowed after an explicit tap; the device has no screen lock to step up to."
+                    ConfirmationMethod.DEVICE_CREDENTIAL -> "Confirmed with your screen lock."
+                    ConfirmationMethod.TAP -> "Confirmed with a tap, since this phone has no screen lock."
                 },
                 metadata = mapOf("method" to method.metadataValue),
             ),
@@ -185,7 +180,7 @@ class TrustGateSecurityService(
             SecurityEvent(
                 type = SecurityEventType.SENSITIVE_ACTION_CANCELLED,
                 riskLevel = report.level,
-                message = "Sensitive action cancelled at the confirmation step.",
+                message = "You cancelled when asked to confirm.",
             ),
         )
     }
@@ -195,7 +190,7 @@ class TrustGateSecurityService(
             SecurityEvent(
                 type = SecurityEventType.DEVICE_RISK_ASSESSED,
                 riskLevel = report.level,
-                message = "Simulated ${report.level.name.lowercase()}-risk profile applied.",
+                message = "Showing a ${report.level.demoPhone()} phone. Payments still go to the real server.",
                 metadata = mapOf(
                     "score" to report.score.toString(),
                     "source" to SCENARIO_SOURCE,
@@ -209,9 +204,9 @@ class TrustGateSecurityService(
             SecurityEvent(
                 type = SecurityEventType.REQUEST_SIGNED,
                 message = if (forProtectedAction) {
-                    "Signed the payment request for ${request.payload.merchantReference} after the gate allowed it."
+                    "Signed order ${request.payload.merchantReference} with this phone's key."
                 } else {
-                    "Signed payment-like request for ${request.payload.merchantReference}."
+                    "Signed a Lab test request with this phone's key."
                 },
                 metadata = mapOf(
                     "nonce" to request.nonce,
@@ -228,11 +223,8 @@ class TrustGateSecurityService(
             SecurityEvent(
                 type = SecurityEventType.REQUEST_VERIFIED,
                 message = when (result) {
-                    VerificationResult.Accepted ->
-                        "Reference backend accepted the request for ${request.payload.merchantReference}."
-
-                    is VerificationResult.Rejected ->
-                        "Reference backend rejected the request: ${result.reason.auditPhrase()}."
+                    VerificationResult.Accepted -> "The server accepted it."
+                    is VerificationResult.Rejected -> "The server refused it because ${result.reason.auditPhrase()}."
                 },
                 metadata = buildMap {
                     put("nonce", request.nonce)
@@ -248,7 +240,7 @@ class TrustGateSecurityService(
         eventRepository.record(
             SecurityEvent(
                 type = SecurityEventType.SECURE_VALUE_STORED,
-                message = "Stored reference values in encrypted local storage.",
+                message = "Saved encrypted, with a key only this app can use.",
                 metadata = mapOf("keys" to keys.joinToString(",")),
             ),
         )
@@ -309,21 +301,33 @@ class TrustGateSecurityService(
     }
 
     private fun SensitiveActionDecision.toAuditMessage(): String = when (this) {
-        SensitiveActionDecision.ALLOW -> "Sensitive action allowed for low-risk device state."
-        SensitiveActionDecision.REQUIRE_CONFIRMATION -> "Sensitive action requires confirmation because of medium-risk signals."
-        SensitiveActionDecision.BLOCK -> "Sensitive action blocked because the device is high risk."
+        SensitiveActionDecision.ALLOW -> "The server let the payment through."
+        SensitiveActionDecision.REQUIRE_CONFIRMATION -> "The server wants you to confirm first."
+        SensitiveActionDecision.BLOCK -> "The server stopped the payment."
     }
 
     private fun RejectionReason.auditPhrase(): String = when (this) {
-        RejectionReason.MISSING_HEADERS -> "signing headers missing or malformed"
-        RejectionReason.MALFORMED_TIMESTAMP -> "timestamp malformed"
-        RejectionReason.OUTSIDE_TIME_WINDOW -> "outside the time window"
-        RejectionReason.UNKNOWN_KEY -> "signed by a key it doesn't know"
-        RejectionReason.SIGNATURE_MISMATCH -> "signature doesn't match the request"
-        RejectionReason.UNKNOWN_CHALLENGE -> "challenge not issued to this device or expired"
-        RejectionReason.CHALLENGE_REUSED -> "challenge already used"
-        RejectionReason.CONFIRMATION_REQUIRED -> "required confirmation missing"
-        RejectionReason.IDEMPOTENCY_CONFLICT -> "idempotency key reused for a different payment"
-        RejectionReason.MALFORMED_BODY -> "payment body unreadable"
+        RejectionReason.MISSING_HEADERS -> "parts of it were missing"
+        RejectionReason.MALFORMED_TIMESTAMP -> "its time couldn't be read"
+        RejectionReason.OUTSIDE_TIME_WINDOW -> "it arrived too late"
+        RejectionReason.UNKNOWN_KEY -> "it doesn't know this phone's key"
+        RejectionReason.SIGNATURE_MISMATCH -> "it was changed after signing"
+        RejectionReason.UNKNOWN_CHALLENGE -> "its one-time code wasn't issued or has expired"
+        RejectionReason.CHALLENGE_REUSED -> "its one-time code was already used"
+        RejectionReason.CONFIRMATION_REQUIRED -> "you didn't confirm it"
+        RejectionReason.IDEMPOTENCY_CONFLICT -> "its charge-once key belongs to a different payment"
+        RejectionReason.MALFORMED_BODY -> "it couldn't be read"
+    }
+
+    private fun DeviceRiskLevel.demoPhone(): String = when (this) {
+        DeviceRiskLevel.LOW -> "safe"
+        DeviceRiskLevel.MEDIUM -> "risky"
+        DeviceRiskLevel.HIGH -> "compromised"
+    }
+
+    private fun problemsFound(count: Int): String = when (count) {
+        0 -> "No problems found."
+        1 -> "1 problem found."
+        else -> "$count problems found."
     }
 }
