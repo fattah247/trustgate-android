@@ -5,12 +5,9 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import id.fatarc.trustgate.BuildConfig
 import id.fatarc.trustgate.TrustGateAppContainer
-import id.fatarc.trustgate.core.backend.PaymentAuthorization
+import id.fatarc.trustgate.core.backend.BackendTransport
 import id.fatarc.trustgate.core.backend.PaymentClient
-import id.fatarc.trustgate.core.backend.PaymentResponse
-import id.fatarc.trustgate.core.backend.ReferenceBackend
-import id.fatarc.trustgate.core.backend.ReferenceTransport
-import id.fatarc.trustgate.core.backend.RequiredConfirmation
+import id.fatarc.trustgate.core.backend.TrustGateApi
 import id.fatarc.trustgate.core.crypto.PinningConfig
 import id.fatarc.trustgate.core.keys.DeviceKeyProvider
 import id.fatarc.trustgate.core.keys.KeyRegistrar
@@ -23,6 +20,9 @@ import id.fatarc.trustgate.core.storage.SecureValueNames
 import id.fatarc.trustgate.core.storage.SecureValueStore
 import id.fatarc.trustgate.core.storage.SecurityStorageSnapshot
 import id.fatarc.trustgate.data.securityevent.AuditLogExport
+import id.fatarc.trustgate.domain.api.PaymentAuthorization
+import id.fatarc.trustgate.domain.api.PaymentResponse
+import id.fatarc.trustgate.domain.api.RequiredConfirmation
 import id.fatarc.trustgate.domain.events.SecurityEventRepository
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.risk.DeviceRiskReport
@@ -58,10 +58,10 @@ class TrustGateViewModel(
     private val eventRepository: SecurityEventRepository,
     private val secureValueStore: SecureValueStore,
     private val requestSigner: ReferenceRequestSigner,
-    private val backend: ReferenceBackend,
+    private val api: TrustGateApi,
     private val keyProvider: DeviceKeyProvider,
     private val keyRegistrar: KeyRegistrar,
-    private val transport: ReferenceTransport,
+    private val transport: BackendTransport,
     private val paymentClient: PaymentClient,
     pinningConfig: PinningConfig,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
@@ -146,7 +146,9 @@ class TrustGateViewModel(
                 ?: return@launch abandonAction("The device couldn't be checked, so the action didn't run.")
             val keys = ensureKeys()
                 ?: return@launch abandonAction("The device key isn't ready, so the action didn't run.")
-            val authorization = withContext(ioDispatcher) { backend.beginPayment(keys.device.keyId, report.level) }
+            val authorization = runCatching { withContext(ioDispatcher) { api.authorizePayment(keys.device.keyId, report.level) } }
+                .rethrowCancellation()
+                .getOrElse { return@launch abandonAction("The backend couldn't be reached, so the action didn't run.") }
             runCatching { securityService.recordGateDecision(report, authorization.decision) }.rethrowCancellation()
 
             if (authorization !is PaymentAuthorization.Proceed) {
@@ -300,7 +302,7 @@ class TrustGateViewModel(
             val keys = ensureKeys() ?: return@launch failSigning("The device key isn't ready.")
             runCatching {
                 withContext(ioDispatcher) {
-                    val nonce = backend.issueVerificationChallenge(keys.device.keyId)
+                    val nonce = api.verificationChallenge(keys.device.keyId)
                     val prepared = requestSigner.prepare(
                         payload = ReferencePayment.payload(),
                         nonce = nonce,
@@ -315,25 +317,42 @@ class TrustGateViewModel(
         }
     }
 
-    /** Sends the latest signed request to the reference backend, honestly or deliberately altered. */
+    /** Sends the latest signed request to the backend's check endpoint, honestly or deliberately altered. */
     fun verifyLatestRequest(attempt: VerificationAttempt) {
         val request = _uiState.value.signing.signedRequest ?: return
         viewModelScope.launch {
-            val now = Instant.now()
-            val (received, receivedAt) = when (attempt) {
-                VerificationAttempt.AS_SIGNED -> request.asReceived() to now
-                // The same canonical encoding with a bigger amount, as someone editing the body in transit would send.
-                VerificationAttempt.CHANGED_AMOUNT -> request.asReceived().copy(
-                    body = requestSigner.canonicalize(request.payload.copy(amountMinor = request.payload.amountMinor * 10)),
-                ) to now
-                // Arrives just past the window the backend allows, as a delayed or captured request would.
-                VerificationAttempt.DELIVERED_LATE ->
-                    request.asReceived() to now.plus(ReferenceBackend.ALLOWED_CLOCK_SKEW).plus(LATE_DELIVERY_MARGIN)
-            }
-            val result = withContext(ioDispatcher) { backend.authenticate(received, receivedAt) }
+            val sent = runCatching {
+                withContext(ioDispatcher) {
+                    val received = when (attempt) {
+                        VerificationAttempt.AS_SIGNED -> request.asReceived()
+                        // The same canonical encoding with a bigger amount, as someone editing the body in transit would send.
+                        VerificationAttempt.CHANGED_AMOUNT -> request.asReceived().copy(
+                            body = requestSigner.canonicalize(request.payload.copy(amountMinor = request.payload.amountMinor * 10)),
+                        )
+                        // A server can't be told when a request arrived, so send a copy signed just past the
+                        // window, which is exactly how a held-back request looks when it finally lands.
+                        VerificationAttempt.DELIVERED_LATE -> heldBackCopy(request).asReceived()
+                    }
+                    api.checkRequest(received)
+                }
+            }.rethrowCancellation()
+            val result = sent.getOrElse { return@launch showMessage("The backend couldn't be reached.") }
             addVerificationRecord(request, VerificationRecord(attempt, result, at = Instant.now()))
             runCatching { securityService.recordVerification(request, result, attempt.metadataValue) }.rethrowCancellation()
         }
+    }
+
+    private fun heldBackCopy(request: SignedRequest): SignedRequest {
+        val keyId = _uiState.value.keys.keys?.device?.keyId ?: request.keyId
+        val prepared = requestSigner.prepare(
+            payload = request.payload,
+            nonce = request.nonce,
+            keyId = keyId,
+            timestamp = Instant.now().minus(ReferenceSigningScheme.TIME_WINDOW).minus(LATE_DELIVERY_MARGIN).toString(),
+            idempotencyKey = request.idempotencyKey,
+            confirmation = request.confirmation,
+        )
+        return prepared.signedWith(keyProvider.signWithDeviceKey(prepared.signingInput))
     }
 
     fun buildAuditExport(): String {
@@ -696,7 +715,7 @@ class TrustGateViewModelFactory(
             eventRepository = container.securityEventRepository,
             secureValueStore = container.secureValueStore,
             requestSigner = container.requestSigner,
-            backend = container.backend,
+            api = container.api,
             keyProvider = container.keyProvider,
             keyRegistrar = container.keyRegistrar,
             transport = container.transport,

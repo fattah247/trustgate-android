@@ -2,6 +2,7 @@ package id.fatarc.trustgate.domain.signing
 
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
+import java.time.Duration
 import java.util.Base64
 
 /**
@@ -22,6 +23,9 @@ object ReferenceSigningScheme {
     const val HEADER_IDEMPOTENCY_KEY = "Idempotency-Key"
     const val HEADER_CONFIRMATION = "X-Confirmation"
     const val HEADER_SIGNATURE = "X-Request-Signature"
+
+    /** How far a request's timestamp may be from the moment it arrives. */
+    val TIME_WINDOW: Duration = Duration.ofMinutes(5)
 
     /** Value of [HEADER_CONFIRMATION] when the person confirmed with a tap because there was no lock to step up to. */
     const val CONFIRMATION_TAP = "tap"

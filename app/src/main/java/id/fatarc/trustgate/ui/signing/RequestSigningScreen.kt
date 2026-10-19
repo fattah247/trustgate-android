@@ -18,7 +18,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import id.fatarc.trustgate.core.backend.ReferenceBackend
+import id.fatarc.trustgate.domain.signing.ReferenceSigningScheme
 import id.fatarc.trustgate.domain.signing.VerificationResult
 import id.fatarc.trustgate.ui.CodeTextStyle
 import id.fatarc.trustgate.ui.CopyButton
@@ -102,7 +102,7 @@ fun RequestSigningScreen(
                 Section(
                     title = "Try it against the backend",
                     footer = "The reference backend verifies with the registered public key. The signature must " +
-                        "cover what arrived, the timestamp must be within ${ReferenceBackend.ALLOWED_CLOCK_SKEW.toMinutes()} minutes, " +
+                        "cover what arrived, the timestamp must be within ${ReferenceSigningScheme.TIME_WINDOW.toMinutes()} minutes, " +
                         "and the nonce must be a one-time challenge it issued to this device.",
                 ) {
                     ListRow(
@@ -125,7 +125,7 @@ fun RequestSigningScreen(
                     RowDivider(startIndent = TrustGateSpacing.listIconInset)
                     ListRow(
                         headline = "Send after the time window",
-                        supporting = "Delivers it as if it was held back and arrived too late.",
+                        supporting = "Sends a copy signed just past the window, as a held-back request would arrive.",
                         supportingColor = MaterialTheme.colorScheme.onSurfaceVariant,
                         leadingIcon = Icons.Outlined.Schedule,
                         onClickLabel = "Send late request",

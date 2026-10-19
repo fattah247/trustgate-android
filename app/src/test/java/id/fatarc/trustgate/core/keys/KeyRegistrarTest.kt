@@ -1,9 +1,10 @@
 package id.fatarc.trustgate.core.keys
 
 import com.google.common.truth.Truth.assertThat
-import id.fatarc.trustgate.core.backend.PaymentAuthorization
-import id.fatarc.trustgate.core.backend.ReferenceBackend
-import id.fatarc.trustgate.core.backend.RequiredConfirmation
+import id.fatarc.trustgate.backend.ReferenceBackend
+import id.fatarc.trustgate.core.backend.InProcessTrustGateApi
+import id.fatarc.trustgate.domain.api.PaymentAuthorization
+import id.fatarc.trustgate.domain.api.RequiredConfirmation
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.testing.SoftwareKeyProvider
@@ -15,7 +16,7 @@ import java.security.KeyStoreException
 class KeyRegistrarTest {
     private val keys = SoftwareKeyProvider()
     private val backend = ReferenceBackend()
-    private val registrar = KeyRegistrar(keys, backend, Dispatchers.Unconfined)
+    private val registrar = KeyRegistrar(keys, InProcessTrustGateApi(backend), Dispatchers.Unconfined)
 
     private fun mediumRiskConfirmation(deviceKeyId: String): RequiredConfirmation =
         (backend.beginPayment(deviceKeyId, DeviceRiskLevel.MEDIUM) as PaymentAuthorization.Proceed).confirmation

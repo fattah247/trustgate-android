@@ -1,7 +1,7 @@
 package id.fatarc.trustgate.core.keys
 
-import id.fatarc.trustgate.core.backend.ReferenceBackend
-import id.fatarc.trustgate.core.backend.RegistrationResult
+import id.fatarc.trustgate.core.backend.TrustGateApi
+import id.fatarc.trustgate.domain.api.RegistrationResult
 import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.domain.signing.ReferenceSigningScheme
 import kotlinx.coroutines.CoroutineDispatcher
@@ -26,7 +26,7 @@ class KeyRegistrationException(message: String) : Exception(message)
  */
 class KeyRegistrar(
     private val provider: DeviceKeyProvider,
-    private val backend: ReferenceBackend,
+    private val api: TrustGateApi,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     private val lock = Mutex()
@@ -76,17 +76,17 @@ class KeyRegistrar(
     }
 
     /** Tells the backend to stop accepting the step-up key, with the device key vouching for the request. */
-    private fun dropStepUp(deviceKeyId: String) {
-        val challenge = backend.issueRegistrationChallenge(deviceKeyId)
+    private suspend fun dropStepUp(deviceKeyId: String) {
+        val challenge = api.registrationChallenge(deviceKeyId)
         val proof = provider.signWithDeviceKey(
             ReferenceSigningScheme.keyBindingInput(ReferenceSigningScheme.ACTION_REMOVE_STEP_UP, challenge, deviceKeyId),
         )
-        backend.removeStepUpKey(deviceKeyId, challenge, proof)
+        api.removeStepUpKey(deviceKeyId, challenge, proof)
         provider.delete(KeyRole.STEP_UP)
     }
 
-    private fun register(role: KeyRole, deviceKeyId: String?): RegisteredKey {
-        val challenge = backend.issueRegistrationChallenge(deviceKeyId)
+    private suspend fun register(role: KeyRole, deviceKeyId: String?): RegisteredKey {
+        val challenge = api.registrationChallenge(deviceKeyId)
         val generated = provider.generate(role, challenge)
         // The device key vouches for a new step-up key, so a key from elsewhere can't be slipped in.
         val proof = deviceKeyId?.let {
@@ -96,7 +96,7 @@ class KeyRegistrar(
             )
         }
         return when (
-            val result = backend.registerKey(
+            val result = api.registerKey(
                 role = role,
                 encodedPublicKey = generated.encodedPublicKey,
                 attestationChain = generated.attestationChain,

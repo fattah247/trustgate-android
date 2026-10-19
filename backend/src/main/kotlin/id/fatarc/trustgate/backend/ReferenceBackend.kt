@@ -1,9 +1,15 @@
-package id.fatarc.trustgate.core.backend
+package id.fatarc.trustgate.backend
 
-import id.fatarc.trustgate.core.attestation.AttestationReport
-import id.fatarc.trustgate.core.attestation.KeyAttestationVerifier
+import id.fatarc.trustgate.backend.attestation.AttestationReport
+import id.fatarc.trustgate.backend.attestation.KeyAttestationVerifier
+import id.fatarc.trustgate.backend.attestation.toSummary
 import id.fatarc.trustgate.domain.actiongate.SensitiveActionDecision
 import id.fatarc.trustgate.domain.actiongate.SensitiveActionGate
+import id.fatarc.trustgate.domain.api.Payment
+import id.fatarc.trustgate.domain.api.PaymentAuthorization
+import id.fatarc.trustgate.domain.api.PaymentResponse
+import id.fatarc.trustgate.domain.api.RegistrationResult
+import id.fatarc.trustgate.domain.api.RequiredConfirmation
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.domain.signing.PaymentRequestPayload
@@ -22,61 +28,9 @@ import java.time.Instant
 import java.time.format.DateTimeParseException
 import kotlinx.serialization.json.Json
 
-enum class RequiredConfirmation {
-    NONE,
-
-    /** The request must be signed by the device's step-up key, which only signs after the person authenticates. */
-    STEP_UP_KEY,
-
-    /** The device has no screen lock to step up to, so a signed tap confirmation is the weaker fallback. */
-    TAP,
-}
-
-sealed interface PaymentAuthorization {
-    val decision: SensitiveActionDecision
-
-    data class Proceed(
-        override val decision: SensitiveActionDecision,
-        val nonce: String,
-        val signWith: KeyRole,
-        val confirmation: RequiredConfirmation,
-    ) : PaymentAuthorization
-
-    data class Blocked(val level: DeviceRiskLevel) : PaymentAuthorization {
-        override val decision: SensitiveActionDecision get() = SensitiveActionDecision.BLOCK
-    }
-}
-
-sealed interface RegistrationResult {
-    data class Registered(
-        val keyId: String,
-        val role: KeyRole,
-        val attestation: AttestationReport,
-    ) : RegistrationResult
-
-    data class Refused(val reason: String) : RegistrationResult
-}
-
-data class Payment(
-    val id: String,
-    val amountMinor: Long,
-    val currency: String,
-    val signedWith: KeyRole,
-    val confirmation: RequiredConfirmation,
-    val processedAt: Instant,
-)
-
-sealed interface PaymentResponse {
-    /** [replayed] means this exact request was processed before and nothing new was charged. */
-    data class Processed(val payment: Payment, val replayed: Boolean) : PaymentResponse
-
-    data class Rejected(val reason: RejectionReason) : PaymentResponse
-}
-
 /**
- * Plays the server's part so the whole flow can run without a network: it registers device keys
- * from their attestation, issues one-time challenges, makes the gate decision, and processes
- * payments idempotently. It lives in memory for the app process; a real backend persists all of it.
+ * The server's part: it registers device keys from their attestation, issues one-time challenges,
+ * makes the gate decision, and processes payments idempotently.
  */
 class ReferenceBackend(
     private val clock: Clock = Clock.systemUTC(),
@@ -189,7 +143,7 @@ class ReferenceBackend(
                 stepUpKeyFor[owner.keyId] = keyId
             }
         }
-        return RegistrationResult.Registered(keyId, role, attestation)
+        return RegistrationResult.Registered(keyId, role, attestation.toSummary())
     }
 
     /**
@@ -302,7 +256,7 @@ class ReferenceBackend(
             currency = payload.currency,
             signedWith = key.role,
             confirmation = challenge.confirmation,
-            processedAt = receivedAt,
+            processedAt = receivedAt.toString(),
         )
         ledger[ledgerKey] = LedgerEntry(fingerprint, payment)
         return PaymentResponse.Processed(payment, replayed = false)
@@ -333,7 +287,7 @@ class ReferenceBackend(
         } catch (_: DateTimeParseException) {
             return SignatureCheck.Failed(RejectionReason.MALFORMED_TIMESTAMP)
         }
-        if (Duration.between(signedAt, receivedAt).abs() > ALLOWED_CLOCK_SKEW) {
+        if (Duration.between(signedAt, receivedAt).abs() > ReferenceSigningScheme.TIME_WINDOW) {
             return SignatureCheck.Failed(RejectionReason.OUTSIDE_TIME_WINDOW)
         }
         val key = keys[keyId] ?: return SignatureCheck.Failed(RejectionReason.UNKNOWN_KEY)
@@ -415,18 +369,16 @@ class ReferenceBackend(
      * it long enough to say so instead of calling it unknown.
      */
     private fun prune(now: Instant) {
-        outstanding.entries.removeAll { it.value.expiresAt.isBefore(now.minus(ALLOWED_CLOCK_SKEW)) }
-        used.entries.removeAll { it.value.isBefore(now.minus(CHALLENGE_LIFETIME.plus(ALLOWED_CLOCK_SKEW.multipliedBy(2)))) }
+        outstanding.entries.removeAll { it.value.expiresAt.isBefore(now.minus(ReferenceSigningScheme.TIME_WINDOW)) }
+        used.entries.removeAll { it.value.isBefore(now.minus(CHALLENGE_LIFETIME.plus(ReferenceSigningScheme.TIME_WINDOW.multipliedBy(2)))) }
     }
 
     private fun decodePublicKey(encoded: ByteArray): PublicKey? = runCatching {
         KeyFactory.getInstance(ReferenceSigningScheme.KEY_ALGORITHM).generatePublic(X509EncodedKeySpec(encoded))
     }.getOrNull()
 
-    companion object {
-        /** How far a request's timestamp may be from the moment it arrives. */
-        val ALLOWED_CLOCK_SKEW: Duration = Duration.ofMinutes(5)
-        private val CHALLENGE_LIFETIME: Duration = Duration.ofMinutes(5)
+    private companion object {
+        val CHALLENGE_LIFETIME: Duration = Duration.ofMinutes(5)
     }
 }
 

@@ -1,6 +1,6 @@
 package id.fatarc.trustgate.testing
 
-import id.fatarc.trustgate.core.attestation.SecurityLevel
+import id.fatarc.trustgate.domain.api.SecurityLevel
 import id.fatarc.trustgate.core.keys.DeviceKeyProvider
 import id.fatarc.trustgate.core.keys.GeneratedKey
 import id.fatarc.trustgate.core.keys.StepUpKeyInvalidatedException

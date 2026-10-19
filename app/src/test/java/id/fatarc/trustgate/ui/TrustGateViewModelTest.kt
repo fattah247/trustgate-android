@@ -1,9 +1,10 @@
 package id.fatarc.trustgate.ui
 
 import com.google.common.truth.Truth.assertThat
+import id.fatarc.trustgate.backend.ReferenceBackend
+import id.fatarc.trustgate.core.backend.BackendTransport
+import id.fatarc.trustgate.core.backend.InProcessTrustGateApi
 import id.fatarc.trustgate.core.backend.PaymentClient
-import id.fatarc.trustgate.core.backend.ReferenceBackend
-import id.fatarc.trustgate.core.backend.ReferenceTransport
 import id.fatarc.trustgate.core.crypto.PinningConfig
 import id.fatarc.trustgate.core.keys.KeyRegistrar
 import id.fatarc.trustgate.core.security.ConfirmationMethod
@@ -43,7 +44,8 @@ class TrustGateViewModelTest {
     private val collector = MutableSignalCollector(emptyList())
     private val keys = SoftwareKeyProvider()
     private val backend = ReferenceBackend()
-    private val transport = ReferenceTransport(backend)
+    private val api = InProcessTrustGateApi(backend)
+    private val transport = BackendTransport(api)
 
     @Before
     fun setUp() {
@@ -60,9 +62,9 @@ class TrustGateViewModelTest {
         eventRepository = events,
         secureValueStore = InMemorySecureValueStore(),
         requestSigner = ReferenceRequestSigner(),
-        backend = backend,
+        api = api,
         keyProvider = keys,
-        keyRegistrar = KeyRegistrar(keys, backend, dispatcher),
+        keyRegistrar = KeyRegistrar(keys, api, dispatcher),
         transport = transport,
         paymentClient = PaymentClient(transport, baseDelayMillis = 100),
         pinningConfig = PinningConfig(),

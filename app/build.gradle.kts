@@ -71,10 +71,14 @@ dependencies {
     // Step-up confirmation with the device's biometrics or screen lock for medium-risk actions.
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("androidx.fragment:fragment-ktx:1.8.5")
+    implementation(project(":domain"))
+    implementation(project(":backend"))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
+    testImplementation(testFixtures(project(":domain")))
+    testImplementation(testFixtures(project(":backend")))
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.google.truth:truth:1.4.4")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")

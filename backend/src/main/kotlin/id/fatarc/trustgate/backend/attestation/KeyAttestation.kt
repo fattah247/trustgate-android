@@ -1,24 +1,12 @@
-package id.fatarc.trustgate.core.attestation
+package id.fatarc.trustgate.backend.attestation
 
+import id.fatarc.trustgate.domain.api.AttestationSummary
+import id.fatarc.trustgate.domain.api.SecurityLevel
+import id.fatarc.trustgate.domain.api.VerifiedBootState
 import id.fatarc.trustgate.domain.signing.ReferenceSigningScheme
 import java.io.ByteArrayInputStream
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
-
-/** Where a key lives, as Android Keystore or its attestation reports it. */
-enum class SecurityLevel {
-    SOFTWARE,
-    TRUSTED_ENVIRONMENT,
-    STRONGBOX,
-    UNKNOWN,
-}
-
-enum class VerifiedBootState {
-    VERIFIED,
-    SELF_SIGNED,
-    UNVERIFIED,
-    FAILED,
-}
 
 data class RootOfTrust(
     val deviceLocked: Boolean,
@@ -67,6 +55,16 @@ data class AttestationReport(
         )
     }
 }
+
+fun AttestationReport.toSummary(): AttestationSummary = AttestationSummary(
+    attested = isAttested,
+    verified = isVerified,
+    chainLength = chainLength,
+    securityLevel = description?.keymasterSecurityLevel,
+    verifiedBootState = description?.rootOfTrust?.verifiedBootState,
+    deviceLocked = description?.rootOfTrust?.deviceLocked,
+    userAuthRequired = description?.userAuthRequired,
+)
 
 object KeyAttestationVerifier {
     const val KEY_DESCRIPTION_OID = "1.3.6.1.4.1.11129.2.1.17"

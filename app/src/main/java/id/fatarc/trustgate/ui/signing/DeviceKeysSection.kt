@@ -14,9 +14,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import id.fatarc.trustgate.core.attestation.AttestationReport
-import id.fatarc.trustgate.core.attestation.VerifiedBootState
 import id.fatarc.trustgate.core.keys.RegisteredKey
+import id.fatarc.trustgate.domain.api.AttestationSummary
+import id.fatarc.trustgate.domain.api.VerifiedBootState
 import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.ui.KeysUiState
 import id.fatarc.trustgate.ui.ListRow
@@ -47,7 +47,7 @@ fun DeviceKeysSection(keys: KeysUiState) {
                 if (stepUp != null) {
                     KeyRow(
                         key = stepUp,
-                        purpose = if (stepUp.attestation.description?.userAuthRequired == true) {
+                        purpose = if (stepUp.attestation.userAuthRequired == true) {
                             "Signs only after biometrics or the screen lock; the attestation proves it."
                         } else {
                             "Signs only after biometrics or the screen lock."
@@ -96,7 +96,7 @@ private fun KeyRow(
         supporting = "$purpose ${key.attestation.summary()}\n${key.keyId}",
         supportingColor = MaterialTheme.colorScheme.onSurfaceVariant,
         leadingIcon = key.role.icon(),
-        leadingTint = if (key.attestation.isVerified) Tone.POSITIVE.contentColor() else Tone.CAUTION.contentColor(),
+        leadingTint = if (key.attestation.verified) Tone.POSITIVE.contentColor() else Tone.CAUTION.contentColor(),
         trailing = { Trailing(key.protection.label()) },
     )
 }
@@ -110,34 +110,28 @@ private fun Trailing(text: String) {
     )
 }
 
-private fun AttestationReport.summary(): String {
-    val description = description ?: return "This device didn't attest the key."
-    if (!isVerified) {
-        val problem = when {
-            !chainSignaturesValid -> "its certificate chain doesn't verify"
-            !leafMatchesKey -> "it certifies another key"
-            else -> "it was made for another challenge"
-        }
-        return "The attestation didn't verify: $problem."
-    }
+private fun AttestationSummary.summary(): String {
+    if (!attested) return "This device didn't attest the key."
+    // The backend refuses attestations that don't verify, so a registered key's always does.
+    if (!verified) return "The attestation didn't fully verify."
     return buildString {
         append("Attestation verified (")
         append(chainLength)
-        append(" certificates, ")
-        append(description.attestationSecurityLevel.label().lowercase())
+        append(" certificates")
+        securityLevel?.let { append(", ").append(it.label().lowercase()) }
         append(")")
-        description.rootOfTrust?.let { root ->
+        verifiedBootState?.let { state ->
             append(", boot ")
             append(
-                when (root.verifiedBootState) {
+                when (state) {
                     VerifiedBootState.VERIFIED -> "verified"
                     VerifiedBootState.SELF_SIGNED -> "self-signed"
                     VerifiedBootState.UNVERIFIED -> "unverified"
                     VerifiedBootState.FAILED -> "failed"
                 },
             )
-            append(if (root.deviceLocked) ", bootloader locked" else ", bootloader unlocked")
         }
+        deviceLocked?.let { append(if (it) ", bootloader locked" else ", bootloader unlocked") }
         append(".")
     }
 }

@@ -1,7 +1,11 @@
-package id.fatarc.trustgate.core.backend
+package id.fatarc.trustgate.backend
 
 import com.google.common.truth.Truth.assertThat
 import id.fatarc.trustgate.domain.actiongate.SensitiveActionDecision
+import id.fatarc.trustgate.domain.api.PaymentAuthorization
+import id.fatarc.trustgate.domain.api.PaymentResponse
+import id.fatarc.trustgate.domain.api.RegistrationResult
+import id.fatarc.trustgate.domain.api.RequiredConfirmation
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.domain.signing.PaymentRequestPayload
@@ -202,7 +206,7 @@ class ReferenceBackendTest {
         registerDevice()
         val request = verificationRequest().asReceived()
 
-        val late = backend.authenticate(request, receivedAt = clock.now.plus(ReferenceBackend.ALLOWED_CLOCK_SKEW).plusSeconds(1))
+        val late = backend.authenticate(request, receivedAt = clock.now.plus(ReferenceSigningScheme.TIME_WINDOW).plusSeconds(1))
 
         assertThat(late).isEqualTo(VerificationResult.Rejected(RejectionReason.OUTSIDE_TIME_WINDOW))
     }
@@ -297,7 +301,7 @@ class ReferenceBackendTest {
     fun `a key with only its own self-signed certificate is registered as unattested`() {
         val result = backend.registerKey(KeyRole.DEVICE, device.encodedPublicKey, selfSignedChain(device), backend.issueRegistrationChallenge())
 
-        assertThat((result as RegistrationResult.Registered).attestation.isAttested).isFalse()
+        assertThat((result as RegistrationResult.Registered).attestation.attested).isFalse()
     }
 
     @Test
@@ -399,7 +403,7 @@ class ReferenceBackendTest {
 
         val result = backend.registerKey(KeyRole.DEVICE, device.encodedPublicKey, chain, challenge)
 
-        assertThat((result as RegistrationResult.Registered).attestation.isVerified).isTrue()
+        assertThat((result as RegistrationResult.Registered).attestation.verified).isTrue()
     }
 
     @Test

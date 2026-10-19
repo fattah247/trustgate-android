@@ -1,7 +1,7 @@
 package id.fatarc.trustgate.core.keys
 
-import id.fatarc.trustgate.core.attestation.AttestationReport
-import id.fatarc.trustgate.core.attestation.SecurityLevel
+import id.fatarc.trustgate.domain.api.AttestationSummary
+import id.fatarc.trustgate.domain.api.SecurityLevel
 import id.fatarc.trustgate.domain.signing.KeyRole
 import java.security.Signature
 
@@ -19,7 +19,7 @@ data class RegisteredKey(
     val role: KeyRole,
     val keyId: String,
     val protection: SecurityLevel,
-    val attestation: AttestationReport,
+    val attestation: AttestationSummary,
 )
 
 sealed interface StepUpSupport {

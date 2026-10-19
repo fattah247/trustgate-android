@@ -1,9 +1,9 @@
 package id.fatarc.trustgate.core.security
 
-import id.fatarc.trustgate.core.backend.PaymentResponse
 import id.fatarc.trustgate.core.backend.SubmitOutcome
 import id.fatarc.trustgate.core.keys.RegisteredKey
 import id.fatarc.trustgate.domain.actiongate.SensitiveActionDecision
+import id.fatarc.trustgate.domain.api.PaymentResponse
 import id.fatarc.trustgate.domain.events.SecurityEvent
 import id.fatarc.trustgate.domain.events.SecurityEventRepository
 import id.fatarc.trustgate.domain.events.SecurityEventType
@@ -107,8 +107,8 @@ class TrustGateSecurityService(
     suspend fun recordKeyRegistered(key: RegisteredKey) {
         val attestation = key.attestation
         val (status, summary) = when {
-            attestation.isVerified -> "verified" to ", with a verified attestation."
-            attestation.isAttested -> "unverified" to ", but its attestation didn't fully verify."
+            attestation.verified -> "verified" to ", with a verified attestation."
+            attestation.attested -> "unverified" to ", but its attestation didn't fully verify."
             else -> "none" to " without attestation."
         }
         eventRepository.record(
@@ -128,10 +128,8 @@ class TrustGateSecurityService(
                     put("role", key.role.name.lowercase())
                     put("protection", key.protection.name.lowercase())
                     put("attestation", status)
-                    attestation.description?.rootOfTrust?.let { root ->
-                        put("verifiedBoot", root.verifiedBootState.name.lowercase())
-                        put("bootloaderLocked", root.deviceLocked.toString())
-                    }
+                    attestation.verifiedBootState?.let { put("verifiedBoot", it.name.lowercase()) }
+                    attestation.deviceLocked?.let { put("bootloaderLocked", it.toString()) }
                 },
             ),
         )

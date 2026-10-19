@@ -1,6 +1,9 @@
 package id.fatarc.trustgate.core.backend
 
 import com.google.common.truth.Truth.assertThat
+import id.fatarc.trustgate.backend.ReferenceBackend
+import id.fatarc.trustgate.domain.api.PaymentAuthorization
+import id.fatarc.trustgate.domain.api.PaymentResponse
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.domain.signing.PaymentRequestPayload
@@ -20,7 +23,7 @@ import kotlin.random.Random
 class PaymentClientTest {
     private val clock = MutableClock()
     private val backend = ReferenceBackend(clock = clock)
-    private val transport = ReferenceTransport(backend)
+    private val transport = BackendTransport(InProcessTrustGateApi(backend))
     private val device = TestKey()
 
     private fun signedPayment(): ReceivedRequest {

@@ -10,7 +10,7 @@ import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG
-import id.fatarc.trustgate.core.attestation.SecurityLevel
+import id.fatarc.trustgate.domain.api.SecurityLevel
 import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.domain.signing.ReferenceSigningScheme
 import java.security.GeneralSecurityException

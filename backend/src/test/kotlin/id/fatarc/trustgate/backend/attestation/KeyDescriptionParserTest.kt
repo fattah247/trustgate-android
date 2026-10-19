@@ -1,4 +1,4 @@
-package id.fatarc.trustgate.core.attestation
+package id.fatarc.trustgate.backend.attestation
 
 import com.google.common.truth.Truth.assertThat
 import id.fatarc.trustgate.testing.DerWriter.explicit
@@ -6,6 +6,8 @@ import id.fatarc.trustgate.testing.DerWriter.integer
 import id.fatarc.trustgate.testing.DerWriter.tlv
 import id.fatarc.trustgate.testing.keyDescription
 import id.fatarc.trustgate.testing.rootOfTrust
+import id.fatarc.trustgate.domain.api.SecurityLevel
+import id.fatarc.trustgate.domain.api.VerifiedBootState
 import org.junit.Test
 
 class KeyDescriptionParserTest {

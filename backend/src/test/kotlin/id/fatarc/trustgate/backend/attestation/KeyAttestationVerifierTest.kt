@@ -1,4 +1,4 @@
-package id.fatarc.trustgate.core.attestation
+package id.fatarc.trustgate.backend.attestation
 
 import com.google.common.truth.Truth.assertThat
 import id.fatarc.trustgate.testing.TestAttestation

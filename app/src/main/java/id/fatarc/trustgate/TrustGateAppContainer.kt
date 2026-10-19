@@ -1,9 +1,11 @@
 package id.fatarc.trustgate
 
 import android.content.Context
+import id.fatarc.trustgate.backend.ReferenceBackend
+import id.fatarc.trustgate.core.backend.BackendTransport
+import id.fatarc.trustgate.core.backend.InProcessTrustGateApi
 import id.fatarc.trustgate.core.backend.PaymentClient
-import id.fatarc.trustgate.core.backend.ReferenceBackend
-import id.fatarc.trustgate.core.backend.ReferenceTransport
+import id.fatarc.trustgate.core.backend.TrustGateApi
 import id.fatarc.trustgate.core.crypto.PinnedHttpClientFactory
 import id.fatarc.trustgate.core.crypto.PinningConfig
 import id.fatarc.trustgate.core.keys.AndroidDeviceKeyProvider
@@ -26,10 +28,10 @@ class TrustGateAppContainer(
     val requestSigner = ReferenceRequestSigner()
 
     // One backend for the app's lifetime, so registered keys and spent challenges persist across screens.
-    val backend = ReferenceBackend()
+    val api: TrustGateApi = InProcessTrustGateApi(ReferenceBackend())
     val keyProvider: DeviceKeyProvider = AndroidDeviceKeyProvider(context)
-    val keyRegistrar = KeyRegistrar(keyProvider, backend)
-    val transport = ReferenceTransport(backend)
+    val keyRegistrar = KeyRegistrar(keyProvider, api)
+    val transport = BackendTransport(api)
     val paymentClient = PaymentClient(transport)
 
     val pinningConfig = PinningConfig()
