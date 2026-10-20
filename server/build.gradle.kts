@@ -90,6 +90,32 @@ fun debugSignerDigest(): String? {
     return MessageDigest.getInstance("SHA-256").digest(certificate.encoded).joinToString("") { "%02x".format(it) }
 }
 
+/*
+ * The attack lab: requests a client with the protocol and a phone of its own could send, aimed at
+ * the server. AttackLabTest runs it in process on every build; :server:attackLab runs it against
+ * the server started by :server:run.
+ */
+val attackLab: SourceSet by sourceSets.creating {
+    compileClasspath += sourceSets.main.get().output
+    runtimeClasspath += sourceSets.main.get().output
+}
+configurations[attackLab.implementationConfigurationName].extendsFrom(configurations.implementation.get())
+configurations[attackLab.runtimeOnlyConfigurationName].extendsFrom(configurations.runtimeOnly.get())
+
+dependencies {
+    "attackLabImplementation"(testFixtures(project(":backend")))
+    testImplementation(attackLab.output)
+}
+
+tasks.register<JavaExec>("attackLab") {
+    group = "verification"
+    description = "Runs the attack lab against the server started by :server:run."
+    dependsOn(generateDevCertificate)
+    classpath = attackLab.runtimeClasspath
+    mainClass.set("id.fatarc.trustgate.attacklab.AttackLabMainKt")
+    args("https://127.0.0.1:8443", devTlsDir.get().file("server.pem").asFile.path)
+}
+
 tasks.named<JavaExec>("run") {
     dependsOn(generateDevCertificate)
     val dir = devTlsDir.get().asFile
