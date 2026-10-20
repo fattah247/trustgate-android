@@ -1,50 +1,57 @@
 # Threat Model
 
-## What the app protects
+## What TrustGate protects
 
-TrustGate Android protects a payment-like action from being treated the same on every device state, makes sure only this device can sign its requests, and keeps a retried payment from being charged twice. It also protects a few reference local values from plain-text storage.
+A payment from a phone. The server should charge it only when the request really comes from a phone it registered, the phone and the app are what they claim to be, nobody has changed or replayed the request, and nothing suggests the person is being talked into it. When the network drops an answer, the payment must still be charged exactly once.
 
-## Attacker assumptions
+## Who attacks, and how
 
-- The attacker may run the app on a rooted device.
-- The attacker may use an emulator for testing or tampering.
-- The attacker may attach a debugger or a hooking framework to inspect and change runtime behavior.
-- The attacker may capture, replay, edit, or delay requests in transit.
-- The attacker may decompile the app.
-- The network may drop responses, so the client can't always tell whether a payment went through.
+- **A scripted attacker with the protocol.** Knows every route and message, has a phone and a copy of the app, and can send any request. The [attack lab](ATTACK_LAB.md) plays this part against the real server.
+- **Someone in the middle.** Can see, hold back, replay, or edit traffic, or present their own certificate.
+- **A repackager.** Decompiles the app, changes it, and signs it with another key.
+- **A phone the attacker controls.** Rooted, running an emulator, or instrumented, so the app's own checks may report whatever the attacker likes.
+- **A scammer on the line.** Talks the real person into paying, often while sharing their screen or after getting them to install a remote-help app. The person passes every authentication check themselves.
+- **Malware on the phone.** Reads or drives the screen through accessibility access or overlays.
+- **Someone with database access.** Edits what the server recorded after the fact.
 
-## Threats modeled
+## Threats, and what stops them
 
-- Rooted-device signals such as `su` paths, root packages, and test-keys builds
-- Emulator signals from device build strings
-- Debugger-attached and debuggable-build signals
-- Sensitive action attempts on a high-risk device, refused by the backend before any challenge is issued
-- A device that turns high risk while the person is confirming, caught by a second check before signing
-- Faked confirmation: hooking the biometric prompt's success callback yields no step-up signature, because the step-up key only signs after real authentication
-- A step-up key that doesn't actually require authentication, refused when its attestation says so
-- A step-up key slipped in from elsewhere, or a step-up key removed to downgrade the device to a tap, both refused unless the device key signs the change
-- Attestation chains that can't be read or that certify another key, refused at registration
-- Key extraction from the APK: there is no shared secret to extract; private keys stay in Keystore
-- Replayed, edited, and held-back requests, refused through one-time challenges, signature checks, and the timestamp window
-- Double charging after a lost response or a captured request, prevented by idempotency keys
-- Sensitive values in backups, screenshots, screen recordings, or the recents view
-- Tapjacking through overlay windows on sensitive screens
+| Threat | Stopped by |
+| --- | --- |
+| Replaying a payment or any signed request | One-time server challenges, spent in the same transaction as the charge; a repeated payment returns the original result without charging again |
+| Editing a request after signing | The signature covers method, path, timestamp, nonce, key ID, idempotency key, confirmation, and the body's hash |
+| Holding a request back and sending it later | A five-minute window around arrival |
+| Signing with an unregistered key, or another phone's challenge | Keys must be registered; each challenge is bound to one phone and one purpose |
+| A repackaged app | The key attestation names the package and signing certificate; Play Integrity names the certificate and whether Google Play recognises the build |
+| A key imported from outside Keystore, or held in software | The attestation's origin and security level, refused by the strict policy |
+| A rooted phone or an unlocked bootloader | Verified boot and bootloader state from the attestation, checked against Google's pinned roots and revocation list; Play Integrity's device verdict |
+| Lying on-phone checks | The server scores signals from its own catalog and weighs the attestation and Play Integrity, which the phone can't forge |
+| A device report or integrity token for something else | The report is signed by the device key; the integrity token's request hash must be the report's hash |
+| Skipping the confirmation | Medium risk needs the step-up key's signature, which only exists after real authentication; faking the prompt's callback produces nothing the server accepts |
+| A step-up key slipped in, or removed to downgrade the phone | Adding or removing one needs the device key's signature |
+| Remote-help and screen-sharing scams | Play Integrity's app-access verdict blocks while an app can control the screen; an active call, a non-tool accessibility service, or recording of the app's window asks for confirmation; each shows a scam warning |
+| Overlays and tapjacking | Other apps' overlays are hidden on payment screens (Android 12+), and taps through one are ignored |
+| Draining an account quickly | A per-phone cap on payments in a short window and on the daily amount, enforced when charging; new phones confirm every payment and may only pay small amounts for a day |
+| Resetting limits with a new key | Limits follow the phone across key rotation; a phone that starts over as new gets the new-phone rules |
+| Taking over a phone by rotating its key | Only the current key can vouch for its successor, and the successor must be attested at least as well |
+| A stolen or compromised phone | The phone can remove itself, and an operator can revoke it; a revoked key is never accepted again |
+| Flooding key registration or payments | Per-address rate limits on both route groups |
+| Old, vulnerable app versions | A minimum version, checked at registration and at payment |
+| A man in the middle | HTTPS only, pinned to the server's key |
+| Editing the server's records | A hash-chained audit log, written with each change, checked at startup and on demand |
+| Double charging after a lost response | Idempotency keys scoped to the phone, with retries that resend the identical request |
+| Leaking stored values | AES-GCM under a Keystore key; backups and transfers excluded; capture blocked on payment screens |
 
-## Threats not modeled
+## What isn't covered
 
-- Advanced hooking frameworks that also defeat the backend's view of the device, which needs a Play Integrity verdict to address
-- Kernel-level compromise
-- Real fraud detection
-- Real payment processor compromise
-- A compromised server, or key revocation and rotation
+- **A phone that defeats hardware attestation and Play Integrity.** A leaked attestation key not yet on Google's revocation list, or a flaw in a phone's secure hardware, would let a phone pass as genuine. That's Google's and the phone maker's to fix; the strict policy narrows the window by requiring the revocation list, strong integrity, and recent patches.
+- **A scam the person goes through with.** Warnings, confirmations, and limits slow it down; they can't stop someone who keeps saying yes. That needs fraud analytics across accounts, cooling-off periods on new payees, and confirmation of payee, which belong to a real payment service.
+- **Accounts.** A phone is identified by its key. Tying a phone to a person, and approving a new phone from an existing one, belongs to the host app's login.
+- **A compromised server.** The server is the authority. The audit chain shows edits made to its database, but someone in full control of the running server could also write the log.
 
 ## Trust boundaries
 
-- Device runtime: low trust, because the person or an attacker can modify it
-- App process: medium trust, useful for collecting signals but not an authority
-- Android Keystore: higher trust; private keys can be used but not read, and in secure hardware they're out of reach of the app process
-- Backend boundary: simulated by an in-process reference backend that verifies with registered public keys; there is no live server in this repo
-
-## Why client-side checks are only signals
-
-The app can inspect its own environment, but it cannot prove that the environment is honest. A determined attacker can hide or bypass many checks. That is why TrustGate Android treats them as evidence for a server-side decision, binds sensitive operations to keys the device can't export, and claims no absolute enforcement.
+- **The phone and the app process:** untrusted. Useful for collecting evidence and for the person's view, never for the decision.
+- **Android Keystore and secure hardware:** trusted to keep keys unexportable and to attest truthfully, as vouched for by Google's roots.
+- **Google Play Integrity:** trusted for its verdict, checked on the server against the request it was issued for.
+- **The server:** the authority for every decision, key, and charge.

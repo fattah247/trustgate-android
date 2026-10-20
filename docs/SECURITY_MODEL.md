@@ -1,86 +1,111 @@
 # Security Model
 
-## Risk signals
+TrustGate splits the work the way a payment app should: the phone collects evidence and holds keys, and the server decides. Everything below is enforced by the server unless it says otherwise.
 
-The app collects a small set of root, emulator, debugger, and installer-source signals. Each signal has an id, severity, detection flag, and short explanation.
+## Policies
 
-## Risk scoring
+The server enforces one of two policies, chosen together for keys and devices so it can't be strict about one and lax about the other.
 
-Detected signals contribute to a simple score:
+| | Strict (the server's default) | Development (`./gradlew :server:run`) |
+| --- | --- | --- |
+| Attestation roots | Google's, pinned | Any |
+| Revocation list | Required, refreshed every 6 hours | Checked when available |
+| Keys | Hardware-backed, generated in Keystore, attested | Software and unattested keys allowed |
+| Boot | Verified, bootloader locked | Not required |
+| Play Integrity | Required; strong integrity or a confirmation | Made-up answers accepted, and labelled |
+| Demo phones | Refused | Accepted, and labelled |
+| Payment limits | 5 per 10 minutes, IDR 10,000,000 a day, new phones confirm and stay under IDR 1,000,000 for a day | 3 a minute, same daily cap, no new-phone rules |
+| Key age | Replaced after 90 days | No limit |
+| Minimum patch level, app version | Configurable | Off |
 
-- Low score with no serious findings maps to `LOW`
-- A moderate score or multiple weaker findings maps to `MEDIUM`
-- A severe signal or high total score maps to `HIGH`
+## Device evidence
 
-This scoring is intentionally readable. It is not a hidden fraud model. Each report carries the rule that produced its level, so the app can explain a verdict rather than only show it. Simulated profiles go through the same scorer, so a profile can't claim a level its own signals don't produce.
+Before a payment the app checks the phone and signs what it found with its device key:
 
-## Device keys
+| Signal | Severity |
+| --- | --- |
+| Root binary on the path, root manager installed | High |
+| Test build of Android, system files writable | Medium |
+| Emulator | Medium |
+| Debugger attached | High |
+| Debug build of the app | Medium |
+| Not installed from an app store | Low |
+| On a call | Medium |
+| Accessibility service that isn't an accessibility tool | Medium |
+| The app's window being recorded or shared (Android 15+) | Medium |
 
-At launch the app generates two P-256 key pairs in Android Keystore, in StrongBox when the device has it:
+Only signal IDs and whether each was found travel to the server. The server scores them from its own catalog, so a tampered app can't lower a severity, and ignores IDs it doesn't know: low adds 1 point, medium 2, high 3. Two points or more asks for confirmation; five or more, or any high signal, blocks. The last three signals also mark the payment as a likely scam.
 
-- The **device key** signs ordinary requests.
-- The **step-up key** can only sign right after the person authenticates with strong biometrics or their screen lock. Each signature needs a fresh authentication, and adding a fingerprint or removing the lock destroys the key. On Android 10 and lower the key is bound to biometrics only. Devices without a screen lock don't get a step-up key.
+The evidence carries the time it was collected. The server refuses evidence signed by any key but the phone's, unreadable evidence, and evidence outside the five-minute window.
 
-Each key is generated with a one-time attestation challenge from the backend. The backend registers the key from its attestation certificate chain and checks that:
+## Play Integrity
 
-- each certificate is signed by the next, and the last signs itself,
-- the first certificate certifies the very key being registered,
-- the attestation carries the challenge the backend issued,
-- for a step-up key, the attestation shows the key requires user authentication.
+The app requests a Standard Play Integrity token with the SHA-256 of the exact evidence it signed as the request hash, and sends both. The server has Google decode the token with a service account and refuses the verdict unless it was issued for this evidence, this package, within the time window, for a build Google Play recognises, signed with the app's certificate, on a phone that meets device integrity. It then reads the optional verdicts, when they're turned on in Play Console:
 
-A key presented without a chain, or with one that can't be read or fails any of these checks, is refused. A device that can't attest at all returns only the key's own self-signed certificate; that key is registered and reported as unattested. The backend records where each key lives, the verified boot state, and whether the bootloader is locked. A production backend would also pin Google's attestation roots and check the revocation list.
+| Verdict | Outcome | What the person is told |
+| --- | --- | --- |
+| An unknown app can capture or control the screen | Block, scam warning | Close apps you don't recognise (Play's dialog) |
+| A remote-control app from Google Play is running | Block, scam warning | Close apps that can see or control the screen (Play's dialog) |
+| A screen recorder, or an unknown app drawing over the screen | Confirm, scam warning | Close them (Play's dialog) |
+| Play Protect found dangerous apps | Block | Open Play Protect and remove them |
+| Play Protect found harmful apps, or is turned off | Confirm | Turn on Play Protect |
+| The copy wasn't installed from Google Play | Confirm | Install it from Google Play (Play's dialog) |
+| Unusually many integrity requests from the phone | Confirm | |
+| Only basic integrity, under the strict policy | Confirm | |
+| App version below the minimum | Block | Update from Google Play |
 
-The step-up key is tied to its device key. Registering one needs the device key's signature over the registration challenge and the new key's ID. When the device key is attested, the step-up key must be attested by the same root. Removing a step-up key, for example after the screen lock is turned off, also needs a device-key signature. Without that, anyone who knew a device's key ID could quietly downgrade it from step-up to a tap. The app checks that both keys still exist in Keystore before each payment and registers replacements when the system has deleted them.
+Only a fix for the worst problem is offered, and none when something else blocks the payment anyway.
 
-## Sensitive action gate
+## Keys
 
-The reference backend, not the app, decides from the device's risk evidence:
+Each phone has two P-256 keys in Android Keystore, in StrongBox when there is one:
 
-- `LOW`: allow; the request must be signed by the device key
-- `MEDIUM`: require confirmation; the request must be signed by the step-up key, or carry a signed tap confirmation when the device has no step-up key
-- `HIGH`: block; no challenge is issued, so nothing can be signed
+- The **device key** signs device evidence and ordinary payments.
+- The **step-up key** signs only right after the person authenticates with strong biometrics or the screen lock, once per authentication. Adding a fingerprint or removing the lock destroys it. Phones without a screen lock don't get one.
 
-With live checks, the device is assessed again each time the action runs and again after a confirmation, so a debugger or root tool attached in between still blocks the action. Returning to the app also re-checks a verdict older than 30 seconds; that quiet check is logged only when the level or the set of detected signals changed.
+Each key is generated with a one-time challenge from the server, which registers it from its attestation certificate chain. The chain must verify up to a trusted root, certify this exact key, carry the challenge, and name the app's package and signing certificate. The strict policy also checks Google's revocation list and requires the key to be generated (not imported) in secure hardware on a verified, locked phone. A step-up key must be vouched for by the device key, attested by the same root, and need authentication for every use.
 
-Confirmation unlocks the step-up key through `BiometricPrompt` with a `CryptoObject`. The person's authentication is what makes the signature possible, so hooking the prompt's success callback gets an attacker nothing the backend will accept.
+**Lifecycle.**
 
-Simulated `LOW`, `MEDIUM`, and `HIGH` profiles replace live checks everywhere in the app until you switch back to live. Every decision becomes a local security event, including a confirmation the person cancels.
+- *Rotation:* the device key vouches for its successor, which must be attested at least as well. The phone keeps its identity, enrolment date, and payment history; the old key and its step-up key are revoked.
+- *Removal:* the phone can ask the server to forget it, and an operator can revoke a phone by either of its keys.
+- *Recovery:* a revoked or unknown key is refused everywhere, and the app sets the phone up again as a new phone.
 
-## Request signing and verification
+The app remembers which keys are registered, so it keeps one identity across launches.
 
-A signed request covers the method, path, timestamp, nonce, key ID, idempotency key, confirmation, and the SHA-256 hash of the canonical body, joined one per line. Header values containing a line break are refused so they can't shift the signed fields. The app and the backend share one definition of this scheme.
+## The gate
 
-The backend checks, in order: the signing headers, the timestamp format, a five-minute window around its arrival time, that the key is registered, and the ECDSA signature. Only then does it look at the nonce, which must be a one-time challenge it issued to this device for this purpose and hasn't expired. A challenge issued for a payment can't be spent on a verification, or the other way around. Checking the challenge last means a forged request can't use up a genuine request's challenge. For payments, an unreadable body or a zero amount is refused before the challenge is spent too.
+From the evidence, the verdict, and the phone's history, the server decides:
 
-## Payments and retries
+- **Allow:** the payment is signed by the device key.
+- **Confirm:** the payment must be signed by the step-up key, unlocked through `BiometricPrompt` with a `CryptoObject`. Faking the prompt's callback produces no signature. A phone without a screen lock confirms with a tap that's signed into the request, a weaker path the log names.
+- **Block:** no challenge is issued, so nothing can be signed.
 
-Every payment carries an idempotency key, scoped to the device that sent it. The backend charges at most once per key:
+Every answer carries the server's reasons, each with its own severity, so the app can show what the server saw. The app checks the phone again after a confirmation and stops if it has turned high risk.
 
-- The same signed request sent again, for example after a timeout, gets the original payment back, even though its challenge was already spent.
-- The same key with a different body is refused as an idempotency conflict.
+## Requests
 
-The client resends the identical request after a lost response, up to three attempts, with exponential backoff and jitter. If every response is lost it reports the outcome as unknown, and a later retry with the same key is still safe. Once a payment is sent, the app finishes its retries and logs the outcome even if the person leaves the screen, so a charge never goes unrecorded. The Sensitive action screen has a switch that loses the first response on purpose to show this.
+A signed request covers the method, path, timestamp, nonce, key ID, idempotency key, confirmation, and the SHA-256 of the canonical body, one per line; header values with line breaks are refused. The server checks, in order: the headers, the timestamp format and a five-minute window, that the key is registered and not revoked, and the ECDSA signature. Only then does it look at the nonce, which must be a live challenge it issued to this phone for this purpose. Checking the challenge last means a forged request can't use up a genuine one. Signed bodies over 16 KB, unreadable payment bodies, and zero amounts are refused.
 
-## Secure storage
+## Payments
 
-The app stores a reference session token, the last assessed risk level, and a display preference. Each value is encrypted with AES-256-GCM under a key held in Android Keystore, with the value's name as associated data, so a ciphertext copied into another slot fails to decrypt. A value that fails authentication, for example after a restore onto another device, is removed and reported rather than shown wrong. Other Keystore errors may be temporary, so they are reported and the value is kept.
+- **Idempotency.** Every payment carries an idempotency key scoped to the phone. The same signed request sent again gets the original payment back without a second charge; the same key with a different body is refused. The app resends the identical request after a lost response, up to three attempts with exponential backoff and jitter, and finishes and logs a payment even if the person leaves the screen.
+- **Limits.** Counted per phone across key rotations and enforced when charging, so authorizations collected in advance can't add up past them. Authorization mentions a limit already reached, so the person isn't asked to confirm a payment that would be refused.
+- **Rate limits.** Each client address may make 20 requests a minute to the key routes and 60 to the payment routes.
 
-This replaces Jetpack Security's `EncryptedSharedPreferences`, which Google deprecated. Values that library wrote are migrated on first run. Its file is deleted once the migrated values are saved, or straight away if the old library can't read it.
+## Audit log
 
-## Platform hardening
+The server appends an entry for every registration, refusal, rotation, removal, revocation, decision, request check, and payment, in the same SQLite transaction as the change. Each entry's hash covers its fields, length-prefixed, and the previous entry's hash. The server checks the chain from the start at launch and logs the head hash outside the database; operators can check it at any time through `/admin/audit`. Changing, removing, or reordering an entry breaks the chain from that entry on.
 
-- Backups are off, and data extraction rules keep stored values and the audit log out of cloud backup and device-to-device transfer, since their keys can't follow them.
-- Sensitive screens, and the tap confirmation dialog, ignore touches that arrive through another app's overlay. In release builds they also set `FLAG_SECURE`, which blocks screenshots, screen recording, and the recents thumbnail. Debug builds allow capture for documentation and tests.
-- Release builds are shrunk and obfuscated with R8. That raises the cost of reverse engineering; it doesn't prevent it.
+Admin routes are served only when an operator token is configured, and compare it in constant time.
 
-## Event logging
+## Transport
 
-The app keeps a local event log so the person can see why an action was allowed, escalated, cancelled, blocked, signed, or charged, and which keys were registered. It keeps the latest 150 events, can be cleared after a confirmation, and can be shared as a JSON file.
+The server serves HTTPS only, on the loopback interface by default. The app's network security config is generated per build and disallows cleartext: debug builds trust only the development server's own certificate for `10.0.2.2` and pin its key; release builds pin the keys given as Gradle properties. The development certificate, its password, and the operator token are generated on first run and never committed.
 
-## Certificate pinning
+## On the phone
 
-The repo includes a disabled-by-default OkHttp certificate pinning example. It is present to discuss pinning tradeoffs, not to force a fragile network setup into the reference build.
-
-## Layered defense, not absolute security
-
-TrustGate Android uses layers: risk signals, a server-side decision, hardware-backed keys, cryptographic step-up, replay protection, idempotent payments, local encryption, and audit events. None of them is enough on its own, and none of them makes the client authoritative.
+- **Storage:** values are sealed with AES-256-GCM under a Keystore key, with each value's name as associated data. A value that fails authentication is removed and reported. Backups are off and data extraction rules exclude stored values and the log.
+- **Screens:** payment screens hide other apps' overlays (Android 12+) and ignore taps through them. Release builds also block screenshots, recording, and the recents thumbnail. The confirmation dialog filters obscured touches in its own window.
+- **Code:** release builds are shrunk and obfuscated with R8. Nothing secret ships in the app.
+- **Log:** the app's activity log explains each decision to the person, keeps the latest 150 events on the phone, and can be shared or cleared. The server's audit log is the record that counts.
