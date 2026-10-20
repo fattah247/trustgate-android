@@ -62,4 +62,10 @@ enum class RejectionReason {
 
     /** The signature checks out, but the body isn't a payment the backend can process. */
     MALFORMED_BODY,
+
+    /** This phone has made as many payments as the backend allows in a short time. */
+    TOO_MANY_PAYMENTS,
+
+    /** The payment would take this phone past its daily amount, or past what a new phone may pay. */
+    OVER_LIMIT,
 }

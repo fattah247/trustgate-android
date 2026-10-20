@@ -9,6 +9,7 @@ class BackendPolicy(
     val name: String,
     val attestation: AttestationPolicy,
     val risk: RiskPolicy,
+    val limits: PaymentLimits = PaymentLimits.NONE,
 ) {
     companion object {
         /**
@@ -23,6 +24,7 @@ class BackendPolicy(
             minimumOsPatchLevel: Int? = null,
             minimumAppVersionCode: Long? = null,
             requireStrongIntegrity: Boolean = true,
+            limits: PaymentLimits = PaymentLimits.strict(),
         ) = BackendPolicy(
             name = "strict",
             attestation = AttestationPolicy.strict(packageName, signingCertificateDigests, minimumOsPatchLevel, minimumAppVersionCode),
@@ -36,6 +38,7 @@ class BackendPolicy(
                 requireStrongIntegrity = requireStrongIntegrity,
                 minimumAppVersionCode = minimumAppVersionCode,
             ),
+            limits = limits,
         )
 
         /** Relaxes what emulators can't provide: hardware attestation, Google Play, and real risk signals. */
@@ -50,6 +53,7 @@ class BackendPolicy(
                 requireIntegrityVerdict = false,
                 acceptMockVerdicts = true,
             ),
+            limits = PaymentLimits.development(),
         )
     }
 }

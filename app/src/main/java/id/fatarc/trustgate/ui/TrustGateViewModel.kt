@@ -5,8 +5,10 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import id.fatarc.trustgate.BuildConfig
 import id.fatarc.trustgate.TrustGateAppContainer
+import id.fatarc.trustgate.core.backend.BackendRequestException
 import id.fatarc.trustgate.core.backend.BackendTransport
 import id.fatarc.trustgate.core.backend.PaymentClient
+import id.fatarc.trustgate.core.backend.SubmitOutcome
 import id.fatarc.trustgate.core.backend.TrustGateApi
 import id.fatarc.trustgate.core.integrity.IntegrityTokenSource
 import id.fatarc.trustgate.core.integrity.MockIntegrityTokenSource
@@ -22,8 +24,8 @@ import id.fatarc.trustgate.core.storage.SecureValueNames
 import id.fatarc.trustgate.core.storage.SecureValueStore
 import id.fatarc.trustgate.core.storage.SecurityStorageSnapshot
 import id.fatarc.trustgate.data.securityevent.AuditLogExport
-import id.fatarc.trustgate.domain.api.DeviceEvidence
 import id.fatarc.trustgate.domain.api.DecisionReason
+import id.fatarc.trustgate.domain.api.DeviceEvidence
 import id.fatarc.trustgate.domain.api.PaymentAuthorization
 import id.fatarc.trustgate.domain.api.PaymentAuthorizationRequest
 import id.fatarc.trustgate.domain.api.PaymentResponse
@@ -39,7 +41,14 @@ import id.fatarc.trustgate.domain.signing.ReferencePayment
 import id.fatarc.trustgate.domain.signing.ReferenceRequestSigner
 import id.fatarc.trustgate.domain.signing.ReferenceSigningScheme
 import id.fatarc.trustgate.domain.signing.SignedRequest
+import id.fatarc.trustgate.domain.signing.VerificationResult
 import id.fatarc.trustgate.domain.signing.asReceived
+import id.fatarc.trustgate.ui.signing.shortLabel
+import java.io.IOException
+import java.security.Signature
+import java.time.Duration
+import java.time.Instant
+import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -54,11 +63,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import java.io.IOException
-import java.security.Signature
-import java.time.Duration
-import java.time.Instant
-import java.util.UUID
 
 class TrustGateViewModel(
     private val securityService: TrustGateSecurityService,
@@ -155,7 +159,9 @@ class TrustGateViewModel(
             _uiState.update { current -> current.copy(payment = current.payment.copy(stage = PaymentStage.ASKING_SERVER)) }
             val authorization = runCatching { withContext(ioDispatcher) { api.authorizePayment(authorizationRequest(report, keys.device.keyId)) } }
                 .rethrowCancellation()
-                .getOrElse { return@launch abandonAction("Couldn't reach the server.") }
+                .getOrElse { error ->
+                    return@launch abandonAction(if (error is BackendRequestException) error.message.orEmpty() else "Couldn't reach the server.")
+                }
             // The backend's own level counts from here on; the device's report was only evidence.
             val level = authorization.level
             runCatching { securityService.recordGateDecision(level, authorization.decision, authorization.reasons) }.rethrowCancellation()
@@ -313,8 +319,8 @@ class TrustGateViewModel(
     }
 
     /**
-     * Signs a fresh request against a verification challenge and attacks the server with it:
-     * sends it twice, edits it after signing, or delivers a copy dated past the time window.
+     * Attacks the server the way [test] describes and records how it answered. Every test runs
+     * against the real server with this phone's real keys.
      */
     fun runLabTest(test: LabTest) {
         if (_uiState.value.lab.running != null) return
@@ -322,31 +328,7 @@ class TrustGateViewModel(
         viewModelScope.launch {
             val outcome = runCatching {
                 val keys = checkNotNull(ensureKeys()) { _uiState.value.keys.errorMessage ?: "This phone's key isn't ready." }
-                val request = withContext(ioDispatcher) {
-                    val prepared = requestSigner.prepare(
-                        payload = ReferencePayment.payload(),
-                        nonce = api.verificationChallenge(keys.device.keyId),
-                        keyId = keys.device.keyId,
-                        timestamp = Instant.now().toString(),
-                    )
-                    prepared.signedWith(keyProvider.signWithDeviceKey(prepared.signingInput))
-                }
-                publishSigned(request, forProtectedAction = false)
-                val sends = when (test) {
-                    LabTest.REPLAY -> listOf(request.asReceived(), request.asReceived())
-                    // The same canonical encoding with a bigger amount, as someone editing the body in transit would send.
-                    LabTest.CHANGED_AMOUNT -> listOf(
-                        request.asReceived().copy(
-                            body = requestSigner.canonicalize(request.payload.copy(amountMinor = request.payload.amountMinor * 10)),
-                        ),
-                    )
-                    // A server can't be told when a request arrived, so send a copy signed just past the
-                    // window, which is exactly how a held-back request looks when it finally lands.
-                    LabTest.SENT_LATE -> listOf(heldBackCopy(request).asReceived())
-                }
-                sends.map { sent -> withContext(ioDispatcher) { api.checkRequest(sent) } }.onEach { result ->
-                    runCatching { securityService.recordVerification(request, result, test.metadataValue) }.rethrowCancellation()
-                }
+                if (test == LabTest.RAPID_PAYMENTS) rapidPayments(keys.device.keyId) else requestAttack(test, keys.device.keyId)
             }.rethrowCancellation()
             _uiState.update { current ->
                 current.copy(
@@ -358,6 +340,78 @@ class TrustGateViewModel(
             }
             outcome.exceptionOrNull()?.let { showMessage(if (it is IOException) "Couldn't reach the server." else it.message ?: "The test couldn't run.") }
         }
+    }
+
+    /**
+     * Signs a fresh request against a verification challenge and attacks the server with it:
+     * sends it twice, edits it after signing, or delivers a copy dated past the time window.
+     */
+    private suspend fun requestAttack(test: LabTest, deviceKeyId: String): LabResult {
+        val request = withContext(ioDispatcher) {
+            val prepared = requestSigner.prepare(
+                payload = ReferencePayment.payload(),
+                nonce = api.verificationChallenge(deviceKeyId),
+                keyId = deviceKeyId,
+                timestamp = Instant.now().toString(),
+            )
+            prepared.signedWith(keyProvider.signWithDeviceKey(prepared.signingInput))
+        }
+        publishSigned(request, forProtectedAction = false)
+        val sends = when (test) {
+            LabTest.REPLAY -> listOf(request.asReceived(), request.asReceived())
+            // The same canonical encoding with a bigger amount, as someone editing the body in transit would send.
+            LabTest.CHANGED_AMOUNT -> listOf(
+                request.asReceived().copy(
+                    body = requestSigner.canonicalize(request.payload.copy(amountMinor = request.payload.amountMinor * 10)),
+                ),
+            )
+            // A server can't be told when a request arrived, so send a copy signed just past the
+            // window, which is exactly how a held-back request looks when it finally lands.
+            LabTest.SENT_LATE -> listOf(heldBackCopy(request).asReceived())
+            LabTest.RAPID_PAYMENTS -> error("Not a request attack.")
+        }
+        val results = sends.map { sent -> withContext(ioDispatcher) { api.checkRequest(sent) } }.onEach { result ->
+            runCatching { securityService.recordVerification(request, result, test.metadataValue) }.rethrowCancellation()
+        }
+        return when (val last = results.last()) {
+            VerificationResult.Accepted -> LabResult(stopped = false, summary = "The server accepted it", sends = results)
+            is VerificationResult.Rejected -> LabResult(stopped = true, summary = "Refused: ${last.reason.shortLabel()}", sends = results)
+        }
+    }
+
+    /**
+     * Collects several payment authorizations first, then pays with each as fast as possible, the way
+     * a script draining an account would. A clean demo report keeps the phone's own signals out of it.
+     */
+    private suspend fun rapidPayments(deviceKeyId: String): LabResult {
+        val authorizations = List(RAPID_PAYMENT_TRIES) {
+            withContext(ioDispatcher) { api.authorizePayment(authorizationRequest(scenarioRiskReport(DeviceRiskLevel.LOW), deviceKeyId, simulated = true)) }
+        }
+        var paid = 0
+        for (authorization in authorizations) {
+            if (authorization !is PaymentAuthorization.Proceed || authorization.confirmation != RequiredConfirmation.NONE) {
+                val why = authorization.reasons.firstOrNull { it.isProblem }?.text ?: "needs confirming"
+                return LabResult(stopped = true, summary = "$paid paid, then stopped: ${why.replaceFirstChar { it.lowercase() }}")
+            }
+            val signed = withContext(ioDispatcher) {
+                val prepared = requestSigner.prepare(
+                    payload = ReferencePayment.payload(),
+                    nonce = authorization.nonce,
+                    keyId = deviceKeyId,
+                    timestamp = Instant.now().toString(),
+                    idempotencyKey = newIdempotencyKey(),
+                )
+                prepared.signedWith(keyProvider.signWithDeviceKey(prepared.signingInput))
+            }
+            publishSigned(signed, forProtectedAction = false)
+            val response = withContext(ioDispatcher) { api.submitPayment(signed.asReceived()) }
+            runCatching { securityService.recordPayment(signed, SubmitOutcome(response, attempts = 1, lostResponses = 0)) }.rethrowCancellation()
+            when (response) {
+                is PaymentResponse.Processed -> paid++
+                is PaymentResponse.Rejected -> return LabResult(stopped = true, summary = "$paid paid, then refused: ${response.reason.shortLabel()}")
+            }
+        }
+        return LabResult(stopped = false, summary = "All $RAPID_PAYMENT_TRIES went through")
     }
 
     private fun heldBackCopy(request: SignedRequest): SignedRequest {
@@ -554,14 +608,18 @@ class TrustGateViewModel(
      * What the device reports about itself, signed by its key, with a Play Integrity token bound to
      * that exact report. Without a token the backend weighs the signals alone.
      */
-    private suspend fun authorizationRequest(report: DeviceRiskReport, deviceKeyId: String): PaymentAuthorizationRequest {
+    private suspend fun authorizationRequest(
+        report: DeviceRiskReport,
+        deviceKeyId: String,
+        simulated: Boolean = _uiState.value.risk.source == RiskReportSource.SCENARIO,
+    ): PaymentAuthorizationRequest {
         val evidence = TrustGateJson.encodeToString(
             DeviceEvidence.serializer(),
             DeviceEvidence(
                 deviceKeyId = deviceKeyId,
                 collectedAt = Instant.now().toString(),
                 signals = report.signals.map { ReportedSignal(it.id, it.detected) },
-                simulated = _uiState.value.risk.source == RiskReportSource.SCENARIO,
+                simulated = simulated,
             ),
         )
         val integrityToken = runCatching { integrityTokens.token(ReferenceSigningScheme.sha256Hex(evidence)) }.rethrowCancellation().getOrNull()
@@ -713,3 +771,6 @@ class TrustGateViewModelFactory(
         ) as T
     }
 }
+
+/** More than any server's per-window payment limit, so the Lab always runs into it. */
+private const val RAPID_PAYMENT_TRIES = 6

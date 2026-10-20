@@ -318,6 +318,8 @@ class TrustGateSecurityService(
         RejectionReason.CONFIRMATION_REQUIRED -> "you didn't confirm it"
         RejectionReason.IDEMPOTENCY_CONFLICT -> "its charge-once key belongs to a different payment"
         RejectionReason.MALFORMED_BODY -> "it couldn't be read"
+        RejectionReason.TOO_MANY_PAYMENTS -> "this phone made too many payments in a short time"
+        RejectionReason.OVER_LIMIT -> "it would go over this phone's limit"
     }
 
     private fun DeviceRiskLevel.demoPhone(): String = when (this) {

@@ -2,9 +2,12 @@ package id.fatarc.trustgate.server
 
 import com.google.common.truth.Truth.assertThat
 import id.fatarc.trustgate.backend.ReferenceBackend
+import id.fatarc.trustgate.domain.api.Payment
 import id.fatarc.trustgate.domain.api.PaymentAuthorization
 import id.fatarc.trustgate.domain.api.PaymentResponse
 import id.fatarc.trustgate.domain.api.RegistrationResult
+import id.fatarc.trustgate.domain.api.RequiredConfirmation
+import id.fatarc.trustgate.domain.api.TrustGateJson
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.domain.signing.ReferencePayment
@@ -17,6 +20,7 @@ import id.fatarc.trustgate.testing.authorize
 import id.fatarc.trustgate.testing.developmentPolicy
 import id.fatarc.trustgate.testing.selfSignedChain
 import java.io.File
+import java.sql.DriverManager
 import org.junit.After
 import org.junit.Test
 
@@ -65,5 +69,31 @@ class SqliteBackendStoreTest {
         before.authenticate(request)
 
         assertThat(backend().authenticate(request).toString()).contains(RejectionReason.CHALLENGE_REUSED.name)
+    }
+
+    @Test
+    fun `a database from before ledger times were stored is brought up to date with its payments kept`() {
+        val payment = Payment("PAY-1", 125_000, "IDR", KeyRole.DEVICE, RequiredConfirmation.NONE, clock.now.toString())
+        DriverManager.getConnection("jdbc:sqlite:${file.path}").use { old ->
+            old.createStatement().use {
+                it.execute(
+                    """CREATE TABLE ledger (
+                        device_key_id TEXT NOT NULL, idempotency_key TEXT NOT NULL, fingerprint TEXT NOT NULL, payment TEXT NOT NULL,
+                        PRIMARY KEY (device_key_id, idempotency_key))""",
+                )
+            }
+            old.prepareStatement("INSERT INTO ledger VALUES (?, ?, ?, ?)").use {
+                it.setString(1, device.keyId)
+                it.setString(2, "idem-old")
+                it.setString(3, "fingerprint")
+                it.setString(4, TrustGateJson.encodeToString(Payment.serializer(), payment))
+                it.executeUpdate()
+            }
+        }
+
+        val store = SqliteBackendStore(file).also(stores::add)
+
+        assertThat(store.paymentsSince(device.keyId, clock.now.minusSeconds(60))).containsExactly(payment)
+        assertThat(store.paymentsSince(device.keyId, clock.now.plusSeconds(1))).isEmpty()
     }
 }

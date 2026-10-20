@@ -37,7 +37,14 @@ class RiskPolicy(
         val reasons: List<DecisionReason>,
         val remedy: Remedy? = null,
         val scamWarning: Boolean = false,
-    )
+    ) {
+        /** Adds what the backend knows beyond the report, such as the phone's payment history. */
+        operator fun plus(extra: List<DecisionReason>): Assessment {
+            val combined = (listOf(level) + extra.map { it.level }).max()
+            // A fix for the report's worst problem no longer clears the payment if history is worse.
+            return Assessment(combined, reasons + extra, remedy.takeIf { combined == level }, scamWarning)
+        }
+    }
 
     /** [requestHash] is the SHA-256 of the evidence as it was signed, which the verdict must be bound to. */
     fun assess(evidence: DeviceEvidence, requestHash: String, integrityToken: String?, at: Instant): Assessment {

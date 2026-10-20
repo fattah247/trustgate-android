@@ -66,4 +66,7 @@ interface BackendStore {
     fun putLedgerEntry(deviceKeyId: String, idempotencyKey: String, entry: LedgerEntry)
 
     fun ledgerSize(): Int
+
+    /** What [deviceKeyId]'s phone was charged at or after [since], oldest first. */
+    fun paymentsSince(deviceKeyId: String, since: Instant): List<Payment>
 }

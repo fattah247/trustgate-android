@@ -275,7 +275,7 @@ class TrustGateViewModelTest {
         viewModel.runLabTest(LabTest.REPLAY)
         advanceUntilIdle()
 
-        assertThat(viewModel.uiState.value.lab.results[LabTest.REPLAY]).containsExactly(
+        assertThat(viewModel.uiState.value.lab.results[LabTest.REPLAY]?.sends).containsExactly(
             VerificationResult.Accepted,
             VerificationResult.Rejected(RejectionReason.CHALLENGE_REUSED),
         ).inOrder()
@@ -292,8 +292,9 @@ class TrustGateViewModelTest {
         advanceUntilIdle()
 
         val results = viewModel.uiState.value.lab.results
-        assertThat(results[LabTest.CHANGED_AMOUNT]).containsExactly(VerificationResult.Rejected(RejectionReason.SIGNATURE_MISMATCH))
-        assertThat(results[LabTest.SENT_LATE]).containsExactly(VerificationResult.Rejected(RejectionReason.OUTSIDE_TIME_WINDOW))
+        assertThat(results[LabTest.CHANGED_AMOUNT]?.sends).containsExactly(VerificationResult.Rejected(RejectionReason.SIGNATURE_MISMATCH))
+        assertThat(results[LabTest.SENT_LATE]?.sends).containsExactly(VerificationResult.Rejected(RejectionReason.OUTSIDE_TIME_WINDOW))
+        assertThat(results.values.all { it.stopped }).isTrue()
         assertThat(viewModel.uiState.value.lab.running).isNull()
     }
 
@@ -310,6 +311,19 @@ class TrustGateViewModelTest {
         assertThat(payment.scamWarning).isTrue()
         assertThat(payment.reasons.filter { it.isProblem }.map { it.text }).containsExactly("Remote-control app running")
         assertThat(backend.chargedPayments).isEqualTo(0)
+    }
+
+    @Test
+    fun `paying many times at once runs into the server's payment limit`() = runTest(dispatcher) {
+        val viewModel = start()
+
+        viewModel.runLabTest(LabTest.RAPID_PAYMENTS)
+        advanceUntilIdle()
+
+        val result = viewModel.uiState.value.lab.results[LabTest.RAPID_PAYMENTS]
+        assertThat(result?.stopped).isTrue()
+        assertThat(result?.summary).isEqualTo("3 paid, then refused: too many payments")
+        assertThat(backend.chargedPayments).isEqualTo(3)
     }
 
     @Test

@@ -38,4 +38,6 @@ fun RejectionReason.shortLabel(): String = when (this) {
     RejectionReason.CONFIRMATION_REQUIRED -> "not confirmed"
     RejectionReason.IDEMPOTENCY_CONFLICT -> "charge-once key reused"
     RejectionReason.MALFORMED_BODY -> "unreadable"
+    RejectionReason.TOO_MANY_PAYMENTS -> "too many payments"
+    RejectionReason.OVER_LIMIT -> "over the limit"
 }

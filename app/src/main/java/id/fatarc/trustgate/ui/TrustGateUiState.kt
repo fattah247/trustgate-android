@@ -116,17 +116,24 @@ sealed interface PaymentDecisionState {
     data class Cancelled(val riskLevel: DeviceRiskLevel, val problem: String? = null) : PaymentDecisionState
 }
 
-/** Attacks on the server the Lab runs against a freshly signed request. */
+/** Attacks the Lab runs against the real server. */
 enum class LabTest(val metadataValue: String) {
     REPLAY("replay"),
     CHANGED_AMOUNT("changed-amount"),
     SENT_LATE("delivered-late"),
+    RAPID_PAYMENTS("rapid-payments"),
 }
+
+/** How a Lab attack ended: [stopped] when the server refused it. [sends] holds each answer to a request attack. */
+data class LabResult(
+    val stopped: Boolean,
+    val summary: String,
+    val sends: List<VerificationResult> = emptyList(),
+)
 
 data class LabUiState(
     val running: LabTest? = null,
-    /** What the server answered to each send of a test, in order. */
-    val results: Map<LabTest, List<VerificationResult>> = emptyMap(),
+    val results: Map<LabTest, LabResult> = emptyMap(),
 )
 
 data class StorageUiState(

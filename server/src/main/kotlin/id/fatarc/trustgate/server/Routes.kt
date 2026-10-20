@@ -29,21 +29,46 @@ import io.ktor.server.application.log
 import io.ktor.server.plugins.BadRequestException
 import io.ktor.server.plugins.callloging.CallLogging
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.server.plugins.ratelimit.RateLimit
+import io.ktor.server.plugins.ratelimit.RateLimitName
+import io.ktor.server.plugins.ratelimit.rateLimit
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.contentLength
 import io.ktor.server.request.receive
 import io.ktor.server.request.receiveText
 import io.ktor.server.response.respond
+import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import java.util.Base64
+import kotlin.time.Duration.Companion.minutes
 
 /** Signed bodies are small payment payloads; anything bigger isn't one. */
 private const val MAX_SIGNED_BODY_BYTES = 16 * 1024
 
-fun Application.trustGateModule(backend: ReferenceBackend, health: ServerHealth) {
+/**
+ * How many requests one client address may make per minute. Key registration is the cheapest
+ * thing to flood, so it gets the lower limit; payments have their own per-phone limits as well.
+ */
+class RequestLimits(val keysPerMinute: Int = 20, val paymentsPerMinute: Int = 60)
+
+private val KEYS = RateLimitName("keys")
+private val PAYMENTS = RateLimitName("payments")
+
+fun Application.trustGateModule(backend: ReferenceBackend, health: ServerHealth, limits: RequestLimits = RequestLimits()) {
     install(ContentNegotiation) { json(TrustGateJson) }
+    install(RateLimit) {
+        // By connection address, not a forwarded header a client could set to anything.
+        register(KEYS) {
+            rateLimiter(limit = limits.keysPerMinute, refillPeriod = 1.minutes)
+            requestKey { call -> call.request.local.remoteAddress }
+        }
+        register(PAYMENTS) {
+            rateLimiter(limit = limits.paymentsPerMinute, refillPeriod = 1.minutes)
+            requestKey { call -> call.request.local.remoteAddress }
+        }
+    }
     // Method, path, and status only: bodies and signing headers stay out of the log.
     install(CallLogging)
     install(StatusPages) {
@@ -58,53 +83,60 @@ fun Application.trustGateModule(backend: ReferenceBackend, health: ServerHealth)
     routing {
         get(TrustGateRoutes.HEALTH) { call.respond(health) }
 
-        post(TrustGateRoutes.REGISTRATION_CHALLENGE) {
-            val request = call.receive<RegistrationChallengeRequest>()
-            call.respond(RegistrationChallenge(base64(backend.issueRegistrationChallenge(request.deviceKeyId))))
-        }
+        rateLimit(KEYS) { keyRoutes(backend) }
+        rateLimit(PAYMENTS) { paymentRoutes(backend) }
+    }
+}
 
-        post(TrustGateRoutes.KEYS) {
-            val request = call.receive<KeyRegistrationRequest>()
-            val result = backend.registerKey(
-                role = request.role,
-                encodedPublicKey = bytes(request.publicKey),
-                attestationChain = request.certificateChain.map(::bytes),
-                challenge = bytes(request.challenge),
-                deviceKeyId = request.deviceKeyId,
-                deviceKeyProof = request.deviceKeyProof?.let(::bytes),
-            )
-            call.respond<RegistrationResult>(result)
-        }
+private fun Route.keyRoutes(backend: ReferenceBackend) {
+    post(TrustGateRoutes.REGISTRATION_CHALLENGE) {
+        val request = call.receive<RegistrationChallengeRequest>()
+        call.respond(RegistrationChallenge(base64(backend.issueRegistrationChallenge(request.deviceKeyId))))
+    }
 
-        post(TrustGateRoutes.REMOVE_STEP_UP) {
-            val request = call.receive<StepUpRemovalRequest>()
-            val removed = backend.removeStepUpKey(request.deviceKeyId, bytes(request.challenge), bytes(request.deviceKeyProof))
-            call.respond(StepUpRemoval(removed))
-        }
+    post(TrustGateRoutes.KEYS) {
+        val request = call.receive<KeyRegistrationRequest>()
+        val result = backend.registerKey(
+            role = request.role,
+            encodedPublicKey = bytes(request.publicKey),
+            attestationChain = request.certificateChain.map(::bytes),
+            challenge = bytes(request.challenge),
+            deviceKeyId = request.deviceKeyId,
+            deviceKeyProof = request.deviceKeyProof?.let(::bytes),
+        )
+        call.respond<RegistrationResult>(result)
+    }
 
-        post(TrustGateRoutes.VERIFICATION_CHALLENGE) {
-            val request = call.receive<VerificationChallengeRequest>()
-            call.respond(VerificationChallenge(backend.issueVerificationChallenge(request.deviceKeyId)))
-        }
+    post(TrustGateRoutes.REMOVE_STEP_UP) {
+        val request = call.receive<StepUpRemovalRequest>()
+        val removed = backend.removeStepUpKey(request.deviceKeyId, bytes(request.challenge), bytes(request.deviceKeyProof))
+        call.respond(StepUpRemoval(removed))
+    }
+}
 
-        post(TrustGateRoutes.AUTHORIZE_PAYMENT) {
-            val request = call.receive<PaymentAuthorizationRequest>()
-            val authorization = backend.authorizePayment(
-                deviceKeyId = request.deviceKeyId,
-                evidence = request.evidence,
-                signature = bytes(request.signature),
-                integrityToken = request.integrityToken,
-            )
-            call.respond<PaymentAuthorization>(authorization)
-        }
+private fun Route.paymentRoutes(backend: ReferenceBackend) {
+    post(TrustGateRoutes.VERIFICATION_CHALLENGE) {
+        val request = call.receive<VerificationChallengeRequest>()
+        call.respond(VerificationChallenge(backend.issueVerificationChallenge(request.deviceKeyId)))
+    }
 
-        post(TrustGateRoutes.PAYMENT) {
-            call.respond<PaymentResponse>(backend.submitPayment(call.signedRequest()))
-        }
+    post(TrustGateRoutes.AUTHORIZE_PAYMENT) {
+        val request = call.receive<PaymentAuthorizationRequest>()
+        val authorization = backend.authorizePayment(
+            deviceKeyId = request.deviceKeyId,
+            evidence = request.evidence,
+            signature = bytes(request.signature),
+            integrityToken = request.integrityToken,
+        )
+        call.respond<PaymentAuthorization>(authorization)
+    }
 
-        post(TrustGateRoutes.PAYMENT_CHECK) {
-            call.respond<VerificationResult>(backend.authenticate(call.signedRequest()))
-        }
+    post(TrustGateRoutes.PAYMENT) {
+        call.respond<PaymentResponse>(backend.submitPayment(call.signedRequest()))
+    }
+
+    post(TrustGateRoutes.PAYMENT_CHECK) {
+        call.respond<VerificationResult>(backend.authenticate(call.signedRequest()))
     }
 }
 

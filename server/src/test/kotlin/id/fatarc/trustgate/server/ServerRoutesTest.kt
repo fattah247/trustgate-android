@@ -46,8 +46,8 @@ class ServerRoutesTest {
     private val device = TestKey()
     private val signer = ReferenceRequestSigner()
 
-    private fun serve(test: suspend ApplicationTestBuilder.() -> Unit) = testApplication {
-        application { trustGateModule(backend, ServerHealth(status = "ok", policy = "development")) }
+    private fun serve(limits: RequestLimits = RequestLimits(), test: suspend ApplicationTestBuilder.() -> Unit) = testApplication {
+        application { trustGateModule(backend, ServerHealth(status = "ok", policy = "development"), limits) }
         test()
     }
 
@@ -155,4 +155,17 @@ class ServerRoutesTest {
     }
 
     private fun base64(value: ByteArray): String = Base64.getEncoder().encodeToString(value)
+
+    @Test
+    fun `a client asking for too many registration challenges is told to slow down`() = serve(RequestLimits(keysPerMinute = 3)) {
+        val statuses = List(4) {
+            client.post(TrustGateRoutes.REGISTRATION_CHALLENGE) {
+                contentType(ContentType.Application.Json)
+                setBody(TrustGateJson.encodeToString(RegistrationChallengeRequest(null)))
+            }.status
+        }
+
+        assertThat(statuses.take(3)).containsExactly(HttpStatusCode.OK, HttpStatusCode.OK, HttpStatusCode.OK)
+        assertThat(statuses.last()).isEqualTo(HttpStatusCode.TooManyRequests)
+    }
 }

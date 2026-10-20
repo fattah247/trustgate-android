@@ -102,6 +102,7 @@ class HttpTrustGateApi(
                 response.isSuccessful -> text
                 // A server error may have happened after processing, so it's retried like a lost response.
                 response.code >= 500 -> throw IOException("The TrustGate server answered ${response.code}.")
+                response.code == 429 -> throw BackendRequestException("Too many tries. Wait a minute and try again.")
                 else -> throw BackendRequestException("The TrustGate server refused the request (${response.code}).")
             }
         }

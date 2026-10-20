@@ -26,7 +26,34 @@ class SqliteBackendStore(file: File) : BackendStore, AutoCloseable {
             SCHEMA.forEach(statement::execute)
         }
         connection.autoCommit = false
+        migrate()
         connection.commit()
+    }
+
+    /** Brings a database written by an older server up to date, one numbered step at a time. */
+    private fun migrate() {
+        val version = query("PRAGMA user_version") { it.getInt(1) } ?: 0
+        MIGRATIONS.drop(version).forEach { step -> step(this) }
+        connection.createStatement().use { it.execute("PRAGMA user_version = ${MIGRATIONS.size}") }
+    }
+
+    /** Version 1: when and how much each payment charged, indexed, so limits don't read the whole ledger. */
+    private fun addLedgerTimes() {
+        update("ALTER TABLE ledger ADD COLUMN charged_at INTEGER NOT NULL DEFAULT 0")
+        update("ALTER TABLE ledger ADD COLUMN amount_minor INTEGER NOT NULL DEFAULT 0")
+        val rows = connection.prepareStatement("SELECT device_key_id, idempotency_key, payment FROM ledger").use { statement ->
+            statement.executeQuery().use { rows ->
+                buildList { while (rows.next()) add(Triple(rows.getString(1), rows.getString(2), rows.getString(3))) }
+            }
+        }
+        rows.forEach { (device, idempotencyKey, json) ->
+            val payment = TrustGateJson.decodeFromString(Payment.serializer(), json)
+            update(
+                "UPDATE ledger SET charged_at = ?, amount_minor = ? WHERE device_key_id = ? AND idempotency_key = ?",
+                Instant.parse(payment.processedAt).toEpochMilli(), payment.amountMinor, device, idempotencyKey,
+            )
+        }
+        update("CREATE INDEX IF NOT EXISTS ledger_by_device_time ON ledger (device_key_id, charged_at)")
     }
 
     @Synchronized
@@ -107,11 +134,25 @@ class SqliteBackendStore(file: File) : BackendStore, AutoCloseable {
     ) { row -> LedgerEntry(row.getString(1), TrustGateJson.decodeFromString(Payment.serializer(), row.getString(2))) }
 
     override fun putLedgerEntry(deviceKeyId: String, idempotencyKey: String, entry: LedgerEntry) = update(
-        "INSERT INTO ledger VALUES (?, ?, ?, ?)",
-        deviceKeyId, idempotencyKey, entry.fingerprint, TrustGateJson.encodeToString(Payment.serializer(), entry.payment),
+        "INSERT INTO ledger (device_key_id, idempotency_key, fingerprint, payment, charged_at, amount_minor) VALUES (?, ?, ?, ?, ?, ?)",
+        deviceKeyId,
+        idempotencyKey,
+        entry.fingerprint,
+        TrustGateJson.encodeToString(Payment.serializer(), entry.payment),
+        Instant.parse(entry.payment.processedAt).toEpochMilli(),
+        entry.payment.amountMinor,
     )
 
     override fun ledgerSize(): Int = query("SELECT COUNT(*) FROM ledger") { it.getInt(1) } ?: 0
+
+    override fun paymentsSince(deviceKeyId: String, since: Instant): List<Payment> =
+        connection.prepareStatement("SELECT payment FROM ledger WHERE device_key_id = ? AND charged_at >= ? ORDER BY charged_at").use { statement ->
+            statement.setString(1, deviceKeyId)
+            statement.setLong(2, since.toEpochMilli())
+            statement.executeQuery().use { rows ->
+                buildList { while (rows.next()) add(TrustGateJson.decodeFromString(Payment.serializer(), rows.getString(1))) }
+            }
+        }
 
     override fun close() = connection.close()
 
@@ -129,6 +170,12 @@ class SqliteBackendStore(file: File) : BackendStore, AutoCloseable {
     }
 
     private companion object {
+        /** Each step after the original schema, in order; the database's user_version counts those applied. */
+        val MIGRATIONS: List<(SqliteBackendStore) -> Unit> = listOf(
+            SqliteBackendStore::addLedgerTimes,
+        )
+
+        /** The original schema; [MIGRATIONS] build on it. */
         val SCHEMA = listOf(
             """CREATE TABLE IF NOT EXISTS keys (
                 key_id TEXT PRIMARY KEY, role TEXT NOT NULL, public_key BLOB NOT NULL, device_key_id TEXT NOT NULL,

@@ -1,5 +1,6 @@
 package id.fatarc.trustgate.backend.store
 
+import id.fatarc.trustgate.domain.api.Payment
 import java.time.Instant
 
 /** Keeps everything in memory, for tests and for running the backend inside one process. */
@@ -54,4 +55,11 @@ class InMemoryBackendStore : BackendStore {
     }
 
     override fun ledgerSize(): Int = ledger.size
+
+    override fun paymentsSince(deviceKeyId: String, since: Instant): List<Payment> = ledger
+        .filterKeys { (device, _) -> device == deviceKeyId }
+        .values
+        .map { it.payment }
+        .filter { !Instant.parse(it.processedAt).isBefore(since) }
+        .sortedBy { Instant.parse(it.processedAt) }
 }

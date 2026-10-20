@@ -300,7 +300,7 @@ private fun PaymentUiState.result(amount: String, phoneHasProblems: Boolean): Pa
     return when (latestDecision) {
         is PaymentDecisionState.Blocked -> PayResult(
             title = "Payment blocked",
-            body = "This phone isn't safe enough to pay from. Nothing was charged.",
+            body = "The server stopped it. Nothing was charged.",
             tone = Tone.CRITICAL,
             icon = Icons.Outlined.Block,
             offerChecks = phoneHasProblems,

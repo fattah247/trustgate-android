@@ -206,7 +206,40 @@ class ReferenceBackend(
             return@transaction refuse("Report out of date")
         }
         val assessment = policy.risk.assess(report, ReferenceSigningScheme.sha256Hex(evidence), integrityToken, receivedAt)
-        authorization(deviceKeyId, assessment)
+        authorization(deviceKeyId, assessment + history(key, receivedAt))
+    }
+
+    /**
+     * What the phone's record adds to its report. Charging enforces the limits whatever this says;
+     * saying it here first spares the person a confirmation that would end in a refusal.
+     */
+    private fun history(deviceKey: StoredKey, at: Instant): List<DecisionReason> = buildList {
+        val limits = policy.limits
+        if (store.paymentsSince(deviceKey.keyId, at.minus(limits.window)).size >= limits.maxPayments) {
+            add(DecisionReason("Too many payments. Try again in a few minutes", DeviceRiskLevel.HIGH))
+        }
+        if (isNewPhone(deviceKey, at)) add(DecisionReason("New phone", DeviceRiskLevel.MEDIUM))
+    }
+
+    private fun isNewPhone(deviceKey: StoredKey, at: Instant): Boolean =
+        policy.limits.newPhonePeriod?.let { period -> deviceKey.registeredAt.isAfter(at.minus(period)) } == true
+
+    /** Why charging [amountMinor] now would break this phone's limits, or null when it wouldn't. */
+    private fun limitBroken(deviceKeyId: String, amountMinor: Long, at: Instant): RejectionReason? {
+        val limits = policy.limits
+        if (store.paymentsSince(deviceKeyId, at.minus(limits.window)).size >= limits.maxPayments) {
+            return RejectionReason.TOO_MANY_PAYMENTS
+        }
+        val daily = limits.dailyAmountMinor
+        if (daily != null && store.paymentsSince(deviceKeyId, at.minus(Duration.ofDays(1))).sumOf { it.amountMinor } + amountMinor > daily) {
+            return RejectionReason.OVER_LIMIT
+        }
+        val newPhoneCap = limits.newPhoneAmountMinor
+        val deviceKey = store.key(deviceKeyId)
+        if (newPhoneCap != null && deviceKey != null && isNewPhone(deviceKey, at) && amountMinor > newPhoneCap) {
+            return RejectionReason.OVER_LIMIT
+        }
+        return null
     }
 
     private fun authorization(deviceKeyId: String, assessment: RiskPolicy.Assessment): PaymentAuthorization {
@@ -297,6 +330,8 @@ class ReferenceBackend(
         }
         if (!confirmed) return PaymentResponse.Rejected(RejectionReason.CONFIRMATION_REQUIRED)
         store.spendChallenge(nonce, receivedAt)
+        // Checked when charging, so authorizations collected in advance can't add up past the limits.
+        limitBroken(key.deviceKeyId, payload.amountMinor, receivedAt)?.let { return PaymentResponse.Rejected(it) }
 
         val payment = Payment(
             id = "PAY-" + ReferenceSigningScheme.sha256Hex(nonce + idempotencyKey).take(8).uppercase(),

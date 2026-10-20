@@ -20,6 +20,7 @@ import androidx.compose.material.icons.outlined.Receipt
 import androidx.compose.material.icons.outlined.Repeat
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Shop
+import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
@@ -43,7 +44,7 @@ import id.fatarc.trustgate.core.keys.RegisteredKey
 import id.fatarc.trustgate.domain.api.VerifiedBootState
 import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.domain.signing.ReferenceSigningScheme
-import id.fatarc.trustgate.domain.signing.VerificationResult
+import id.fatarc.trustgate.ui.LabResult
 import id.fatarc.trustgate.ui.LabTest
 import id.fatarc.trustgate.ui.ListRow
 import id.fatarc.trustgate.ui.Pill
@@ -61,7 +62,6 @@ import id.fatarc.trustgate.ui.label
 import id.fatarc.trustgate.ui.maskToken
 import id.fatarc.trustgate.ui.signing.icon
 import id.fatarc.trustgate.ui.signing.label
-import id.fatarc.trustgate.ui.signing.shortLabel
 import id.fatarc.trustgate.ui.signing.title
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -97,7 +97,7 @@ fun LabScreen(
                         test = test,
                         running = uiState.lab.running == test,
                         enabled = uiState.lab.running == null,
-                        outcomes = uiState.lab.results[test],
+                        result = uiState.lab.results[test],
                         onRun = { onRunTest(test) },
                     )
                     if (index != LabTest.entries.lastIndex) RowDivider(startIndent = TrustGateSpacing.listIconInset)
@@ -270,28 +270,23 @@ private fun LabTestRow(
     test: LabTest,
     running: Boolean,
     enabled: Boolean,
-    outcomes: List<VerificationResult>?,
+    result: LabResult?,
     onRun: () -> Unit,
 ) {
-    val last = outcomes?.lastOrNull()
     ListRow(
         headline = test.title,
-        supporting = when (last) {
-            null -> test.description
-            VerificationResult.Accepted -> "The server accepted it"
-            is VerificationResult.Rejected -> "Refused: ${last.reason.shortLabel()}"
-        },
+        supporting = result?.summary ?: test.description,
         leadingIcon = test.icon,
         trailing = {
             when {
                 running -> CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
-                last is VerificationResult.Rejected -> Pill(text = "Stopped", tone = Tone.POSITIVE)
-                last == VerificationResult.Accepted -> Pill(text = "Got through", tone = Tone.CRITICAL)
+                result?.stopped == true -> Pill(text = "Stopped", tone = Tone.POSITIVE)
+                result != null -> Pill(text = "Got through", tone = Tone.CRITICAL)
                 else -> FilledTonalButton(onClick = onRun, enabled = enabled) { Text("Run") }
             }
         },
         onClickLabel = "Run the test",
-        onClick = if (enabled && !running && last != null) onRun else null,
+        onClick = if (enabled && !running && result != null) onRun else null,
     )
 }
 
@@ -300,6 +295,7 @@ private val LabTest.title: String
         LabTest.REPLAY -> "Replay a request"
         LabTest.CHANGED_AMOUNT -> "Change the amount"
         LabTest.SENT_LATE -> "Send it late"
+        LabTest.RAPID_PAYMENTS -> "Pay 6 times at once"
     }
 
 private val LabTest.description: String
@@ -307,6 +303,7 @@ private val LabTest.description: String
         LabTest.REPLAY -> "Send one signed request twice"
         LabTest.CHANGED_AMOUNT -> "Edit a signed request on its way"
         LabTest.SENT_LATE -> "Deliver it after ${ReferenceSigningScheme.TIME_WINDOW.toMinutes()} minutes"
+        LabTest.RAPID_PAYMENTS -> "Drain the account faster than the limit allows"
     }
 
 private val LabTest.icon: ImageVector
@@ -314,6 +311,7 @@ private val LabTest.icon: ImageVector
         LabTest.REPLAY -> Icons.Outlined.Repeat
         LabTest.CHANGED_AMOUNT -> Icons.Outlined.ContentCut
         LabTest.SENT_LATE -> Icons.Outlined.Schedule
+        LabTest.RAPID_PAYMENTS -> Icons.Outlined.Speed
     }
 
 @Composable
