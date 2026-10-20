@@ -2,20 +2,24 @@
 
 Capture screenshots only from a working app, a real command run, or a live GitHub page.
 
-| Filename | Screen or command | What it proves | Capture notes |
+Phone screenshots come from the emulator in light theme at font scale 1.0, with System UI demo mode for a clean status bar, using the debug build against `./gradlew :server:run`. Start from a cleared app (`adb shell pm clear id.fatarc.trustgate`) so Activity holds only this session. The development server allows 3 payments a minute, so wait a minute after the Lab's rapid test before paying again.
+
+| Filename | Screen or command | What it shows | Capture notes |
 | --- | --- | --- | --- |
-| `docs/screenshots/01-app-overview.png` | Overview | The app launches and shows current trust state, recent audit history, and bottom navigation | Cold-start the app on the emulator and capture the overview without system dialogs on screen. |
-| `docs/screenshots/02-device-risk-details.png` | Signals | The verdict is explained with its rule and point breakdown | Open the `Signals` tab and capture the summary and the `Why` section. |
-| `docs/screenshots/03-sensitive-action-allowed.png` | Sensitive action on `Low` | Low-risk profile allows the protected action, and a lost response is retried without charging twice | Open `Gate`, choose `Sensitive action`, select `Low` under `Risk source`, turn on `Lose the first response`, tap `Run protected action`, and capture the allowed result with its payment ID. |
-| `docs/screenshots/04-sensitive-action-blocked.png` | Sensitive action on `High` | High-risk profile blocks the protected action | Open `Gate`, choose `Sensitive action`, select `High` under `Risk source`, tap `Run protected action`, and capture the blocked result. |
-| `docs/screenshots/05-request-signing-reference.png` | Request signing | The backend accepting a genuine request while rejecting replayed, edited, and late ones | Open `Gate`, choose `Request signing`, tap `Sign a new request`, then send it as signed twice, with a changed amount, and after the time window, and capture `Backend responses`. |
-| `docs/screenshots/06-secure-storage-reference.png` | Secure storage | Reference values are stored and visible in the UI | Open `Gate`, choose `Secure storage`, tap `Save reference values`, and capture the stored values section. |
-| `docs/screenshots/07-security-event-log.png` | Activity | Event trail records assessments and decisions | Open the `Activity` tab after visiting the protected action, signing, and storage workflows so the log contains varied events. |
-| `docs/screenshots/08-tests-passing.png` | `./gradlew test --console=plain` output | Unit tests pass | Use a fresh successful test run and capture the real command output, including `BUILD SUCCESSFUL`. |
-| `docs/screenshots/09-ci-passing.png` | GitHub Actions run summary | CI is green on the repository | Capture the successful `Android CI` summary page for the screenshot branch so the branch name, status, and jobs are visible. |
-| `docs/screenshots/10-repo-overview.png` | GitHub branch page | Public repo structure and docs are in place | Capture the branch tree view on GitHub so the branch selector, folders, and README preview are visible together. |
-| `docs/screenshots/11-device-keys.png` | Request signing | Both Keystore keys registered from their attestation | Set a screen lock PIN first so the step-up key exists. Open `Gate`, choose `Request signing`, and capture `Device keys`. |
+| `01-home.png` | Home | This phone's real checks and the checkout card | Cold-start the app; on an emulator the checks block payments. |
+| `02-checks.png` | Checks | What was found, what passed, and the risk level | Open the Checks tab. |
+| `03-paid-after-lost-reply.png` | Pay | A payment charged once after its first reply was lost | In Lab, turn on Lose the first reply. On Home, pick A safe phone and pay. |
+| `04-confirm-payment.png` | Confirmation | The server asking for the person's OK, and why | Turn Lose the first reply off, pick A risky phone, and pay. On an emulator without a screen lock this is the tap dialog. |
+| `05-blocked-scam-warning.png` | Pay | A payment blocked by Play Integrity's app-access verdict, with the scam warning and the fix | In Lab, set Pretend Google Play found to A remote-control app running; pick A safe phone and pay. Set it back to Nothing unusual afterwards. |
+| `06-lab-attacks-stopped.png` | Lab | Each attack refused by the server | Run all four tests in Try to break it. |
+| `07-what-was-sent.png` | What was sent | The last signed request, field by field | Lab, What was sent last. |
+| `08-phone-key.png` | Phone key | The key's attestation as the server registered it, and Replace this key | Lab, Phone key; scroll the sheet to the button. |
+| `09-ci-passing.png` | GitHub Actions | CI green on `main` | The run summary for the latest push to `main`, with the branch, status, and jobs visible. |
+| `10-repo-overview.png` | GitHub | The repository and its README | The branch tree view with the README preview. Check the contributor list and latest-commit row. |
+| `11-activity.png` | Activity | The log of checks, payments, and Lab tests | Open the Activity tab after the steps above. |
+| `12-tests-passing.png` | `./gradlew test --no-build-cache --console=plain` | Every module's tests passing | Run `cleanTest`, `:app:cleanTestDebugUnitTest`, and `:app:cleanTestReleaseUnitTest` first so every test runs. Rendered from the command's output, with the test count from the JUnit reports. |
+| `13-attack-lab.png` | `./gradlew :server:attackLab` | The harness's attacks against the running server | Run against `./gradlew :server:run`, rendered from the command's output. |
 
 ## Demo GIF
 
-`docs/demo.gif` is assembled from real screen captures (`adb exec-out screencap`) taken during one run of the flow in screenshot 03, followed by `Inspect request`. A ring marks each tap. The capture uses the System UI demo mode status bar, light theme, and font scale 1.0.
+`docs/demo.gif` is assembled from real screen captures (`adb exec-out screencap`) taken during one payment on a safe demo phone, followed by See what was sent. A ring marks each tap.
