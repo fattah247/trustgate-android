@@ -68,4 +68,7 @@ enum class RejectionReason {
 
     /** The payment would take this phone past its daily amount, or past what a new phone may pay. */
     OVER_LIMIT,
+
+    /** The key was replaced, or the phone was removed, so the backend no longer accepts it. */
+    KEY_REVOKED,
 }

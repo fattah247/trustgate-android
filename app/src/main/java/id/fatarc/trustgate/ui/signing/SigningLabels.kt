@@ -40,4 +40,5 @@ fun RejectionReason.shortLabel(): String = when (this) {
     RejectionReason.MALFORMED_BODY -> "unreadable"
     RejectionReason.TOO_MANY_PAYMENTS -> "too many payments"
     RejectionReason.OVER_LIMIT -> "over the limit"
+    RejectionReason.KEY_REVOKED -> "key no longer valid"
 }

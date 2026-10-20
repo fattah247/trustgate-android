@@ -1,5 +1,6 @@
 package id.fatarc.trustgate.server
 
+import id.fatarc.trustgate.backend.audit.AuditEntry
 import id.fatarc.trustgate.backend.store.BackendStore
 import id.fatarc.trustgate.backend.store.ChallengePurpose
 import id.fatarc.trustgate.backend.store.LedgerEntry
@@ -56,6 +57,28 @@ class SqliteBackendStore(file: File) : BackendStore, AutoCloseable {
         update("CREATE INDEX IF NOT EXISTS ledger_by_device_time ON ledger (device_key_id, charged_at)")
     }
 
+    /**
+     * Version 2: which phone each key belongs to, when that phone enrolled, and revocation; plus
+     * the hash-chained audit log. Keys from before belong to the phone of their device key.
+     */
+    private fun addKeyLifecycleAndAudit() {
+        update("ALTER TABLE keys ADD COLUMN phone_id TEXT NOT NULL DEFAULT ''")
+        update("ALTER TABLE keys ADD COLUMN phone_enrolled_at INTEGER NOT NULL DEFAULT 0")
+        update("ALTER TABLE keys ADD COLUMN revoked_at INTEGER")
+        update("ALTER TABLE keys ADD COLUMN revoked_reason TEXT")
+        update("UPDATE keys SET phone_id = device_key_id")
+        update(
+            "UPDATE keys SET phone_enrolled_at = " +
+                "(SELECT owner.registered_at FROM keys AS owner WHERE owner.key_id = keys.device_key_id)",
+        )
+        update("CREATE INDEX IF NOT EXISTS keys_by_phone ON keys (phone_id)")
+        update(
+            """CREATE TABLE IF NOT EXISTS audit_log (
+                sequence INTEGER PRIMARY KEY, at INTEGER NOT NULL, event TEXT NOT NULL, subject TEXT NOT NULL,
+                detail TEXT NOT NULL, previous_hash TEXT NOT NULL, hash TEXT NOT NULL)""",
+        )
+    }
+
     @Synchronized
     override fun <T> transaction(block: () -> T): T {
         if (depth > 0) return block()
@@ -79,12 +102,18 @@ class SqliteBackendStore(file: File) : BackendStore, AutoCloseable {
             attested = row.getBoolean("attested"),
             rootKeyFingerprint = row.getString("root_fingerprint"),
             registeredAt = Instant.ofEpochMilli(row.getLong("registered_at")),
+            phoneId = row.getString("phone_id"),
+            phoneEnrolledAt = Instant.ofEpochMilli(row.getLong("phone_enrolled_at")),
+            revokedAt = row.getLong("revoked_at").takeUnless { row.wasNull() }?.let(Instant::ofEpochMilli),
+            revokedReason = row.getString("revoked_reason"),
         )
     }
 
     override fun putKey(key: StoredKey) = update(
-        "INSERT OR REPLACE INTO keys VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO keys (key_id, role, public_key, device_key_id, attested, root_fingerprint, registered_at, " +
+            "phone_id, phone_enrolled_at, revoked_at, revoked_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         key.keyId, key.role.name, key.encodedPublicKey, key.deviceKeyId, key.attested, key.rootKeyFingerprint, key.registeredAt.toEpochMilli(),
+        key.phoneId, key.phoneEnrolledAt.toEpochMilli(), key.revokedAt?.toEpochMilli(), key.revokedReason,
     )
 
     override fun deleteKey(keyId: String) = update("DELETE FROM keys WHERE key_id = ?", keyId)
@@ -145,14 +174,50 @@ class SqliteBackendStore(file: File) : BackendStore, AutoCloseable {
 
     override fun ledgerSize(): Int = query("SELECT COUNT(*) FROM ledger") { it.getInt(1) } ?: 0
 
-    override fun paymentsSince(deviceKeyId: String, since: Instant): List<Payment> =
-        connection.prepareStatement("SELECT payment FROM ledger WHERE device_key_id = ? AND charged_at >= ? ORDER BY charged_at").use { statement ->
-            statement.setString(1, deviceKeyId)
+    override fun paymentsSince(phoneId: String, since: Instant): List<Payment> =
+        connection.prepareStatement(
+            "SELECT payment FROM ledger WHERE device_key_id IN (SELECT key_id FROM keys WHERE phone_id = ?) AND charged_at >= ? ORDER BY charged_at",
+        ).use { statement ->
+            statement.setString(1, phoneId)
             statement.setLong(2, since.toEpochMilli())
             statement.executeQuery().use { rows ->
                 buildList { while (rows.next()) add(TrustGateJson.decodeFromString(Payment.serializer(), rows.getString(1))) }
             }
         }
+
+    override fun appendAuditEntry(entry: AuditEntry) = update(
+        "INSERT INTO audit_log VALUES (?, ?, ?, ?, ?, ?, ?)",
+        entry.sequence, entry.at.toEpochMilli(), entry.event, entry.subject, entry.detail, entry.previousHash, entry.hash,
+    )
+
+    override fun lastAuditEntry(): AuditEntry? = query("SELECT * FROM audit_log ORDER BY sequence DESC LIMIT 1") { it.auditEntry() }
+
+    override fun auditEntries(): Sequence<AuditEntry> = sequence {
+        // In pages, so checking a long log doesn't hold it all in memory.
+        var after = 0L
+        while (true) {
+            val page = connection.prepareStatement("SELECT * FROM audit_log WHERE sequence > ? ORDER BY sequence LIMIT 500").use { statement ->
+                statement.setLong(1, after)
+                statement.executeQuery().use { rows -> buildList { while (rows.next()) add(rows.auditEntry()) } }
+            }
+            if (page.isEmpty()) break
+            yieldAll(page)
+            after = page.last().sequence
+        }
+    }
+
+    private fun ResultSet.auditEntry() = AuditEntry(
+        sequence = getLong("sequence"),
+        at = Instant.ofEpochMilli(getLong("at")),
+        event = getString("event"),
+        subject = getString("subject"),
+        detail = getString("detail"),
+        previousHash = getString("previous_hash"),
+        hash = getString("hash"),
+    )
+
+    /** Lets a test change a stored entry the way someone with database access could. */
+    internal fun overwriteAuditDetail(sequence: Long, detail: String) = update("UPDATE audit_log SET detail = ? WHERE sequence = ?", detail, sequence)
 
     override fun close() = connection.close()
 
@@ -173,6 +238,7 @@ class SqliteBackendStore(file: File) : BackendStore, AutoCloseable {
         /** Each step after the original schema, in order; the database's user_version counts those applied. */
         val MIGRATIONS: List<(SqliteBackendStore) -> Unit> = listOf(
             SqliteBackendStore::addLedgerTimes,
+            SqliteBackendStore::addKeyLifecycleAndAudit,
         )
 
         /** The original schema; [MIGRATIONS] build on it. */

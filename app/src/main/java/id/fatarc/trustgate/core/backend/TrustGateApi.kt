@@ -24,6 +24,18 @@ interface TrustGateApi {
 
     suspend fun removeStepUpKey(deviceKeyId: String, challenge: ByteArray, deviceKeyProof: ByteArray): Boolean
 
+    /** Hands the phone over from [currentKeyId] to a new device key; [proof] is the current key's signature. */
+    suspend fun rotateDeviceKey(
+        currentKeyId: String,
+        encodedPublicKey: ByteArray,
+        attestationChain: List<ByteArray>,
+        challenge: ByteArray,
+        proof: ByteArray,
+    ): RegistrationResult
+
+    /** Asks the backend to stop accepting this phone's keys; [proof] is the device key's signature. */
+    suspend fun removeDevice(deviceKeyId: String, challenge: ByteArray, proof: ByteArray): Boolean
+
     suspend fun verificationChallenge(deviceKeyId: String): String
 
     suspend fun authorizePayment(request: PaymentAuthorizationRequest): PaymentAuthorization

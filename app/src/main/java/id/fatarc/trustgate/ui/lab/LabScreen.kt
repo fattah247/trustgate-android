@@ -16,11 +16,14 @@ import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.PhonelinkErase
 import androidx.compose.material.icons.outlined.Receipt
 import androidx.compose.material.icons.outlined.Repeat
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Shop
 import androidx.compose.material.icons.outlined.Speed
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
@@ -29,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -71,6 +75,8 @@ fun LabScreen(
     onRunTest: (LabTest) -> Unit,
     onSetSimulateLostResponse: (Boolean) -> Unit,
     onSetPretendVerdict: (PretendVerdict) -> Unit,
+    onRotateKey: () -> Unit,
+    onRemovePhone: () -> Unit,
     onStoreTestValues: () -> Unit,
     onOpenRequest: () -> Unit,
     onOpenAbout: () -> Unit,
@@ -78,6 +84,7 @@ fun LabScreen(
     SensitiveScreen()
     var openKey by rememberSaveable { mutableStateOf<KeyRole?>(null) }
     var choosingVerdict by rememberSaveable { mutableStateOf(false) }
+    var confirmRemove by rememberSaveable { mutableStateOf(false) }
     val keys = uiState.keys.keys
 
     ScreenScaffold(title = "Lab") {
@@ -147,6 +154,15 @@ fun LabScreen(
                                 leadingIcon = KeyRole.STEP_UP.icon(),
                             )
                         }
+                        RowDivider(startIndent = TrustGateSpacing.listIconInset)
+                        ListRow(
+                            headline = "Remove this phone",
+                            supporting = "The server forgets these keys; the app starts over",
+                            leadingIcon = Icons.Outlined.PhonelinkErase,
+                            leadingTint = Tone.CRITICAL.contentColor(),
+                            onClickLabel = "Remove",
+                            onClick = { confirmRemove = true },
+                        )
                     }
                     uiState.keys.errorMessage != null -> ListRow(
                         headline = "Keys aren't ready",
@@ -205,7 +221,37 @@ fun LabScreen(
         null -> null
     }
     if (shown != null) {
-        ModalBottomSheet(onDismissRequest = { openKey = null }) { KeyDetails(shown) }
+        ModalBottomSheet(onDismissRequest = { openKey = null }) {
+            KeyDetails(
+                key = shown,
+                onReplace = if (shown.role == KeyRole.DEVICE) {
+                    {
+                        openKey = null
+                        onRotateKey()
+                    }
+                } else {
+                    null
+                },
+            )
+        }
+    }
+    if (confirmRemove) {
+        AlertDialog(
+            onDismissRequest = { confirmRemove = false },
+            icon = { Icon(Icons.Outlined.PhonelinkErase, contentDescription = null) },
+            title = { Text("Remove this phone?") },
+            text = { Text("The server stops accepting this phone's keys for good. The app then sets the phone up again as a new one.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmRemove = false
+                        onRemovePhone()
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                ) { Text("Remove") }
+            },
+            dismissButton = { TextButton(onClick = { confirmRemove = false }) { Text("Cancel") } },
+        )
     }
     if (choosingVerdict) {
         ModalBottomSheet(onDismissRequest = { choosingVerdict = false }) {
@@ -334,7 +380,10 @@ private fun KeyRow(
 }
 
 @Composable
-private fun KeyDetails(key: RegisteredKey) {
+private fun KeyDetails(
+    key: RegisteredKey,
+    onReplace: (() -> Unit)?,
+) {
     val attestation = key.attestation
     Column(modifier = Modifier.navigationBarsPadding().padding(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(key.role.title(), modifier = Modifier.padding(horizontal = 24.dp), style = MaterialTheme.typography.titleLarge)
@@ -354,5 +403,14 @@ private fun KeyDetails(key: RegisteredKey) {
         }
         attestation.deviceLocked?.let { ValueRow(label = "Bootloader", value = if (it) "Locked" else "Unlocked") }
         ValueRow(label = "Key ID", value = key.keyId, monospace = true, copyable = true)
+        onReplace?.let {
+            FilledTonalButton(onClick = it, modifier = Modifier.padding(start = 24.dp, top = 8.dp)) { Text("Replace this key") }
+            Text(
+                "The current key vouches for a new one, then stops working.",
+                modifier = Modifier.padding(horizontal = 24.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }

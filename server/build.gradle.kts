@@ -57,8 +57,11 @@ val generateDevCertificate by tasks.registering {
     outputs.dir(devTlsDir)
     doLast {
         val dir = devTlsDir.get().asFile
-        if (File(dir, "server.p12").exists()) return@doLast
         dir.mkdirs()
+        // The operator token for the /admin routes, kept beside the TLS secrets and never committed.
+        File(dir, "admin-token").takeUnless { it.exists() }
+            ?.writeText(Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(32).also(SecureRandom()::nextBytes)))
+        if (File(dir, "server.p12").exists()) return@doLast
         val password = Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(24).also(SecureRandom()::nextBytes))
         File(dir, "password").writeText(password)
         val keytool = File(System.getProperty("java.home"), "bin/keytool").path
@@ -92,6 +95,7 @@ tasks.named<JavaExec>("run") {
     val dir = devTlsDir.get().asFile
     environment("TRUSTGATE_TLS_KEYSTORE", File(dir, "server.p12").path)
     environment("TRUSTGATE_TLS_PASSWORD_FILE", File(dir, "password").path)
+    environment("TRUSTGATE_ADMIN_TOKEN_FILE", File(dir, "admin-token").path)
     environment("TRUSTGATE_DATABASE", layout.buildDirectory.file("trustgate.db").get().asFile.path)
     environment("TRUSTGATE_POLICY", providers.gradleProperty("trustgate.policy").getOrElse("development"))
     environment("TRUSTGATE_PACKAGE", "id.fatarc.trustgate")

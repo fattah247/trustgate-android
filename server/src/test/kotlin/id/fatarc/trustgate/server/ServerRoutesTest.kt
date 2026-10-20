@@ -2,6 +2,9 @@ package id.fatarc.trustgate.server
 
 import com.google.common.truth.Truth.assertThat
 import id.fatarc.trustgate.backend.ReferenceBackend
+import id.fatarc.trustgate.domain.api.AdminRevocationRequest
+import id.fatarc.trustgate.domain.api.AuditStatus
+import id.fatarc.trustgate.domain.api.DeviceRemoval
 import id.fatarc.trustgate.domain.api.KeyRegistrationRequest
 import id.fatarc.trustgate.domain.api.PaymentAuthorization
 import id.fatarc.trustgate.domain.api.PaymentAuthorizationRequest
@@ -32,13 +35,14 @@ import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import java.time.Instant
-import kotlinx.serialization.encodeToString
 import java.util.Base64
+import kotlinx.serialization.encodeToString
 import org.junit.Test
 
 class ServerRoutesTest {
@@ -46,8 +50,10 @@ class ServerRoutesTest {
     private val device = TestKey()
     private val signer = ReferenceRequestSigner()
 
+    private val adminToken = "a".repeat(40)
+
     private fun serve(limits: RequestLimits = RequestLimits(), test: suspend ApplicationTestBuilder.() -> Unit) = testApplication {
-        application { trustGateModule(backend, ServerHealth(status = "ok", policy = "development"), limits) }
+        application { trustGateModule(backend, ServerHealth(status = "ok", policy = "development"), limits, adminToken) }
         test()
     }
 
@@ -167,5 +173,25 @@ class ServerRoutesTest {
 
         assertThat(statuses.take(3)).containsExactly(HttpStatusCode.OK, HttpStatusCode.OK, HttpStatusCode.OK)
         assertThat(statuses.last()).isEqualTo(HttpStatusCode.TooManyRequests)
+    }
+
+    @Test
+    fun `admin routes need the operator's token`() = serve {
+        val challenge = backend.issueRegistrationChallenge()
+        backend.registerKey(KeyRole.DEVICE, device.encodedPublicKey, selfSignedChain(device), challenge)
+
+        val withoutToken = client.get(TrustGateRoutes.ADMIN_AUDIT).status
+        val wrongToken = client.get(TrustGateRoutes.ADMIN_AUDIT) { header(HttpHeaders.Authorization, "Bearer ${"b".repeat(40)}") }.status
+        val revoked = client.post(TrustGateRoutes.ADMIN_REVOKE) {
+            header(HttpHeaders.Authorization, "Bearer $adminToken")
+            contentType(ContentType.Application.Json)
+            setBody(TrustGateJson.encodeToString(AdminRevocationRequest(device.keyId, "fraud reported")))
+        }
+        val audit = client.get(TrustGateRoutes.ADMIN_AUDIT) { header(HttpHeaders.Authorization, "Bearer $adminToken") }
+
+        assertThat(withoutToken).isEqualTo(HttpStatusCode.Unauthorized)
+        assertThat(wrongToken).isEqualTo(HttpStatusCode.Unauthorized)
+        assertThat(TrustGateJson.decodeFromString(DeviceRemoval.serializer(), revoked.bodyAsText()).removed).isTrue()
+        assertThat(TrustGateJson.decodeFromString(AuditStatus.serializer(), audit.bodyAsText()).intact).isTrue()
     }
 }

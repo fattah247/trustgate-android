@@ -3,6 +3,7 @@ package id.fatarc.trustgate.backend
 import id.fatarc.trustgate.backend.attestation.AttestationPolicy
 import id.fatarc.trustgate.backend.integrity.IntegrityVerifier
 import id.fatarc.trustgate.backend.integrity.MockIntegrityVerifier
+import java.time.Duration
 
 /** Everything the backend enforces, chosen together so a server can't be strict about keys and lax about devices. */
 class BackendPolicy(
@@ -10,6 +11,8 @@ class BackendPolicy(
     val attestation: AttestationPolicy,
     val risk: RiskPolicy,
     val limits: PaymentLimits = PaymentLimits.NONE,
+    /** How long a device key serves before the backend asks the app to replace it; null never asks. */
+    val keyMaxAge: Duration? = null,
 ) {
     companion object {
         /**
@@ -39,6 +42,7 @@ class BackendPolicy(
                 minimumAppVersionCode = minimumAppVersionCode,
             ),
             limits = limits,
+            keyMaxAge = Duration.ofDays(90),
         )
 
         /** Relaxes what emulators can't provide: hardware attestation, Google Play, and real risk signals. */

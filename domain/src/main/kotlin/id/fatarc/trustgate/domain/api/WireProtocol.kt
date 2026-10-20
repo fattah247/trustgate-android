@@ -11,6 +11,12 @@ object TrustGateRoutes {
     const val REGISTRATION_CHALLENGE = "/v1/keys/challenge"
     const val KEYS = "/v1/keys"
     const val REMOVE_STEP_UP = "/v1/keys/step-up/remove"
+    const val ROTATE_DEVICE_KEY = "/v1/keys/rotate"
+    const val REMOVE_DEVICE = "/v1/keys/remove"
+
+    /** Operator routes, served only when the server has an admin token set. */
+    const val ADMIN_REVOKE = "/admin/keys/revoke"
+    const val ADMIN_AUDIT = "/admin/audit"
     const val VERIFICATION_CHALLENGE = "/v1/verification/challenge"
     const val AUTHORIZE_PAYMENT = "/v1/payments/authorize"
     const val PAYMENT = ReferenceSigningScheme.PATH
@@ -66,6 +72,41 @@ data class StepUpRemovalRequest(
 
 @Serializable
 data class StepUpRemoval(val removed: Boolean)
+
+/** A new device key, vouched for by the one it replaces: [proof] signs the rotate action for [challenge] and the new key's ID. */
+@Serializable
+data class KeyRotationRequest(
+    val currentKeyId: String,
+    val publicKey: String,
+    val certificateChain: List<String>,
+    val challenge: String,
+    val proof: String,
+)
+
+/** The device key asking the backend to stop accepting this phone's keys. */
+@Serializable
+data class DeviceRemovalRequest(
+    val deviceKeyId: String,
+    val challenge: String,
+    val proof: String,
+)
+
+@Serializable
+data class DeviceRemoval(val removed: Boolean)
+
+/** An operator revoking a phone, for example after fraud was reported. [keyId] may be either of its keys. */
+@Serializable
+data class AdminRevocationRequest(val keyId: String, val reason: String)
+
+/** Whether the server's audit log is unbroken from its first entry to [headHash]. */
+@Serializable
+data class AuditStatus(
+    val intact: Boolean,
+    val entries: Long,
+    val headHash: String?,
+    /** The first entry whose hash doesn't follow from the one before, when there is one. */
+    val brokenAt: Long? = null,
+)
 
 @Serializable
 data class VerificationChallengeRequest(val deviceKeyId: String)

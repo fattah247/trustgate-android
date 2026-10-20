@@ -33,6 +33,12 @@ object ReferenceSigningScheme {
     const val ACTION_ADD_STEP_UP = "register-step-up"
     const val ACTION_REMOVE_STEP_UP = "remove-step-up"
 
+    /** The current device key hands over to a new one, named by its key ID. */
+    const val ACTION_ROTATE_DEVICE = "rotate-device"
+
+    /** The device key asks the backend to stop accepting this phone's keys. */
+    const val ACTION_REMOVE_DEVICE = "remove-device"
+
     /**
      * Every value the signature covers, one per line. Changing any of them, including dropping or
      * adding the optional idempotency key or confirmation, breaks the signature.

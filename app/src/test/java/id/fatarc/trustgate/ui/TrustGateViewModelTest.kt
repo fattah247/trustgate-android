@@ -327,6 +327,50 @@ class TrustGateViewModelTest {
     }
 
     @Test
+    fun `replacing the phone key keeps payments working and retires the old key`() = runTest(dispatcher) {
+        val viewModel = start()
+        val oldKey = viewModel.uiState.value.keys.keys?.device?.keyId
+
+        viewModel.rotateDeviceKey()
+        advanceUntilIdle()
+        viewModel.attemptPayment()
+        advanceUntilIdle()
+
+        val newKey = viewModel.uiState.value.keys.keys?.device?.keyId
+        assertThat(newKey).isNotEqualTo(oldKey)
+        assertThat(viewModel.uiState.value.keys.keys?.stepUp).isNotNull()
+        assertThat(payment.submission).isInstanceOf(Submission.Charged::class.java)
+        assertThat(events.events.value.map { it.type }).contains(SecurityEventType.KEY_ROTATED)
+    }
+
+    @Test
+    fun `a phone an operator revoked is told so and set up again as a new phone`() = runTest(dispatcher) {
+        val viewModel = start()
+        val revokedKey = requireNotNull(viewModel.uiState.value.keys.keys?.device?.keyId)
+        backend.revokeByOperator(revokedKey, "fraud reported")
+
+        viewModel.attemptPayment()
+        advanceUntilIdle()
+
+        assertThat(payment.latestDecision).isInstanceOf(PaymentDecisionState.Blocked::class.java)
+        assertThat(payment.reasons.map { it.text }).containsExactly("Phone removed")
+        assertThat(viewModel.uiState.value.keys.keys?.device?.keyId).isNotEqualTo(revokedKey)
+        assertThat(events.events.value.map { it.type }).contains(SecurityEventType.PHONE_REMOVED)
+    }
+
+    @Test
+    fun `removing the phone sets it up again with new keys`() = runTest(dispatcher) {
+        val viewModel = start()
+        val before = viewModel.uiState.value.keys.keys?.device?.keyId
+
+        viewModel.removeThisPhone()
+        advanceUntilIdle()
+
+        assertThat(viewModel.uiState.value.keys.keys?.device?.keyId).isNotEqualTo(before)
+        assertThat(backend.auditStatus().intact).isTrue()
+    }
+
+    @Test
     fun `keys are registered at launch with the step-up key when a lock is set`() = runTest(dispatcher) {
         val viewModel = start()
 

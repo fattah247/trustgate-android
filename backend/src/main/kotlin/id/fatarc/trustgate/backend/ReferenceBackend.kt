@@ -2,21 +2,23 @@ package id.fatarc.trustgate.backend
 
 import id.fatarc.trustgate.backend.attestation.KeyAttestationVerifier
 import id.fatarc.trustgate.backend.attestation.RevocationList
+import id.fatarc.trustgate.backend.attestation.toSummary
+import id.fatarc.trustgate.backend.audit.AuditLog
 import id.fatarc.trustgate.backend.store.BackendStore
 import id.fatarc.trustgate.backend.store.ChallengePurpose
 import id.fatarc.trustgate.backend.store.InMemoryBackendStore
 import id.fatarc.trustgate.backend.store.LedgerEntry
 import id.fatarc.trustgate.backend.store.StoredChallenge
 import id.fatarc.trustgate.backend.store.StoredKey
-import id.fatarc.trustgate.backend.attestation.toSummary
 import id.fatarc.trustgate.domain.actiongate.SensitiveActionDecision
 import id.fatarc.trustgate.domain.actiongate.SensitiveActionGate
+import id.fatarc.trustgate.domain.api.AuditStatus
+import id.fatarc.trustgate.domain.api.DecisionReason
 import id.fatarc.trustgate.domain.api.DeviceEvidence
 import id.fatarc.trustgate.domain.api.Payment
 import id.fatarc.trustgate.domain.api.PaymentAuthorization
 import id.fatarc.trustgate.domain.api.PaymentResponse
 import id.fatarc.trustgate.domain.api.RegistrationResult
-import id.fatarc.trustgate.domain.api.DecisionReason
 import id.fatarc.trustgate.domain.api.RequiredConfirmation
 import id.fatarc.trustgate.domain.api.TrustGateJson
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
@@ -51,9 +53,14 @@ class ReferenceBackend(
 ) {
     private val gate = SensitiveActionGate()
     private val random = SecureRandom()
+    private val audit = AuditLog(store, clock)
 
     /** How many payments were actually charged, however many requests arrived. */
     val chargedPayments: Int @Synchronized get() = store.transaction { store.ledgerSize() }
+
+    /** Checks the audit log's hash chain from its first entry. */
+    @Synchronized
+    fun auditStatus(): AuditStatus = store.transaction { audit.verify() }
 
     /**
      * A one-time registration challenge. Pass [deviceKeyId] to add or remove that device's step-up
@@ -88,7 +95,20 @@ class ReferenceBackend(
         deviceKeyId: String? = null,
         deviceKeyProof: ByteArray? = null,
     ): RegistrationResult = store.transaction {
-        register(role, encodedPublicKey, attestationChain, challenge, deviceKeyId, deviceKeyProof)
+        val result = register(role, encodedPublicKey, attestationChain, challenge, deviceKeyId, deviceKeyProof)
+        when (result) {
+            is RegistrationResult.Registered -> audit.record(
+                "key-registered",
+                subject = store.key(result.keyId)?.phoneId ?: result.keyId,
+                detail = "${role.name.lowercase()} key ${result.keyId}, attested=${result.attestation.attested}",
+            )
+            is RegistrationResult.Refused -> audit.record(
+                "registration-refused",
+                subject = deviceKeyId ?: ReferenceSigningScheme.keyIdFor(encodedPublicKey),
+                detail = result.reason,
+            )
+        }
+        result
     }
 
     private fun register(
@@ -109,7 +129,7 @@ class ReferenceBackend(
         val attestation = KeyAttestationVerifier.verify(attestationChain, encodedPublicKey, challenge)
         policy.attestation.problemWith(attestation, revocations())?.let { return RegistrationResult.Refused(it) }
 
-        fun stored(owner: String) = StoredKey(
+        fun stored(owner: String, phoneId: String, phoneEnrolledAt: Instant) = StoredKey(
             keyId = keyId,
             role = role,
             encodedPublicKey = encodedPublicKey,
@@ -117,15 +137,17 @@ class ReferenceBackend(
             attested = attestation.isAttested,
             rootKeyFingerprint = attestation.rootKeyFingerprint,
             registeredAt = clock.instant(),
+            phoneId = phoneId,
+            phoneEnrolledAt = phoneEnrolledAt,
         )
         when (role) {
             KeyRole.DEVICE -> {
                 if (deviceKeyId != null) return RegistrationResult.Refused("A device key can't belong to another key.")
-                store.putKey(stored(owner = keyId))
+                store.putKey(stored(owner = keyId, phoneId = keyId, phoneEnrolledAt = clock.instant()))
             }
 
             KeyRole.STEP_UP -> {
-                val owner = deviceKeyId?.let(store::key)?.takeIf { it.role == KeyRole.DEVICE }
+                val owner = deviceKeyId?.let(store::key)?.takeIf { it.role == KeyRole.DEVICE && !it.isRevoked }
                     ?: return RegistrationResult.Refused("A step-up key needs a registered device key.")
                 val vouched = deviceKeyProof != null && verifySignature(
                     owner,
@@ -148,7 +170,7 @@ class ReferenceBackend(
                     return RegistrationResult.Refused("The key stays unlocked for a while after one authentication instead of asking for each signature.")
                 }
                 store.stepUpKeyOf(owner.keyId)?.let(store::deleteKey)
-                store.putKey(stored(owner = owner.keyId))
+                store.putKey(stored(owner = owner.keyId, phoneId = owner.phoneId, phoneEnrolledAt = owner.phoneEnrolledAt))
                 store.setStepUpKey(owner.keyId, keyId)
             }
         }
@@ -162,7 +184,7 @@ class ReferenceBackend(
     @Synchronized
     fun removeStepUpKey(deviceKeyId: String, challenge: ByteArray, deviceKeyProof: ByteArray): Boolean = store.transaction {
         if (!spendRegistrationChallenge(challenge, deviceKeyId)) return@transaction false
-        val owner = store.key(deviceKeyId)?.takeIf { it.role == KeyRole.DEVICE } ?: return@transaction false
+        val owner = store.key(deviceKeyId)?.takeIf { it.role == KeyRole.DEVICE && !it.isRevoked } ?: return@transaction false
         val vouched = verifySignature(
             owner,
             ReferenceSigningScheme.keyBindingInput(ReferenceSigningScheme.ACTION_REMOVE_STEP_UP, challenge, deviceKeyId),
@@ -171,7 +193,90 @@ class ReferenceBackend(
         if (!vouched) return@transaction false
         store.stepUpKeyOf(deviceKeyId)?.let(store::deleteKey)
         store.setStepUpKey(deviceKeyId, null)
+        audit.record("step-up-removed", subject = owner.phoneId, detail = "device key $deviceKeyId")
         true
+    }
+
+    /**
+     * Replaces a phone's device key with a new one. The current key vouches for its successor by
+     * signing the rotate action over [challenge] and the new key's ID; the new key must pass the same
+     * attestation checks as any registration. The phone keeps its identity, history, and limits, and
+     * the old key and its step-up key are never accepted again.
+     */
+    @Synchronized
+    fun rotateDeviceKey(
+        currentKeyId: String,
+        encodedPublicKey: ByteArray,
+        attestationChain: List<ByteArray>,
+        challenge: ByteArray,
+        proof: ByteArray,
+    ): RegistrationResult = store.transaction {
+        fun refuse(reason: String): RegistrationResult {
+            audit.record("rotation-refused", subject = currentKeyId, detail = reason)
+            return RegistrationResult.Refused(reason)
+        }
+        val current = store.key(currentKeyId)?.takeIf { it.role == KeyRole.DEVICE && !it.isRevoked }
+            ?: return@transaction refuse("This phone's key isn't registered.")
+        if (!spendRegistrationChallenge(challenge, currentKeyId)) return@transaction refuse("The challenge doesn't match, or has expired.")
+        decodePublicKey(encodedPublicKey) ?: return@transaction refuse("The public key couldn't be read.")
+        val keyId = ReferenceSigningScheme.keyIdFor(encodedPublicKey)
+        if (store.key(keyId) != null) return@transaction refuse("This key is already registered.")
+        val vouched = verifySignature(current, ReferenceSigningScheme.keyBindingInput(ReferenceSigningScheme.ACTION_ROTATE_DEVICE, challenge, keyId), proof)
+        if (!vouched) return@transaction refuse("The current key didn't vouch for the new one.")
+
+        val attestation = KeyAttestationVerifier.verify(attestationChain, encodedPublicKey, challenge)
+        policy.attestation.problemWith(attestation, revocations())?.let { return@transaction refuse(it) }
+        // A phone that proved its hardware once can't continue on a key that proves less.
+        if (current.attested && (!attestation.isAttested || attestation.rootKeyFingerprint != current.rootKeyFingerprint)) {
+            return@transaction refuse("The new key isn't attested the way the current one was.")
+        }
+
+        val now = clock.instant()
+        store.putKey(
+            StoredKey(
+                keyId = keyId,
+                role = KeyRole.DEVICE,
+                encodedPublicKey = encodedPublicKey,
+                deviceKeyId = keyId,
+                attested = attestation.isAttested,
+                rootKeyFingerprint = attestation.rootKeyFingerprint,
+                registeredAt = now,
+                phoneId = current.phoneId,
+                phoneEnrolledAt = current.phoneEnrolledAt,
+            ),
+        )
+        revokePhoneKeys(current, now, "Replaced by $keyId")
+        audit.record("key-rotated", subject = current.phoneId, detail = "$currentKeyId replaced by $keyId")
+        RegistrationResult.Registered(keyId, KeyRole.DEVICE, attestation.toSummary(trustedRoot = policy.attestation.trustsRoot(attestation)))
+    }
+
+    /** The phone asks to be forgotten, for example before it's sold. Its device key signs the request. */
+    @Synchronized
+    fun removeDevice(deviceKeyId: String, challenge: ByteArray, proof: ByteArray): Boolean = store.transaction {
+        if (!spendRegistrationChallenge(challenge, deviceKeyId)) return@transaction false
+        val device = store.key(deviceKeyId)?.takeIf { it.role == KeyRole.DEVICE && !it.isRevoked } ?: return@transaction false
+        val vouched = verifySignature(device, ReferenceSigningScheme.keyBindingInput(ReferenceSigningScheme.ACTION_REMOVE_DEVICE, challenge, deviceKeyId), proof)
+        if (!vouched) return@transaction false
+        revokePhoneKeys(device, clock.instant(), "Removed by the phone")
+        audit.record("phone-removed", subject = device.phoneId, detail = "by the phone")
+        true
+    }
+
+    /** An operator stops accepting a phone, given either of its keys. False when there's nothing live to revoke. */
+    @Synchronized
+    fun revokeByOperator(keyId: String, reason: String): Boolean = store.transaction {
+        val key = store.key(keyId) ?: return@transaction false
+        val device = store.key(key.deviceKeyId)?.takeIf { !it.isRevoked } ?: return@transaction false
+        revokePhoneKeys(device, clock.instant(), "Revoked by an operator: $reason")
+        audit.record("phone-revoked", subject = device.phoneId, detail = reason)
+        true
+    }
+
+    /** Revokes [device] and its step-up key, which can't outlive the key that vouched for it. */
+    private fun revokePhoneKeys(device: StoredKey, at: Instant, reason: String) {
+        store.stepUpKeyOf(device.keyId)?.let(store::key)?.let { store.putKey(it.revoked(at, reason)) }
+        store.setStepUpKey(device.keyId, null)
+        store.putKey(device.revoked(at, reason))
     }
 
     /** A one-time challenge for signing a request only to have it checked, with nothing charged. */
@@ -194,9 +299,13 @@ class ReferenceBackend(
         integrityToken: String?,
         receivedAt: Instant = clock.instant(),
     ): PaymentAuthorization = store.transaction {
-        fun refuse(reason: String) = PaymentAuthorization.Blocked(DeviceRiskLevel.HIGH, listOf(DecisionReason(reason, DeviceRiskLevel.HIGH)))
+        fun refuse(reason: String, keyRejected: Boolean = false): PaymentAuthorization {
+            audit.record("authorization-refused", subject = deviceKeyId, detail = reason)
+            return PaymentAuthorization.Blocked(DeviceRiskLevel.HIGH, listOf(DecisionReason(reason, DeviceRiskLevel.HIGH)), keyRejected = keyRejected)
+        }
         val key = store.key(deviceKeyId)?.takeIf { it.role == KeyRole.DEVICE }
-            ?: return@transaction refuse("Unknown phone")
+            ?: return@transaction refuse("Unknown phone", keyRejected = true)
+        if (key.isRevoked) return@transaction refuse("Phone removed", keyRejected = true)
         if (!verifySignature(key, evidence.toByteArray(), signature)) return@transaction refuse("Report not signed by this phone")
         val report = runCatching { TrustGateJson.decodeFromString(DeviceEvidence.serializer(), evidence) }.getOrNull()
             ?.takeIf { it.deviceKeyId == deviceKeyId }
@@ -206,7 +315,14 @@ class ReferenceBackend(
             return@transaction refuse("Report out of date")
         }
         val assessment = policy.risk.assess(report, ReferenceSigningScheme.sha256Hex(evidence), integrityToken, receivedAt)
-        authorization(deviceKeyId, assessment + history(key, receivedAt))
+        val authorization = authorization(key, assessment + history(key, receivedAt), receivedAt)
+        audit.record(
+            "payment-authorized",
+            subject = key.phoneId,
+            detail = "${authorization.decision.name.lowercase()} at ${authorization.level.name.lowercase()}: " +
+                authorization.reasons.joinToString("; ") { it.text },
+        )
+        authorization
     }
 
     /**
@@ -215,34 +331,34 @@ class ReferenceBackend(
      */
     private fun history(deviceKey: StoredKey, at: Instant): List<DecisionReason> = buildList {
         val limits = policy.limits
-        if (store.paymentsSince(deviceKey.keyId, at.minus(limits.window)).size >= limits.maxPayments) {
+        if (store.paymentsSince(deviceKey.phoneId, at.minus(limits.window)).size >= limits.maxPayments) {
             add(DecisionReason("Too many payments. Try again in a few minutes", DeviceRiskLevel.HIGH))
         }
         if (isNewPhone(deviceKey, at)) add(DecisionReason("New phone", DeviceRiskLevel.MEDIUM))
     }
 
     private fun isNewPhone(deviceKey: StoredKey, at: Instant): Boolean =
-        policy.limits.newPhonePeriod?.let { period -> deviceKey.registeredAt.isAfter(at.minus(period)) } == true
+        policy.limits.newPhonePeriod?.let { period -> deviceKey.phoneEnrolledAt.isAfter(at.minus(period)) } == true
 
-    /** Why charging [amountMinor] now would break this phone's limits, or null when it wouldn't. */
-    private fun limitBroken(deviceKeyId: String, amountMinor: Long, at: Instant): RejectionReason? {
+    /** Why charging [amountMinor] now would break the phone's limits, or null when it wouldn't. */
+    private fun limitBroken(deviceKey: StoredKey, amountMinor: Long, at: Instant): RejectionReason? {
         val limits = policy.limits
-        if (store.paymentsSince(deviceKeyId, at.minus(limits.window)).size >= limits.maxPayments) {
+        if (store.paymentsSince(deviceKey.phoneId, at.minus(limits.window)).size >= limits.maxPayments) {
             return RejectionReason.TOO_MANY_PAYMENTS
         }
         val daily = limits.dailyAmountMinor
-        if (daily != null && store.paymentsSince(deviceKeyId, at.minus(Duration.ofDays(1))).sumOf { it.amountMinor } + amountMinor > daily) {
+        if (daily != null && store.paymentsSince(deviceKey.phoneId, at.minus(Duration.ofDays(1))).sumOf { it.amountMinor } + amountMinor > daily) {
             return RejectionReason.OVER_LIMIT
         }
         val newPhoneCap = limits.newPhoneAmountMinor
-        val deviceKey = store.key(deviceKeyId)
-        if (newPhoneCap != null && deviceKey != null && isNewPhone(deviceKey, at) && amountMinor > newPhoneCap) {
+        if (newPhoneCap != null && isNewPhone(deviceKey, at) && amountMinor > newPhoneCap) {
             return RejectionReason.OVER_LIMIT
         }
         return null
     }
 
-    private fun authorization(deviceKeyId: String, assessment: RiskPolicy.Assessment): PaymentAuthorization {
+    private fun authorization(deviceKey: StoredKey, assessment: RiskPolicy.Assessment, at: Instant): PaymentAuthorization {
+        val deviceKeyId = deviceKey.keyId
         val level = assessment.level
         return when (val decision = gate.decide(level)) {
             SensitiveActionDecision.BLOCK ->
@@ -268,6 +384,7 @@ class ReferenceBackend(
                     reasons = assessment.reasons,
                     remedy = assessment.remedy,
                     scamWarning = assessment.scamWarning,
+                    rotateKey = policy.keyMaxAge?.let { deviceKey.registeredAt.isBefore(at.minus(it)) } == true,
                 )
             }
         }
@@ -276,15 +393,22 @@ class ReferenceBackend(
     /** Checks a signed request against a verification challenge and spends it, charging nothing. */
     @Synchronized
     fun authenticate(request: ReceivedRequest, receivedAt: Instant = clock.instant()): VerificationResult = store.transaction {
+        check(request, receivedAt).also { result ->
+            val subject = request.header(ReferenceSigningScheme.HEADER_KEY_ID)?.let(store::key)?.phoneId ?: "unknown"
+            audit.record("request-checked", subject, if (result is VerificationResult.Rejected) "refused: ${result.reason.name.lowercase()}" else "accepted")
+        }
+    }
+
+    private fun check(request: ReceivedRequest, receivedAt: Instant): VerificationResult {
         val key = when (val check = checkSignature(request, receivedAt)) {
-            is SignatureCheck.Failed -> return@transaction VerificationResult.Rejected(check.reason)
+            is SignatureCheck.Failed -> return VerificationResult.Rejected(check.reason)
             is SignatureCheck.Passed -> check.key
         }
         val nonce = request.header(ReferenceSigningScheme.HEADER_NONCE).orEmpty()
         challengeFor(nonce, ChallengePurpose.VERIFICATION, key.deviceKeyId, receivedAt)
-            ?: return@transaction VerificationResult.Rejected(missingChallengeReason(nonce))
+            ?: return VerificationResult.Rejected(missingChallengeReason(nonce))
         store.spendChallenge(nonce, receivedAt)
-        VerificationResult.Accepted
+        return VerificationResult.Accepted
     }
 
     /**
@@ -293,7 +417,17 @@ class ReferenceBackend(
      */
     @Synchronized
     fun submitPayment(request: ReceivedRequest, receivedAt: Instant = clock.instant()): PaymentResponse = store.transaction {
-        pay(request, receivedAt)
+        pay(request, receivedAt).also { response ->
+            val subject = request.header(ReferenceSigningScheme.HEADER_KEY_ID)?.let(store::key)?.phoneId ?: "unknown"
+            when (response) {
+                is PaymentResponse.Processed -> audit.record(
+                    if (response.replayed) "payment-repeated" else "payment-charged",
+                    subject,
+                    "${response.payment.id} ${response.payment.amountMinor} ${response.payment.currency}",
+                )
+                is PaymentResponse.Rejected -> audit.record("payment-refused", subject, response.reason.name.lowercase())
+            }
+        }
     }
 
     private fun pay(request: ReceivedRequest, receivedAt: Instant): PaymentResponse {
@@ -331,7 +465,8 @@ class ReferenceBackend(
         if (!confirmed) return PaymentResponse.Rejected(RejectionReason.CONFIRMATION_REQUIRED)
         store.spendChallenge(nonce, receivedAt)
         // Checked when charging, so authorizations collected in advance can't add up past the limits.
-        limitBroken(key.deviceKeyId, payload.amountMinor, receivedAt)?.let { return PaymentResponse.Rejected(it) }
+        val deviceKey = store.key(key.deviceKeyId) ?: return PaymentResponse.Rejected(RejectionReason.UNKNOWN_KEY)
+        limitBroken(deviceKey, payload.amountMinor, receivedAt)?.let { return PaymentResponse.Rejected(it) }
 
         val payment = Payment(
             id = "PAY-" + ReferenceSigningScheme.sha256Hex(nonce + idempotencyKey).take(8).uppercase(),
@@ -374,6 +509,7 @@ class ReferenceBackend(
             return SignatureCheck.Failed(RejectionReason.OUTSIDE_TIME_WINDOW)
         }
         val key = store.key(keyId) ?: return SignatureCheck.Failed(RejectionReason.UNKNOWN_KEY)
+        if (key.isRevoked) return SignatureCheck.Failed(RejectionReason.KEY_REVOKED)
         val input = ReferenceSigningScheme.signingInput(
             method = request.method,
             path = request.path,

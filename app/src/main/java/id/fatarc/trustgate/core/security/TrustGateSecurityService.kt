@@ -135,6 +135,32 @@ class TrustGateSecurityService(
         )
     }
 
+    /** The device key was replaced by [newKey]; the old one, and its step-up key, are revoked. */
+    suspend fun recordKeyRotated(newKey: RegisteredKey) {
+        eventRepository.record(
+            SecurityEvent(
+                type = SecurityEventType.KEY_ROTATED,
+                message = "The old key vouched for this one, and the server no longer accepts the old one.",
+                metadata = mapOf("keyId" to newKey.keyId, "protection" to newKey.protection.name.lowercase()),
+            ),
+        )
+    }
+
+    /** The phone's keys were dropped: [byServer] when the server stopped accepting them, else at the person's request. */
+    suspend fun recordPhoneRemoved(byServer: Boolean) {
+        eventRepository.record(
+            SecurityEvent(
+                type = SecurityEventType.PHONE_REMOVED,
+                message = if (byServer) {
+                    "The server no longer accepts this phone's key, so it was set up again as a new phone."
+                } else {
+                    "You removed this phone, so it was set up again as a new phone."
+                },
+                metadata = mapOf("decidedBy" to if (byServer) "reference-backend" else "app"),
+            ),
+        )
+    }
+
     suspend fun recordPayment(request: SignedRequest, outcome: SubmitOutcome) {
         val response = outcome.response
         eventRepository.record(
@@ -320,6 +346,7 @@ class TrustGateSecurityService(
         RejectionReason.MALFORMED_BODY -> "it couldn't be read"
         RejectionReason.TOO_MANY_PAYMENTS -> "this phone made too many payments in a short time"
         RejectionReason.OVER_LIMIT -> "it would go over this phone's limit"
+        RejectionReason.KEY_REVOKED -> "the key that signed it was replaced or removed"
     }
 
     private fun DeviceRiskLevel.demoPhone(): String = when (this) {

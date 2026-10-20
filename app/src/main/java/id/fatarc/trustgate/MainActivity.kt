@@ -49,6 +49,8 @@ class MainActivity : FragmentActivity() {
                     onSetSimulateLostResponse = viewModel::setSimulateLostResponse,
                     onRunLabTest = viewModel::runLabTest,
                     onSetPretendVerdict = viewModel::setPretendVerdict,
+                    onRotateKey = viewModel::rotateDeviceKey,
+                    onRemovePhone = viewModel::removeThisPhone,
                     onFixWithPlay = { remedy ->
                         lifecycleScope.launch {
                             // Google Play walks the person through it; once fixed, the payment runs again.

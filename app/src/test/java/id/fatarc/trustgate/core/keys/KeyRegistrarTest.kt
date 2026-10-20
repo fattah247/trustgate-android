@@ -68,4 +68,26 @@ class KeyRegistrarTest {
         assertThat(recovered.keys).isEqualTo(first)
         assertThat(recovered.newlyRegistered).isEmpty()
     }
+
+    @Test
+    fun `a registrar started again keeps the phone's registered keys instead of enrolling it anew`() = runTest {
+        val remembered = InMemoryRegisteredKeyStore()
+        val first = KeyRegistrar(keys, InProcessTrustGateApi(backend), Dispatchers.Unconfined, remembered).ensure()
+
+        val again = KeyRegistrar(keys, InProcessTrustGateApi(backend), Dispatchers.Unconfined, remembered).ensure()
+
+        assertThat(again.newlyRegistered).isEmpty()
+        assertThat(again.keys.device.keyId).isEqualTo(first.keys.device.keyId)
+    }
+
+    @Test
+    fun `rotating hands the phone to a new key and the server refuses the old one`() = runTest {
+        val before = registrar.ensure().keys.device.keyId
+
+        val after = registrar.rotate()
+
+        assertThat(after.keys.device.keyId).isNotEqualTo(before)
+        assertThat(after.keys.stepUp).isNotNull()
+        assertThat((backend.authorize(before, { ByteArray(0) }, DeviceRiskLevel.LOW) as PaymentAuthorization.Blocked).keyRejected).isTrue()
+    }
 }

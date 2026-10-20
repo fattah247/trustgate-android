@@ -33,6 +33,12 @@ class AndroidDeviceKeyProvider(
     private val appContext = context.applicationContext
     private val keyStore: KeyStore by lazy { KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) } }
 
+    // Keystore can't rename an entry, so the device key alternates between two aliases and this
+    // remembers which one is current. Only an alias name is kept here, never key material.
+    private val aliases = appContext.getSharedPreferences("trustgate_key_aliases", Context.MODE_PRIVATE)
+    private val deviceAlias: String get() = aliases.getString(CURRENT_DEVICE_ALIAS, DEVICE_ALIAS_A) ?: DEVICE_ALIAS_A
+    private val replacementAlias: String get() = if (deviceAlias == DEVICE_ALIAS_A) DEVICE_ALIAS_B else DEVICE_ALIAS_A
+
     override fun stepUpSupport(): StepUpSupport {
         val keyguard = appContext.getSystemService(KeyguardManager::class.java)
         if (keyguard?.isDeviceSecure != true) {
@@ -49,7 +55,27 @@ class AndroidDeviceKeyProvider(
 
     override fun generate(role: KeyRole, attestationChallenge: ByteArray): GeneratedKey {
         delete(role)
-        val alias = role.alias
+        return generateAt(role.alias, role, attestationChallenge)
+    }
+
+    override fun generateReplacement(attestationChallenge: ByteArray): GeneratedKey {
+        discardReplacement()
+        return generateAt(replacementAlias, KeyRole.DEVICE, attestationChallenge)
+    }
+
+    override fun promoteReplacement() {
+        val retired = deviceAlias
+        check(keyStore.containsAlias(replacementAlias)) { "No replacement key to promote." }
+        // Switch first: if deleting the old entry fails, the app still signs with the new key.
+        check(aliases.edit().putString(CURRENT_DEVICE_ALIAS, replacementAlias).commit()) { "The new key couldn't be made current." }
+        if (keyStore.containsAlias(retired)) keyStore.deleteEntry(retired)
+    }
+
+    override fun discardReplacement() {
+        if (keyStore.containsAlias(replacementAlias)) keyStore.deleteEntry(replacementAlias)
+    }
+
+    private fun generateAt(alias: String, role: KeyRole, attestationChallenge: ByteArray): GeneratedKey {
         val preferStrongBox = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
             appContext.packageManager.hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE)
         val attempts = buildList {
@@ -61,7 +87,7 @@ class AndroidDeviceKeyProvider(
         var lastFailure: Exception? = null
         val placement = attempts.firstOrNull { placement ->
             try {
-                generateKeyPair(role, attestationChallenge.takeIf { placement.attested }, placement.strongBox)
+                generateKeyPair(alias, role, attestationChallenge.takeIf { placement.attested }, placement.strongBox)
                 true
             } catch (error: ProviderException) {
                 // StrongBoxUnavailableException is a ProviderException, and so are attestation failures.
@@ -75,7 +101,7 @@ class AndroidDeviceKeyProvider(
 
         val chain = keyStore.getCertificateChain(alias)?.map { it.encoded }.orEmpty()
         val publicKey = keyStore.getCertificate(alias).publicKey.encoded
-        val protection = protectionOf(privateKey(role))
+        val protection = protectionOf(keyStore.getKey(alias, null) as PrivateKey)
         return GeneratedKey(
             role = role,
             encodedPublicKey = publicKey,
@@ -125,8 +151,8 @@ class AndroidDeviceKeyProvider(
 
     private class KeyPlacement(val strongBox: Boolean, val attested: Boolean)
 
-    private fun generateKeyPair(role: KeyRole, attestationChallenge: ByteArray?, strongBox: Boolean) {
-        val spec = KeyGenParameterSpec.Builder(role.alias, KeyProperties.PURPOSE_SIGN)
+    private fun generateKeyPair(alias: String, role: KeyRole, attestationChallenge: ByteArray?, strongBox: Boolean) {
+        val spec = KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_SIGN)
             .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
             .setDigests(KeyProperties.DIGEST_SHA256)
             .apply {
@@ -176,11 +202,16 @@ class AndroidDeviceKeyProvider(
 
     private val KeyRole.alias: String
         get() = when (this) {
-            KeyRole.DEVICE -> "trustgate_device_key"
+            KeyRole.DEVICE -> deviceAlias
             KeyRole.STEP_UP -> "trustgate_step_up_key"
         }
 
     private companion object {
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
+        const val CURRENT_DEVICE_ALIAS = "device"
+
+        // The first alias is the one earlier versions used, so an existing key stays current.
+        const val DEVICE_ALIAS_A = "trustgate_device_key"
+        const val DEVICE_ALIAS_B = "trustgate_device_key_b"
     }
 }

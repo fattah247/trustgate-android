@@ -4,6 +4,7 @@ import id.fatarc.trustgate.domain.api.AttestationSummary
 import id.fatarc.trustgate.domain.api.SecurityLevel
 import id.fatarc.trustgate.domain.signing.KeyRole
 import java.security.Signature
+import kotlinx.serialization.Serializable
 
 /** A freshly generated key pair's public half, with the certificate chain that attests it. */
 class GeneratedKey(
@@ -15,6 +16,7 @@ class GeneratedKey(
 )
 
 /** A key the backend accepted, as the app shows it. */
+@Serializable
 data class RegisteredKey(
     val role: KeyRole,
     val keyId: String,
@@ -41,6 +43,18 @@ interface DeviceKeyProvider {
 
     /** Replaces any existing key for [role], attesting it with the backend's [attestationChallenge]. */
     fun generate(role: KeyRole, attestationChallenge: ByteArray): GeneratedKey
+
+    /**
+     * Generates a new device key beside the current one, which keeps signing until
+     * [promoteReplacement]; the current key has to vouch for its successor first.
+     */
+    fun generateReplacement(attestationChallenge: ByteArray): GeneratedKey
+
+    /** Makes the replacement the device key and deletes the one it replaced. */
+    fun promoteReplacement()
+
+    /** Throws away a replacement the backend didn't accept. */
+    fun discardReplacement()
 
     fun delete(role: KeyRole)
 

@@ -51,6 +51,8 @@ sealed interface PaymentAuthorization {
         override val reasons: List<DecisionReason> = emptyList(),
         override val remedy: Remedy? = null,
         override val scamWarning: Boolean = false,
+        /** The device key has been in use long enough that the app should replace it. */
+        val rotateKey: Boolean = false,
     ) : PaymentAuthorization
 
     @Serializable
@@ -60,6 +62,8 @@ sealed interface PaymentAuthorization {
         override val reasons: List<DecisionReason> = emptyList(),
         override val remedy: Remedy? = null,
         override val scamWarning: Boolean = false,
+        /** The backend doesn't accept this phone's key, because it's unknown, replaced, or removed. */
+        val keyRejected: Boolean = false,
     ) : PaymentAuthorization {
         override val decision: SensitiveActionDecision get() = SensitiveActionDecision.BLOCK
     }

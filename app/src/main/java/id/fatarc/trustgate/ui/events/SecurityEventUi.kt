@@ -1,6 +1,7 @@
 package id.fatarc.trustgate.ui.events
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Autorenew
 import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.Cancel
 import androidx.compose.material.icons.outlined.CheckCircle
@@ -10,12 +11,13 @@ import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Payments
 import androidx.compose.material.icons.outlined.PendingActions
+import androidx.compose.material.icons.outlined.PhonelinkErase
 import androidx.compose.material.icons.outlined.Radar
 import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.ui.graphics.vector.ImageVector
-import id.fatarc.trustgate.domain.api.SecurityLevel
 import id.fatarc.trustgate.core.security.TrustGateSecurityService
+import id.fatarc.trustgate.domain.api.SecurityLevel
 import id.fatarc.trustgate.domain.events.SecurityEvent
 import id.fatarc.trustgate.domain.events.SecurityEventType
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
@@ -83,6 +85,8 @@ fun SecurityEvent.headline(): String = when (type) {
         "unknown" -> "No answer from the server"
         else -> "Payment refused"
     }
+    SecurityEventType.KEY_ROTATED -> "Phone key replaced"
+    SecurityEventType.PHONE_REMOVED -> "Phone set up again"
 }
 
 fun SecurityEvent.tone(): Tone = when (type) {
@@ -112,6 +116,9 @@ fun SecurityEvent.tone(): Tone = when (type) {
         "unknown" -> Tone.CAUTION
         else -> Tone.CRITICAL
     }
+
+    SecurityEventType.KEY_ROTATED -> Tone.POSITIVE
+    SecurityEventType.PHONE_REMOVED -> if (metadata["decidedBy"] == "reference-backend") Tone.CAUTION else Tone.NEUTRAL
 
     SecurityEventType.SENSITIVE_ACTION_CANCELLED,
     SecurityEventType.REQUEST_SIGNED,
@@ -143,6 +150,8 @@ val SecurityEvent.icon: ImageVector
             "unknown" -> Icons.Outlined.PendingActions
             else -> Icons.Outlined.GppBad
         }
+        SecurityEventType.KEY_ROTATED -> Icons.Outlined.Autorenew
+        SecurityEventType.PHONE_REMOVED -> Icons.Outlined.PhonelinkErase
     }
 
 fun metadataLabel(key: String): String = when (key) {
@@ -241,6 +250,8 @@ private fun SecurityEvent.group(): EventFilter = when (type) {
     SecurityEventType.REQUEST_VERIFIED,
     SecurityEventType.KEY_REGISTERED,
     SecurityEventType.SECURE_VALUE_STORED,
+    SecurityEventType.KEY_ROTATED,
+    SecurityEventType.PHONE_REMOVED,
     -> EventFilter.LAB
 }
 

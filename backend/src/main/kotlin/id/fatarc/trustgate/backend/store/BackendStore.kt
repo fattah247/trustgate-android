@@ -1,5 +1,6 @@
 package id.fatarc.trustgate.backend.store
 
+import id.fatarc.trustgate.backend.audit.AuditEntry
 import id.fatarc.trustgate.domain.api.Payment
 import id.fatarc.trustgate.domain.api.RequiredConfirmation
 import id.fatarc.trustgate.domain.signing.KeyRole
@@ -15,7 +16,20 @@ class StoredKey(
     val attested: Boolean,
     val rootKeyFingerprint: String?,
     val registeredAt: Instant,
-)
+    /** The phone the key belongs to. It stays the same when the phone replaces its device key. */
+    val phoneId: String,
+    /** When the phone's first device key was registered, which a replacement key keeps. */
+    val phoneEnrolledAt: Instant,
+    /** Set once the key is replaced or the phone removed; a revoked key is never accepted again. */
+    val revokedAt: Instant? = null,
+    val revokedReason: String? = null,
+) {
+    val isRevoked: Boolean get() = revokedAt != null
+
+    fun revoked(at: Instant, reason: String) = StoredKey(
+        keyId, role, encodedPublicKey, deviceKeyId, attested, rootKeyFingerprint, registeredAt, phoneId, phoneEnrolledAt, at, reason,
+    )
+}
 
 enum class ChallengePurpose { REGISTRATION, VERIFICATION, PAYMENT }
 
@@ -67,6 +81,13 @@ interface BackendStore {
 
     fun ledgerSize(): Int
 
-    /** What [deviceKeyId]'s phone was charged at or after [since], oldest first. */
-    fun paymentsSince(deviceKeyId: String, since: Instant): List<Payment>
+    /** What [phoneId] was charged at or after [since], with any of its device keys, oldest first. */
+    fun paymentsSince(phoneId: String, since: Instant): List<Payment>
+
+    fun appendAuditEntry(entry: AuditEntry)
+
+    fun lastAuditEntry(): AuditEntry?
+
+    /** Every audit entry, in sequence order. */
+    fun auditEntries(): Sequence<AuditEntry>
 }

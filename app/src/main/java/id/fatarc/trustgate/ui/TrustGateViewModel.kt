@@ -40,6 +40,7 @@ import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.domain.signing.ReferencePayment
 import id.fatarc.trustgate.domain.signing.ReferenceRequestSigner
 import id.fatarc.trustgate.domain.signing.ReferenceSigningScheme
+import id.fatarc.trustgate.domain.signing.RejectionReason
 import id.fatarc.trustgate.domain.signing.SignedRequest
 import id.fatarc.trustgate.domain.signing.VerificationResult
 import id.fatarc.trustgate.domain.signing.asReceived
@@ -94,6 +95,8 @@ class TrustGateViewModel(
     private var assessmentJob: Job? = null
     private val storageLock = Mutex()
     private var actionJob: Job? = null
+    private var keyJob: Job? = null
+    private var rotateAfterPayment = false
     private var pendingPayment: PendingPayment? = null
     private var nextMessageId = 0L
 
@@ -168,6 +171,7 @@ class TrustGateViewModel(
 
             if (authorization !is PaymentAuthorization.Proceed) {
                 updateDecision(PaymentDecisionState.Blocked(level), PaymentStage.DONE, authorization)
+                if (authorization is PaymentAuthorization.Blocked && authorization.keyRejected) setUpAgainAfterServerDroppedKeys()
                 return@launch
             }
             val keyId = when (authorization.signWith) {
@@ -175,6 +179,9 @@ class TrustGateViewModel(
                 KeyRole.STEP_UP -> keys.stepUp?.keyId
                     ?: return@launch abandonAction("This phone's screen-lock key isn't set up.")
             }
+            // The server asks for a fresh device key once this one has served long enough; it's replaced
+            // after the payment, so the payment itself isn't held up.
+            if (authorization.rotateKey) rotateAfterPayment = true
             val pending = PendingPayment(
                 nonce = authorization.nonce,
                 keyId = keyId,
@@ -631,8 +638,60 @@ class TrustGateViewModel(
         )
     }
 
+    /**
+     * Replaces this phone's device key. The current key vouches for the new one, so the phone keeps
+     * its history with the server, and the old key is never accepted again.
+     */
+    fun rotateDeviceKey() {
+        if (keyJob?.isActive == true) return
+        keyJob = viewModelScope.launch { replaceDeviceKey(announce = true) }
+    }
+
+    private suspend fun replaceDeviceKey(announce: Boolean) {
+        runCatching { keyRegistrar.rotate() }
+            .rethrowCancellation()
+            .onSuccess { result ->
+                _uiState.update { current -> current.copy(keys = KeysUiState(keys = result.keys)) }
+                runCatching { securityService.recordKeyRotated(result.keys.device) }.rethrowCancellation()
+                result.newlyRegistered.filter { it.role == KeyRole.STEP_UP }.forEach { key ->
+                    runCatching { securityService.recordKeyRegistered(key) }.rethrowCancellation()
+                }
+                if (announce) showMessage("Phone key replaced")
+            }
+            .onFailure { error -> if (announce) showMessage(keyProblem(error)) }
+    }
+
+    /** Asks the server to forget this phone, then sets it up again as a new one. */
+    fun removeThisPhone() {
+        if (keyJob?.isActive == true) return
+        keyJob = viewModelScope.launch {
+            runCatching { keyRegistrar.removePhone() }
+                .rethrowCancellation()
+                .onSuccess {
+                    runCatching { securityService.recordPhoneRemoved(byServer = false) }.rethrowCancellation()
+                    _uiState.update { current -> current.copy(keys = KeysUiState()) }
+                    ensureKeys()
+                    showMessage("Phone removed and set up again as a new phone")
+                }
+                .onFailure { error -> showMessage(keyProblem(error)) }
+        }
+    }
+
+    /** The server refused this phone's key as unknown or revoked; start over with fresh keys. */
+    private suspend fun setUpAgainAfterServerDroppedKeys() {
+        runCatching { keyRegistrar.forget() }.rethrowCancellation()
+        runCatching { securityService.recordPhoneRemoved(byServer = true) }.rethrowCancellation()
+        _uiState.update { current -> current.copy(keys = KeysUiState()) }
+        ensureKeys()
+        showMessage("The server stopped accepting this phone's key, so it was set up again")
+    }
+
     /** Adds what happened to the payment to the decision that let it through, unless that was reset meanwhile. */
     private fun publishSubmission(submission: Submission) {
+        if (rotateAfterPayment && submission is Submission.Charged && keyJob?.isActive != true) {
+            rotateAfterPayment = false
+            keyJob = viewModelScope.launch { replaceDeviceKey(announce = false) }
+        }
         _uiState.update { current ->
             if (current.payment.stage == PaymentStage.PAYING) {
                 current.copy(payment = current.payment.copy(submission = submission, stage = PaymentStage.DONE))
@@ -697,7 +756,12 @@ class TrustGateViewModel(
 
         return when (val response = outcome.response) {
             null -> Submission.NoResponse(outcome.attempts)
-            is PaymentResponse.Rejected -> Submission.Refused(response.reason)
+            is PaymentResponse.Rejected -> {
+                if (response.reason == RejectionReason.KEY_REVOKED || response.reason == RejectionReason.UNKNOWN_KEY) {
+                    setUpAgainAfterServerDroppedKeys()
+                }
+                Submission.Refused(response.reason)
+            }
             is PaymentResponse.Processed -> {
                 Submission.Charged(
                     paymentId = response.payment.id,

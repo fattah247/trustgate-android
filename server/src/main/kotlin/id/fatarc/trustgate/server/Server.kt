@@ -23,6 +23,15 @@ fun main() {
     if (config.policyName == ServerConfig.STRICT && integrity == null) {
         log.warn("No Play Integrity credentials: every integrity token will count as unverifiable.")
     }
+    // The head hash goes to the server's own log, outside the database, so a rewrite of the whole
+    // audit table would no longer match what was logged here.
+    val audit = backend.auditStatus()
+    if (audit.intact) {
+        log.info("Audit log intact: {} entries, head {}.", audit.entries, audit.headHash ?: "none")
+    } else {
+        log.error("Audit log broken at entry {}: an entry was changed, removed, or reordered.", audit.brokenAt)
+    }
+    if (config.adminToken == null) log.info("No admin token: the /admin routes are off.")
 
     val environment = applicationEngineEnvironment {
         this.log = log
@@ -34,7 +43,7 @@ fun main() {
         }
         module {
             revocations.startRefreshing(this)
-            trustGateModule(backend, ServerHealth(status = "ok", policy = config.policyName))
+            trustGateModule(backend, ServerHealth(status = "ok", policy = config.policyName), adminToken = config.adminToken)
         }
     }
     embeddedServer(Netty, environment).start(wait = true)

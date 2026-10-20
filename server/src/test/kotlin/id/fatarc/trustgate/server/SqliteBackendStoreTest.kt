@@ -72,7 +72,7 @@ class SqliteBackendStoreTest {
     }
 
     @Test
-    fun `a database from before ledger times were stored is brought up to date with its payments kept`() {
+    fun `a database from before ledger times and phones were stored is brought up to date with its keys and payments kept`() {
         val payment = Payment("PAY-1", 125_000, "IDR", KeyRole.DEVICE, RequiredConfirmation.NONE, clock.now.toString())
         DriverManager.getConnection("jdbc:sqlite:${file.path}").use { old ->
             old.createStatement().use {
@@ -81,6 +81,20 @@ class SqliteBackendStoreTest {
                         device_key_id TEXT NOT NULL, idempotency_key TEXT NOT NULL, fingerprint TEXT NOT NULL, payment TEXT NOT NULL,
                         PRIMARY KEY (device_key_id, idempotency_key))""",
                 )
+            }
+            old.createStatement().use {
+                it.execute(
+                    """CREATE TABLE keys (
+                        key_id TEXT PRIMARY KEY, role TEXT NOT NULL, public_key BLOB NOT NULL, device_key_id TEXT NOT NULL,
+                        attested INTEGER NOT NULL, root_fingerprint TEXT, registered_at INTEGER NOT NULL)""",
+                )
+            }
+            old.prepareStatement("INSERT INTO keys VALUES (?, 'DEVICE', ?, ?, 0, NULL, ?)").use {
+                it.setString(1, device.keyId)
+                it.setBytes(2, device.encodedPublicKey)
+                it.setString(3, device.keyId)
+                it.setLong(4, clock.now.toEpochMilli())
+                it.executeUpdate()
             }
             old.prepareStatement("INSERT INTO ledger VALUES (?, ?, ?, ?)").use {
                 it.setString(1, device.keyId)
@@ -95,5 +109,38 @@ class SqliteBackendStoreTest {
 
         assertThat(store.paymentsSince(device.keyId, clock.now.minusSeconds(60))).containsExactly(payment)
         assertThat(store.paymentsSince(device.keyId, clock.now.plusSeconds(1))).isEmpty()
+        assertThat(store.key(device.keyId)?.phoneId).isEqualTo(device.keyId)
+        assertThat(store.key(device.keyId)?.phoneEnrolledAt).isEqualTo(clock.now)
+    }
+
+    @Test
+    fun `the audit chain survives a restart, and an edit made straight to the database is caught`() {
+        val before = backend()
+        val challenge = before.issueRegistrationChallenge()
+        before.registerKey(KeyRole.DEVICE, device.encodedPublicKey, selfSignedChain(device), challenge)
+        before.revokeByOperator(device.keyId, "fraud reported")
+
+        val store = SqliteBackendStore(file).also(stores::add)
+        val after = ReferenceBackend(developmentPolicy, clock, store = store)
+        val intact = after.auditStatus()
+        store.overwriteAuditDetail(sequence = 1, detail = "nothing happened")
+        val edited = after.auditStatus()
+
+        assertThat(intact.intact).isTrue()
+        assertThat(intact.entries).isEqualTo(2)
+        assertThat(edited.intact).isFalse()
+        assertThat(edited.brokenAt).isEqualTo(1)
+    }
+
+    @Test
+    fun `a revoked key stays revoked after a restart`() {
+        val before = backend()
+        val challenge = before.issueRegistrationChallenge()
+        before.registerKey(KeyRole.DEVICE, device.encodedPublicKey, selfSignedChain(device), challenge)
+        before.revokeByOperator(device.keyId, "fraud reported")
+
+        val after = backend()
+
+        assertThat((after.authorize(device, DeviceRiskLevel.LOW, clock.now) as PaymentAuthorization.Blocked).keyRejected).isTrue()
     }
 }

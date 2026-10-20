@@ -24,6 +24,8 @@ class ServerConfig(
     val revocationUrl: String?,
     /** A Google service account allowed to decode this app's Play Integrity tokens. */
     val playIntegrityCredentials: File?,
+    /** The bearer token the /admin routes require; without one they aren't served at all. */
+    val adminToken: String? = null,
 ) {
     fun policy(integrity: IntegrityVerifier?): BackendPolicy = when (policyName) {
         STRICT -> BackendPolicy.strict(
@@ -60,6 +62,9 @@ class ServerConfig(
                 requireStrongIntegrity = env["TRUSTGATE_REQUIRE_STRONG_INTEGRITY"]?.toBooleanStrict() ?: true,
                 revocationUrl = env["TRUSTGATE_REVOCATION_URL"].let { if (it == "off") null else it ?: RevocationList.URL },
                 playIntegrityCredentials = env["TRUSTGATE_PLAY_INTEGRITY_CREDENTIALS"]?.let(::File),
+                adminToken = env["TRUSTGATE_ADMIN_TOKEN_FILE"]?.let { File(it).readText().trim() }?.also { token ->
+                    require(token.length >= 32) { "The admin token must be at least 32 characters." }
+                },
             )
         }
     }

@@ -1,6 +1,9 @@
 package id.fatarc.trustgate.core.backend
 
+import id.fatarc.trustgate.domain.api.DeviceRemoval
+import id.fatarc.trustgate.domain.api.DeviceRemovalRequest
 import id.fatarc.trustgate.domain.api.KeyRegistrationRequest
+import id.fatarc.trustgate.domain.api.KeyRotationRequest
 import id.fatarc.trustgate.domain.api.PaymentAuthorization
 import id.fatarc.trustgate.domain.api.PaymentAuthorizationRequest
 import id.fatarc.trustgate.domain.api.PaymentResponse
@@ -71,6 +74,23 @@ class HttpTrustGateApi(
         post<StepUpRemovalRequest, StepUpRemoval>(
             TrustGateRoutes.REMOVE_STEP_UP,
             StepUpRemovalRequest(deviceKeyId, base64(challenge), base64(deviceKeyProof)),
+        ).removed
+
+    override suspend fun rotateDeviceKey(
+        currentKeyId: String,
+        encodedPublicKey: ByteArray,
+        attestationChain: List<ByteArray>,
+        challenge: ByteArray,
+        proof: ByteArray,
+    ): RegistrationResult = post(
+        TrustGateRoutes.ROTATE_DEVICE_KEY,
+        KeyRotationRequest(currentKeyId, base64(encodedPublicKey), attestationChain.map(::base64), base64(challenge), base64(proof)),
+    )
+
+    override suspend fun removeDevice(deviceKeyId: String, challenge: ByteArray, proof: ByteArray): Boolean =
+        post<DeviceRemovalRequest, DeviceRemoval>(
+            TrustGateRoutes.REMOVE_DEVICE,
+            DeviceRemovalRequest(deviceKeyId, base64(challenge), base64(proof)),
         ).removed
 
     override suspend fun verificationChallenge(deviceKeyId: String): String =

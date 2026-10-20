@@ -1,8 +1,12 @@
 package id.fatarc.trustgate.server
 
 import id.fatarc.trustgate.backend.ReferenceBackend
+import id.fatarc.trustgate.domain.api.AdminRevocationRequest
+import id.fatarc.trustgate.domain.api.DeviceRemoval
+import id.fatarc.trustgate.domain.api.DeviceRemovalRequest
 import id.fatarc.trustgate.domain.api.ErrorResponse
 import id.fatarc.trustgate.domain.api.KeyRegistrationRequest
+import id.fatarc.trustgate.domain.api.KeyRotationRequest
 import id.fatarc.trustgate.domain.api.PaymentAuthorization
 import id.fatarc.trustgate.domain.api.PaymentAuthorizationRequest
 import id.fatarc.trustgate.domain.api.PaymentResponse
@@ -19,6 +23,7 @@ import id.fatarc.trustgate.domain.api.VerificationChallengeRequest
 import id.fatarc.trustgate.domain.signing.ReceivedRequest
 import id.fatarc.trustgate.domain.signing.ReferenceSigningScheme
 import id.fatarc.trustgate.domain.signing.VerificationResult
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
@@ -41,6 +46,7 @@ import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
+import java.security.MessageDigest
 import java.util.Base64
 import kotlin.time.Duration.Companion.minutes
 
@@ -56,7 +62,12 @@ class RequestLimits(val keysPerMinute: Int = 20, val paymentsPerMinute: Int = 60
 private val KEYS = RateLimitName("keys")
 private val PAYMENTS = RateLimitName("payments")
 
-fun Application.trustGateModule(backend: ReferenceBackend, health: ServerHealth, limits: RequestLimits = RequestLimits()) {
+fun Application.trustGateModule(
+    backend: ReferenceBackend,
+    health: ServerHealth,
+    limits: RequestLimits = RequestLimits(),
+    adminToken: String? = null,
+) {
     install(ContentNegotiation) { json(TrustGateJson) }
     install(RateLimit) {
         // By connection address, not a forwarded header a client could set to anything.
@@ -83,8 +94,34 @@ fun Application.trustGateModule(backend: ReferenceBackend, health: ServerHealth,
     routing {
         get(TrustGateRoutes.HEALTH) { call.respond(health) }
 
-        rateLimit(KEYS) { keyRoutes(backend) }
+        rateLimit(KEYS) {
+            keyRoutes(backend)
+            if (adminToken != null) adminRoutes(backend, adminToken)
+        }
         rateLimit(PAYMENTS) { paymentRoutes(backend) }
+    }
+}
+
+/** For the people running the server: revoke a phone, and check the audit log's chain. */
+private fun Route.adminRoutes(backend: ReferenceBackend, adminToken: String) {
+    val expected = "Bearer $adminToken".toByteArray()
+    suspend fun ApplicationCall.authorized(): Boolean {
+        val presented = request.headers[HttpHeaders.Authorization].orEmpty().toByteArray()
+        // Compared in constant time, so response timing doesn't reveal how much of a guess was right.
+        if (MessageDigest.isEqual(presented, expected)) return true
+        respond(HttpStatusCode.Unauthorized, ErrorResponse("Not allowed."))
+        return false
+    }
+
+    post(TrustGateRoutes.ADMIN_REVOKE) {
+        if (!call.authorized()) return@post
+        val request = call.receive<AdminRevocationRequest>()
+        call.respond(DeviceRemoval(backend.revokeByOperator(request.keyId, request.reason)))
+    }
+
+    get(TrustGateRoutes.ADMIN_AUDIT) {
+        if (!call.authorized()) return@get
+        call.respond(backend.auditStatus())
     }
 }
 
@@ -111,6 +148,23 @@ private fun Route.keyRoutes(backend: ReferenceBackend) {
         val request = call.receive<StepUpRemovalRequest>()
         val removed = backend.removeStepUpKey(request.deviceKeyId, bytes(request.challenge), bytes(request.deviceKeyProof))
         call.respond(StepUpRemoval(removed))
+    }
+
+    post(TrustGateRoutes.ROTATE_DEVICE_KEY) {
+        val request = call.receive<KeyRotationRequest>()
+        val result = backend.rotateDeviceKey(
+            currentKeyId = request.currentKeyId,
+            encodedPublicKey = bytes(request.publicKey),
+            attestationChain = request.certificateChain.map(::bytes),
+            challenge = bytes(request.challenge),
+            proof = bytes(request.proof),
+        )
+        call.respond<RegistrationResult>(result)
+    }
+
+    post(TrustGateRoutes.REMOVE_DEVICE) {
+        val request = call.receive<DeviceRemovalRequest>()
+        call.respond(DeviceRemoval(backend.removeDevice(request.deviceKeyId, bytes(request.challenge), bytes(request.proof))))
     }
 }
 

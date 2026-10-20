@@ -1,5 +1,6 @@
 package id.fatarc.trustgate.backend.store
 
+import id.fatarc.trustgate.backend.audit.AuditEntry
 import id.fatarc.trustgate.domain.api.Payment
 import java.time.Instant
 
@@ -10,6 +11,7 @@ class InMemoryBackendStore : BackendStore {
     private val challenges = HashMap<String, StoredChallenge>()
     private val spent = HashMap<String, Instant>()
     private val ledger = HashMap<Pair<String, String>, LedgerEntry>()
+    private val audit = mutableListOf<AuditEntry>()
 
     @Synchronized
     override fun <T> transaction(block: () -> T): T = block()
@@ -56,10 +58,23 @@ class InMemoryBackendStore : BackendStore {
 
     override fun ledgerSize(): Int = ledger.size
 
-    override fun paymentsSince(deviceKeyId: String, since: Instant): List<Payment> = ledger
-        .filterKeys { (device, _) -> device == deviceKeyId }
+    override fun paymentsSince(phoneId: String, since: Instant): List<Payment> = ledger
+        .filterKeys { (device, _) -> keys[device]?.phoneId == phoneId }
         .values
         .map { it.payment }
         .filter { !Instant.parse(it.processedAt).isBefore(since) }
         .sortedBy { Instant.parse(it.processedAt) }
+
+    override fun appendAuditEntry(entry: AuditEntry) {
+        audit += entry
+    }
+
+    override fun lastAuditEntry(): AuditEntry? = audit.lastOrNull()
+
+    override fun auditEntries(): Sequence<AuditEntry> = audit.toList().asSequence()
+
+    /** Lets a test change a stored entry the way someone with database access could. */
+    fun replaceAuditEntry(entry: AuditEntry) {
+        audit[audit.indexOfFirst { it.sequence == entry.sequence }] = entry
+    }
 }

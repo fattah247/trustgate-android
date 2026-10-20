@@ -1,21 +1,21 @@
 package id.fatarc.trustgate.testing
 
-import id.fatarc.trustgate.domain.api.SecurityLevel
 import id.fatarc.trustgate.core.keys.DeviceKeyProvider
 import id.fatarc.trustgate.core.keys.GeneratedKey
 import id.fatarc.trustgate.core.keys.StepUpKeyInvalidatedException
 import id.fatarc.trustgate.core.keys.StepUpSupport
 import id.fatarc.trustgate.core.storage.SecureValueStore
 import id.fatarc.trustgate.core.storage.SecurityStorageSnapshot
+import id.fatarc.trustgate.domain.api.SecurityLevel
 import id.fatarc.trustgate.domain.events.SecurityEvent
 import id.fatarc.trustgate.domain.events.SecurityEventRepository
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.risk.DeviceSignalCollector
 import id.fatarc.trustgate.domain.risk.RiskSignal
 import id.fatarc.trustgate.domain.signing.KeyRole
+import java.security.Signature
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import java.security.Signature
 
 class MutableSignalCollector(
     var signals: List<RiskSignal>,
@@ -67,6 +67,22 @@ class SoftwareKeyProvider(
         val key = TestKey().also { keys[role] = it }
         if (role == KeyRole.STEP_UP) stepUpInvalidated = false
         return GeneratedKey(role, key.encodedPublicKey, selfSignedChain(key), SecurityLevel.SOFTWARE)
+    }
+
+    private var replacement: TestKey? = null
+
+    override fun generateReplacement(attestationChallenge: ByteArray): GeneratedKey {
+        val key = TestKey().also { replacement = it }
+        return GeneratedKey(KeyRole.DEVICE, key.encodedPublicKey, selfSignedChain(key), SecurityLevel.SOFTWARE)
+    }
+
+    override fun promoteReplacement() {
+        keys[KeyRole.DEVICE] = checkNotNull(replacement)
+        replacement = null
+    }
+
+    override fun discardReplacement() {
+        replacement = null
     }
 
     override fun delete(role: KeyRole) {

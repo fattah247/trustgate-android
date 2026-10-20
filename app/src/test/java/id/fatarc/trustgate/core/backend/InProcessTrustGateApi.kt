@@ -22,6 +22,17 @@ class InProcessTrustGateApi(private val backend: ReferenceBackend) : TrustGateAp
     override suspend fun removeStepUpKey(deviceKeyId: String, challenge: ByteArray, deviceKeyProof: ByteArray) =
         backend.removeStepUpKey(deviceKeyId, challenge, deviceKeyProof)
 
+    override suspend fun rotateDeviceKey(
+        currentKeyId: String,
+        encodedPublicKey: ByteArray,
+        attestationChain: List<ByteArray>,
+        challenge: ByteArray,
+        proof: ByteArray,
+    ) = backend.rotateDeviceKey(currentKeyId, encodedPublicKey, attestationChain, challenge, proof)
+
+    override suspend fun removeDevice(deviceKeyId: String, challenge: ByteArray, proof: ByteArray) =
+        backend.removeDevice(deviceKeyId, challenge, proof)
+
     override suspend fun verificationChallenge(deviceKeyId: String) = backend.issueVerificationChallenge(deviceKeyId)
 
     override suspend fun authorizePayment(request: PaymentAuthorizationRequest) = backend.authorizePayment(
