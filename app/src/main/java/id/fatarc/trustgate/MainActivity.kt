@@ -16,6 +16,18 @@ import kotlinx.coroutines.launch
 
 // A FragmentActivity so the system biometric prompt can host itself for step-up confirmation.
 class MainActivity : FragmentActivity() {
+    private val container get() = (application as TrustGateApplication).container
+
+    override fun onStart() {
+        super.onStart()
+        container.screenRecording.watch(this)
+    }
+
+    override fun onStop() {
+        container.screenRecording.stop(this)
+        super.onStop()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()

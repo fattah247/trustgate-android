@@ -59,6 +59,19 @@ object SignalCatalog {
         "The app wasn't installed from a store, so it could be a modified copy.",
     )
 
+    val CALL_ACTIVE = SignalDefinition(
+        "call_active", "On a call", "Not on a call", SignalCategory.SCAM, SignalSeverity.MEDIUM,
+        "Scammers often stay on the line and talk people through a payment.",
+    )
+    val SCREEN_READER_APP = SignalDefinition(
+        "screen_reader_app", "App reading the screen", "No apps reading the screen", SignalCategory.SCAM, SignalSeverity.MEDIUM,
+        "An app with accessibility access, other than a real accessibility tool, can read and tap anything on screen.",
+    )
+    val SCREEN_RECORDING = SignalDefinition(
+        "screen_recording", "Screen being recorded", "Screen not recorded", SignalCategory.SCAM, SignalSeverity.MEDIUM,
+        "Something is recording or sharing this screen, so someone else may be watching.",
+    )
+
     val all: List<SignalDefinition> = listOf(
         ROOT_SU_PATH,
         ROOT_PACKAGE,
@@ -68,6 +81,9 @@ object SignalCatalog {
         DEBUGGER_CONNECTED,
         APP_DEBUGGABLE,
         INSTALLER_SOURCE_UNKNOWN,
+        CALL_ACTIVE,
+        SCREEN_READER_APP,
+        SCREEN_RECORDING,
     )
 
     private val byId = all.associateBy { it.id }

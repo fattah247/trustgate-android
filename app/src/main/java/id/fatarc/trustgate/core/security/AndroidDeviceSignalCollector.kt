@@ -1,9 +1,12 @@
 package id.fatarc.trustgate.core.security
 
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Context
 import android.content.pm.ApplicationInfo
+import android.media.AudioManager
 import android.os.Build
 import android.os.Debug
+import android.view.accessibility.AccessibilityManager
 import id.fatarc.trustgate.domain.risk.DeviceSignalCollector
 import id.fatarc.trustgate.domain.risk.RiskSignal
 import id.fatarc.trustgate.domain.risk.SignalCatalog
@@ -11,6 +14,7 @@ import java.io.File
 
 class AndroidDeviceSignalCollector(
     private val context: Context,
+    private val screenRecording: ScreenRecordingMonitor,
 ) : DeviceSignalCollector {
 
     override fun collectSignals(): List<RiskSignal> {
@@ -49,7 +53,34 @@ class AndroidDeviceSignalCollector(
             SignalCatalog.DEBUGGER_CONNECTED.observed(Debug.isDebuggerConnected()),
             SignalCatalog.APP_DEBUGGABLE.observed((context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0),
             SignalCatalog.INSTALLER_SOURCE_UNKNOWN.observed(installerPackage.isNullOrBlank()),
+            SignalCatalog.CALL_ACTIVE.observed(isOnCall()),
+            SignalCatalog.SCREEN_READER_APP.observed(screenReadingApps().isNotEmpty()),
+            SignalCatalog.SCREEN_RECORDING.observed(screenRecording.isRecorded),
         )
+    }
+
+    /** A phone or internet call in progress; the audio mode says so without any call permission. */
+    private fun isOnCall(): Boolean {
+        val mode = context.getSystemService(AudioManager::class.java)?.mode ?: return false
+        return mode == AudioManager.MODE_IN_CALL || mode == AudioManager.MODE_IN_COMMUNICATION
+    }
+
+    /**
+     * Turned-on accessibility services that aren't accessibility tools. From Android 12 a service
+     * says whether it is one, and Google Play checks that claim; before that, services that came with
+     * the phone are given the benefit of the doubt.
+     */
+    private fun screenReadingApps(): List<String> {
+        val manager = context.getSystemService(AccessibilityManager::class.java) ?: return emptyList()
+        return manager.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+            .filterNot { service ->
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    service.isAccessibilityTool
+                } else {
+                    (service.resolveInfo.serviceInfo.applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+                }
+            }
+            .map { it.id }
     }
 
     private fun resolveInstallerPackage(): String? {

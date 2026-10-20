@@ -292,7 +292,7 @@ class TrustGateSecurityService(
         SignalCategory.ROOT -> SecurityEventType.ROOT_SIGNAL_FOUND
         SignalCategory.EMULATOR -> SecurityEventType.EMULATOR_SIGNAL_FOUND
         SignalCategory.DEBUGGER -> SecurityEventType.DEBUGGER_ATTACHED
-        SignalCategory.INSTALLER -> null
+        SignalCategory.INSTALLER, SignalCategory.SCAM -> null
     }
 
     private fun SensitiveActionDecision.toSecurityEventType(): SecurityEventType = when (this) {

@@ -3,6 +3,10 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Hide other apps' overlays while a payment screen shows (Android 12+). -->
+    <uses-permission android:name="android.permission.HIDE_OVERLAY_WINDOWS" />
+    <!-- Know when this app's own window is recorded or shared (Android 15+). -->
+    <uses-permission android:name="android.permission.DETECT_SCREEN_RECORDING" />
 
     <!-- Android 11+ hides other apps unless they're declared; these are the root managers the signal checks for. -->
     <queries>

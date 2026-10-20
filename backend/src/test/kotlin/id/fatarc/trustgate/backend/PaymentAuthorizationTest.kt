@@ -236,4 +236,14 @@ class PaymentAuthorizationTest {
         assertThat(authorization.decision).isEqualTo(SensitiveActionDecision.BLOCK)
         assertThat(authorization.reasons.map { it.text }).contains("Play Integrity in test mode")
     }
+
+    @Test
+    fun `paying during a call asks for confirmation and warns of a scam`() {
+        val authorization = backendWith(developmentPolicy).authorize(
+            evidence(listOf(ReportedSignal(SignalCatalog.CALL_ACTIVE.id, detected = true))),
+        )
+
+        assertThat(authorization.decision).isEqualTo(SensitiveActionDecision.REQUIRE_CONFIRMATION)
+        assertThat(authorization.scamWarning).isTrue()
+    }
 }

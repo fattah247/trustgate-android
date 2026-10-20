@@ -21,6 +21,9 @@ enum class SignalCategory {
     EMULATOR,
     DEBUGGER,
     INSTALLER,
+
+    /** What's happening on the phone right now that matches how payment scams usually go. */
+    SCAM,
 }
 
 data class RiskSignal(

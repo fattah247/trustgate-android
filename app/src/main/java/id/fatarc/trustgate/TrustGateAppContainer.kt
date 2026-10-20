@@ -12,6 +12,7 @@ import id.fatarc.trustgate.core.keys.AndroidDeviceKeyProvider
 import id.fatarc.trustgate.core.keys.DeviceKeyProvider
 import id.fatarc.trustgate.core.keys.KeyRegistrar
 import id.fatarc.trustgate.core.security.AndroidDeviceSignalCollector
+import id.fatarc.trustgate.core.security.ScreenRecordingMonitor
 import id.fatarc.trustgate.core.security.TrustGateSecurityService
 import id.fatarc.trustgate.core.storage.KeystoreSecureValueStore
 import id.fatarc.trustgate.core.storage.SecureValueStore
@@ -38,8 +39,10 @@ class TrustGateAppContainer(
         else -> IntegrityTokenSource { null }
     }
 
+    val screenRecording = ScreenRecordingMonitor()
+
     val securityService = TrustGateSecurityService(
-        signalCollector = AndroidDeviceSignalCollector(context),
+        signalCollector = AndroidDeviceSignalCollector(context, screenRecording),
         riskScorer = RiskScorer(),
         eventRepository = securityEventRepository,
     )

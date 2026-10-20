@@ -9,6 +9,7 @@ import id.fatarc.trustgate.domain.api.Remedy
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.risk.RiskScorer
 import id.fatarc.trustgate.domain.risk.SignalCatalog
+import id.fatarc.trustgate.domain.risk.SignalCategory
 import id.fatarc.trustgate.domain.signing.ReferenceSigningScheme
 import java.time.Duration
 import java.time.Instant
@@ -52,7 +53,7 @@ class RiskPolicy(
             findings.note("No problems found")
         } else {
             val scored = scorer.score(signals).level
-            flagged.forEach { findings.note(it.name, scored) }
+            flagged.forEach { findings.note(it.name, scored, scam = it.category == SignalCategory.SCAM) }
         }
 
         if (integrityToken == null) {

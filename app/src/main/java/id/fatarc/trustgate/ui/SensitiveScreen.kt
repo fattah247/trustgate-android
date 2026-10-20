@@ -3,6 +3,7 @@ package id.fatarc.trustgate.ui
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.os.Build
 import android.view.View
 import android.view.WindowManager
 import androidx.compose.runtime.Composable
@@ -12,9 +13,10 @@ import id.fatarc.trustgate.BuildConfig
 import java.util.WeakHashMap
 
 /**
- * Hardens the window while a sensitive screen is showing. Taps that arrive through another app's
- * overlay are ignored (tapjacking), and release builds block screenshots, screen recording, and
- * the recents thumbnail. Debug builds still allow capture so screens can be documented and tested.
+ * Hardens the window while a sensitive screen is showing. Other apps' overlays are hidden on
+ * Android 12 and later, taps that arrive through one are ignored (tapjacking), and release builds
+ * block screenshots, screen recording, and the recents thumbnail. Debug builds still allow capture
+ * so screens can be documented and tested.
  */
 @Composable
 fun SensitiveScreen() {
@@ -54,6 +56,7 @@ private object SensitiveWindows {
         holders[activity] = count
         if (count == 1) {
             view.filterTouchesWhenObscured = true
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) activity.window.setHideOverlayWindows(true)
             if (BLOCK_CAPTURE) activity.window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         }
     }
@@ -66,6 +69,7 @@ private object SensitiveWindows {
         }
         holders.remove(activity)
         view.filterTouchesWhenObscured = false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) activity.window.setHideOverlayWindows(false)
         if (BLOCK_CAPTURE) activity.window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
     }
 
