@@ -16,6 +16,7 @@ import id.fatarc.trustgate.domain.api.Payment
 import id.fatarc.trustgate.domain.api.PaymentAuthorization
 import id.fatarc.trustgate.domain.api.PaymentResponse
 import id.fatarc.trustgate.domain.api.RegistrationResult
+import id.fatarc.trustgate.domain.api.DecisionReason
 import id.fatarc.trustgate.domain.api.RequiredConfirmation
 import id.fatarc.trustgate.domain.api.TrustGateJson
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
@@ -193,7 +194,7 @@ class ReferenceBackend(
         integrityToken: String?,
         receivedAt: Instant = clock.instant(),
     ): PaymentAuthorization = store.transaction {
-        fun refuse(reason: String) = PaymentAuthorization.Blocked(DeviceRiskLevel.HIGH, listOf(reason))
+        fun refuse(reason: String) = PaymentAuthorization.Blocked(DeviceRiskLevel.HIGH, listOf(DecisionReason(reason, DeviceRiskLevel.HIGH)))
         val key = store.key(deviceKeyId)?.takeIf { it.role == KeyRole.DEVICE }
             ?: return@transaction refuse("Unknown phone")
         if (!verifySignature(key, evidence.toByteArray(), signature)) return@transaction refuse("Report not signed by this phone")
@@ -205,12 +206,14 @@ class ReferenceBackend(
             return@transaction refuse("Report out of date")
         }
         val assessment = policy.risk.assess(report, ReferenceSigningScheme.sha256Hex(evidence), integrityToken, receivedAt)
-        authorization(deviceKeyId, assessment.level, assessment.reasons)
+        authorization(deviceKeyId, assessment)
     }
 
-    private fun authorization(deviceKeyId: String, level: DeviceRiskLevel, reasons: List<String>): PaymentAuthorization {
+    private fun authorization(deviceKeyId: String, assessment: RiskPolicy.Assessment): PaymentAuthorization {
+        val level = assessment.level
         return when (val decision = gate.decide(level)) {
-            SensitiveActionDecision.BLOCK -> PaymentAuthorization.Blocked(level, reasons)
+            SensitiveActionDecision.BLOCK ->
+                PaymentAuthorization.Blocked(level, assessment.reasons, assessment.remedy, assessment.scamWarning)
             SensitiveActionDecision.ALLOW,
             SensitiveActionDecision.REQUIRE_CONFIRMATION,
             -> {
@@ -223,7 +226,16 @@ class ReferenceBackend(
                     else -> RequiredConfirmation.TAP
                 }
                 val nonce = issueChallenge(ChallengePurpose.PAYMENT, deviceKeyId, confirmation)
-                PaymentAuthorization.Proceed(decision, level, nonce, signWith, confirmation, reasons)
+                PaymentAuthorization.Proceed(
+                    decision = decision,
+                    level = level,
+                    nonce = nonce,
+                    signWith = signWith,
+                    confirmation = confirmation,
+                    reasons = assessment.reasons,
+                    remedy = assessment.remedy,
+                    scamWarning = assessment.scamWarning,
+                )
             }
         }
     }

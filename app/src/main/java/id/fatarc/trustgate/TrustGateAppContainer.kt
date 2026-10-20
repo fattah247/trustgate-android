@@ -34,7 +34,7 @@ class TrustGateAppContainer(
     val paymentClient = PaymentClient(transport)
     val integrityTokens: IntegrityTokenSource = when {
         BuildConfig.PLAY_INTEGRITY_PROJECT_NUMBER > 0 -> PlayIntegrityTokenSource(context, BuildConfig.PLAY_INTEGRITY_PROJECT_NUMBER)
-        BuildConfig.DEBUG -> MockIntegrityTokenSource
+        BuildConfig.DEBUG -> MockIntegrityTokenSource()
         else -> IntegrityTokenSource { null }
     }
 

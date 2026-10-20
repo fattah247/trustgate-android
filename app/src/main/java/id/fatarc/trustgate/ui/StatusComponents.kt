@@ -30,6 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -114,18 +115,22 @@ fun Pill(
     tone: Tone,
     modifier: Modifier = Modifier,
     onTinted: Boolean = false,
+    leadingIcon: ImageVector? = null,
 ) {
     Surface(
         modifier = modifier,
         shape = CircleShape,
         color = if (onTinted) MaterialTheme.colorScheme.surfaceContainerLowest.copy(alpha = 0.7f) else tone.containerColor(),
-        contentColor = if (onTinted) tone.onContainerColor() else tone.onContainerColor(),
+        contentColor = tone.onContainerColor(),
     ) {
-        Text(
-            text = text,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-            style = MaterialTheme.typography.labelLarge,
-        )
+        Row(
+            modifier = Modifier.padding(start = if (leadingIcon != null) 8.dp else 12.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            leadingIcon?.let { Icon(it, contentDescription = null, modifier = Modifier.size(16.dp)) }
+            Text(text = text, style = MaterialTheme.typography.labelLarge)
+        }
     }
 }
 

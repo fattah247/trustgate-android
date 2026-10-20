@@ -2,33 +2,43 @@ package id.fatarc.trustgate.ui.lab
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.ContentCut
 import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Receipt
 import androidx.compose.material.icons.outlined.Repeat
 import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.Shop
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import id.fatarc.trustgate.core.integrity.PretendVerdict
 import id.fatarc.trustgate.core.keys.RegisteredKey
 import id.fatarc.trustgate.domain.api.VerifiedBootState
 import id.fatarc.trustgate.domain.signing.KeyRole
@@ -60,12 +70,14 @@ fun LabScreen(
     uiState: TrustGateUiState,
     onRunTest: (LabTest) -> Unit,
     onSetSimulateLostResponse: (Boolean) -> Unit,
+    onSetPretendVerdict: (PretendVerdict) -> Unit,
     onStoreTestValues: () -> Unit,
     onOpenRequest: () -> Unit,
     onOpenAbout: () -> Unit,
 ) {
     SensitiveScreen()
     var openKey by rememberSaveable { mutableStateOf<KeyRole?>(null) }
+    var choosingVerdict by rememberSaveable { mutableStateOf(false) }
     val keys = uiState.keys.keys
 
     ScreenScaffold(title = "Lab") {
@@ -101,6 +113,21 @@ fun LabScreen(
                     checked = uiState.simulateLostResponse,
                     onCheckedChange = onSetSimulateLostResponse,
                 )
+            }
+        }
+
+        uiState.pretendVerdict?.let { verdict ->
+            item(key = "play") {
+                Section(title = "Pretend Google Play found") {
+                    ListRow(
+                        headline = verdict.title,
+                        supporting = "Test mode: this build makes up its Play Integrity answer",
+                        leadingIcon = Icons.Outlined.Shop,
+                        trailing = { Icon(Icons.Outlined.ExpandMore, contentDescription = null) },
+                        onClickLabel = "Change",
+                        onClick = { choosingVerdict = true },
+                    )
+                }
             }
         }
 
@@ -180,7 +207,63 @@ fun LabScreen(
     if (shown != null) {
         ModalBottomSheet(onDismissRequest = { openKey = null }) { KeyDetails(shown) }
     }
+    if (choosingVerdict) {
+        ModalBottomSheet(onDismissRequest = { choosingVerdict = false }) {
+            VerdictChoices(
+                selected = uiState.pretendVerdict,
+                onSelect = { verdict ->
+                    choosingVerdict = false
+                    onSetPretendVerdict(verdict)
+                },
+            )
+        }
+    }
 }
+
+@Composable
+private fun VerdictChoices(
+    selected: PretendVerdict?,
+    onSelect: (PretendVerdict) -> Unit,
+) {
+    Column(modifier = Modifier.navigationBarsPadding().padding(bottom = 16.dp).selectableGroup()) {
+        Text(
+            "Pretend Google Play found…",
+            modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 4.dp),
+            style = MaterialTheme.typography.titleLarge,
+        )
+        Text(
+            "Your next payment carries this answer, and the server reacts as it would to Google's.",
+            modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 8.dp),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        PretendVerdict.entries.forEach { verdict ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .selectable(selected = verdict == selected, role = Role.RadioButton, onClick = { onSelect(verdict) })
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                RadioButton(selected = verdict == selected, onClick = null)
+                Text(verdict.title, style = MaterialTheme.typography.bodyLarge)
+            }
+        }
+    }
+}
+
+private val PretendVerdict.title: String
+    get() = when (this) {
+        PretendVerdict.NOTHING -> "Nothing unusual"
+        PretendVerdict.REMOTE_CONTROL -> "A remote-control app running"
+        PretendVerdict.UNKNOWN_SCREEN_READER -> "An unknown app reading the screen"
+        PretendVerdict.SCREEN_RECORDER -> "A screen recorder running"
+        PretendVerdict.MALWARE -> "Dangerous apps on the phone"
+        PretendVerdict.PLAY_PROTECT_OFF -> "Play Protect turned off"
+        PretendVerdict.NOT_FROM_PLAY -> "App not installed from Google Play"
+        PretendVerdict.TOKEN_FARMING -> "Too many checks from this phone"
+    }
 
 @Composable
 private fun LabTestRow(

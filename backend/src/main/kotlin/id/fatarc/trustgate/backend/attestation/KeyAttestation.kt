@@ -18,6 +18,8 @@ data class AttestationApplicationId(
     val packageNames: Set<String>,
     /** SHA-256 digests of the signing certificates of the app that generated the key, lowercase hex. */
     val signatureDigests: Set<String>,
+    /** Each package's version code when it generated the key. */
+    val packageVersions: Map<String, Long> = emptyMap(),
 )
 
 /** How a key came into Keystore. Only a generated key is known never to have existed outside it. */
@@ -178,6 +180,7 @@ object KeyDescriptionParser {
         return AttestationApplicationId(
             packageNames = fields[0].children().mapTo(mutableSetOf()) { info -> info.children()[0].content.decodeToString() },
             signatureDigests = fields[1].children().mapTo(mutableSetOf()) { digest -> ReferenceSigningScheme.hex(digest.content) },
+            packageVersions = fields[0].children().associate { info -> info.children()[0].content.decodeToString() to info.children()[1].longValue() },
         )
     }
 

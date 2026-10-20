@@ -51,16 +51,41 @@ class PlayIntegrityVerifier(
         val requestDetails: RequestDetails,
         val appIntegrity: AppIntegrity = AppIntegrity(),
         val deviceIntegrity: DeviceIntegrity = DeviceIntegrity(),
+        val accountDetails: AccountDetails = AccountDetails(),
+        // Only present when the optional verdicts are turned on in Play Console.
+        val environmentDetails: EnvironmentDetails? = null,
     )
 
     @Serializable
     internal class RequestDetails(val requestPackageName: String, val requestHash: String = "", val timestampMillis: String)
 
     @Serializable
-    internal class AppIntegrity(val appRecognitionVerdict: String? = null, val certificateSha256Digest: List<String> = emptyList())
+    internal class AppIntegrity(
+        val appRecognitionVerdict: String? = null,
+        val certificateSha256Digest: List<String> = emptyList(),
+        val versionCode: String? = null,
+    )
 
     @Serializable
-    internal class DeviceIntegrity(val deviceRecognitionVerdict: List<String> = emptyList())
+    internal class DeviceIntegrity(
+        val deviceRecognitionVerdict: List<String> = emptyList(),
+        val recentDeviceActivity: RecentDeviceActivity? = null,
+    )
+
+    @Serializable
+    internal class RecentDeviceActivity(val deviceActivityLevel: String? = null)
+
+    @Serializable
+    internal class AccountDetails(val appLicensingVerdict: String? = null)
+
+    @Serializable
+    internal class EnvironmentDetails(
+        val appAccessRiskVerdict: AppAccessRiskVerdict? = null,
+        val playProtectVerdict: String? = null,
+    )
+
+    @Serializable
+    internal class AppAccessRiskVerdict(val appsDetected: List<String> = emptyList())
 
     internal companion object {
         private val json = Json { ignoreUnknownKeys = true }
@@ -78,6 +103,11 @@ class PlayIntegrityVerifier(
                         .joinToString("") { "%02x".format(it) }
                 },
                 deviceRecognition = payload.deviceIntegrity.deviceRecognitionVerdict.toSet(),
+                appVersionCode = payload.appIntegrity.versionCode?.toLongOrNull(),
+                appLicensing = payload.accountDetails.appLicensingVerdict,
+                appsDetected = payload.environmentDetails?.appAccessRiskVerdict?.appsDetected?.toSet(),
+                playProtect = payload.environmentDetails?.playProtectVerdict,
+                deviceActivity = payload.deviceIntegrity.recentDeviceActivity?.deviceActivityLevel,
             )
         }
     }

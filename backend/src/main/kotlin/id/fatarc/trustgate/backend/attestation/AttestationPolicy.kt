@@ -22,6 +22,8 @@ class AttestationPolicy(
     val allowUnattested: Boolean,
     /** Refuse attested keys while there's no recent copy of Google's status list to check them against. */
     val requireRevocationList: Boolean = false,
+    /** The oldest app version that may register a key, as its version code. */
+    val minimumAppVersionCode: Long? = null,
 ) {
     fun trustsRoot(report: AttestationReport): Boolean = report.rootKeyFingerprint in trustedRootKeys
 
@@ -56,6 +58,8 @@ class AttestationPolicy(
             trustedRootKeys.isNotEmpty() && !trustsRoot(report) -> "The chain doesn't end at a Google attestation root."
             app == null -> "The attestation doesn't say which app the key belongs to."
             packageName !in app.packageNames -> "The key was generated for another app."
+            minimumAppVersionCode != null && (app.packageVersions[packageName] ?: 0) < minimumAppVersionCode ->
+                "This version of the app is too old. Update it and try again."
             signingCertificateDigests.isNotEmpty() && app.signatureDigests.none { it in signingCertificateDigests } ->
                 "The app that made the key isn't signed with this app's certificate, so it may be repackaged."
             description.origin != null && description.origin != KeyOrigin.GENERATED ->
@@ -72,7 +76,12 @@ class AttestationPolicy(
     }
 
     companion object {
-        fun strict(packageName: String, signingCertificateDigests: Set<String>, minimumOsPatchLevel: Int? = null) = AttestationPolicy(
+        fun strict(
+            packageName: String,
+            signingCertificateDigests: Set<String>,
+            minimumOsPatchLevel: Int? = null,
+            minimumAppVersionCode: Long? = null,
+        ) = AttestationPolicy(
             packageName = packageName,
             signingCertificateDigests = signingCertificateDigests,
             trustedRootKeys = GoogleAttestationRoots.keyFingerprints,
@@ -81,6 +90,7 @@ class AttestationPolicy(
             minimumOsPatchLevel = minimumOsPatchLevel,
             allowUnattested = false,
             requireRevocationList = true,
+            minimumAppVersionCode = minimumAppVersionCode,
         )
 
         fun development(packageName: String, signingCertificateDigests: Set<String>) = AttestationPolicy(

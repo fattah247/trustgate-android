@@ -6,9 +6,11 @@ import id.fatarc.trustgate.core.backend.BackendTransport
 import id.fatarc.trustgate.core.backend.InProcessTrustGateApi
 import id.fatarc.trustgate.core.backend.PaymentClient
 import id.fatarc.trustgate.core.integrity.MockIntegrityTokenSource
+import id.fatarc.trustgate.core.integrity.PretendVerdict
 import id.fatarc.trustgate.core.keys.KeyRegistrar
 import id.fatarc.trustgate.core.security.ConfirmationMethod
 import id.fatarc.trustgate.core.security.TrustGateSecurityService
+import id.fatarc.trustgate.domain.api.Remedy
 import id.fatarc.trustgate.domain.events.SecurityEventType
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.risk.RiskScorer
@@ -47,6 +49,7 @@ class TrustGateViewModelTest {
     private val backend = ReferenceBackend(developmentPolicy)
     private val api = InProcessTrustGateApi(backend)
     private val transport = BackendTransport(api)
+    private val integrityTokens = MockIntegrityTokenSource()
 
     @Before
     fun setUp() {
@@ -68,7 +71,7 @@ class TrustGateViewModelTest {
         keyRegistrar = KeyRegistrar(keys, api, dispatcher),
         transport = transport,
         paymentClient = PaymentClient(transport, baseDelayMillis = 100),
-        integrityTokens = MockIntegrityTokenSource,
+        integrityTokens = integrityTokens,
         ioDispatcher = dispatcher,
     ).also { advanceUntilIdle() }
 
@@ -292,6 +295,21 @@ class TrustGateViewModelTest {
         assertThat(results[LabTest.CHANGED_AMOUNT]).containsExactly(VerificationResult.Rejected(RejectionReason.SIGNATURE_MISMATCH))
         assertThat(results[LabTest.SENT_LATE]).containsExactly(VerificationResult.Rejected(RejectionReason.OUTSIDE_TIME_WINDOW))
         assertThat(viewModel.uiState.value.lab.running).isNull()
+    }
+
+    @Test
+    fun `a remote-control app reported by Play blocks the payment, warns of a scam, and says how to fix it`() = runTest(dispatcher) {
+        val viewModel = start()
+        viewModel.setPretendVerdict(PretendVerdict.REMOTE_CONTROL)
+
+        viewModel.attemptPayment()
+        advanceUntilIdle()
+
+        assertThat(payment.latestDecision).isInstanceOf(PaymentDecisionState.Blocked::class.java)
+        assertThat(payment.remedy).isEqualTo(Remedy.CLOSE_ALL_ACCESS_RISK)
+        assertThat(payment.scamWarning).isTrue()
+        assertThat(payment.reasons.filter { it.isProblem }.map { it.text }).containsExactly("Remote-control app running")
+        assertThat(backend.chargedPayments).isEqualTo(0)
     }
 
     @Test

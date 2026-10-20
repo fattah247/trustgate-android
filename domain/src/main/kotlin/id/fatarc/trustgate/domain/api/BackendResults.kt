@@ -18,12 +18,27 @@ enum class RequiredConfirmation {
     TAP,
 }
 
+/** One thing the backend weighed, and how far it alone would push the risk level. LOW means it's fine. */
+@Serializable
+data class DecisionReason(
+    val text: String,
+    val level: DeviceRiskLevel = DeviceRiskLevel.LOW,
+) {
+    val isProblem: Boolean get() = level > DeviceRiskLevel.LOW
+}
+
 /** The backend's answer to a protected action: its own risk level, why, and what the request needs. */
 @Serializable
 sealed interface PaymentAuthorization {
     val decision: SensitiveActionDecision
     val level: DeviceRiskLevel
-    val reasons: List<String>
+    val reasons: List<DecisionReason>
+
+    /** What the person can do about the worst problem found, when there's something they can do. */
+    val remedy: Remedy?
+
+    /** What was found looks like someone talking the person into paying, so the app warns them. */
+    val scamWarning: Boolean
 
     @Serializable
     @SerialName("proceed")
@@ -33,14 +48,18 @@ sealed interface PaymentAuthorization {
         val nonce: String,
         val signWith: KeyRole,
         val confirmation: RequiredConfirmation,
-        override val reasons: List<String> = emptyList(),
+        override val reasons: List<DecisionReason> = emptyList(),
+        override val remedy: Remedy? = null,
+        override val scamWarning: Boolean = false,
     ) : PaymentAuthorization
 
     @Serializable
     @SerialName("blocked")
     data class Blocked(
         override val level: DeviceRiskLevel,
-        override val reasons: List<String> = emptyList(),
+        override val reasons: List<DecisionReason> = emptyList(),
+        override val remedy: Remedy? = null,
+        override val scamWarning: Boolean = false,
     ) : PaymentAuthorization {
         override val decision: SensitiveActionDecision get() = SensitiveActionDecision.BLOCK
     }

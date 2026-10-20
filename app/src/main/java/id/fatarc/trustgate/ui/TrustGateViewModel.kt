@@ -9,6 +9,8 @@ import id.fatarc.trustgate.core.backend.BackendTransport
 import id.fatarc.trustgate.core.backend.PaymentClient
 import id.fatarc.trustgate.core.backend.TrustGateApi
 import id.fatarc.trustgate.core.integrity.IntegrityTokenSource
+import id.fatarc.trustgate.core.integrity.MockIntegrityTokenSource
+import id.fatarc.trustgate.core.integrity.PretendVerdict
 import id.fatarc.trustgate.core.keys.DeviceKeyProvider
 import id.fatarc.trustgate.core.keys.KeyRegistrar
 import id.fatarc.trustgate.core.keys.KeySet
@@ -21,6 +23,7 @@ import id.fatarc.trustgate.core.storage.SecureValueStore
 import id.fatarc.trustgate.core.storage.SecurityStorageSnapshot
 import id.fatarc.trustgate.data.securityevent.AuditLogExport
 import id.fatarc.trustgate.domain.api.DeviceEvidence
+import id.fatarc.trustgate.domain.api.DecisionReason
 import id.fatarc.trustgate.domain.api.PaymentAuthorization
 import id.fatarc.trustgate.domain.api.PaymentAuthorizationRequest
 import id.fatarc.trustgate.domain.api.PaymentResponse
@@ -71,7 +74,7 @@ class TrustGateViewModel(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(
-        TrustGateUiState(),
+        TrustGateUiState(pretendVerdict = (integrityTokens as? MockIntegrityTokenSource)?.pretend),
     )
     val uiState: StateFlow<TrustGateUiState> = _uiState.asStateFlow()
 
@@ -158,7 +161,7 @@ class TrustGateViewModel(
             runCatching { securityService.recordGateDecision(level, authorization.decision, authorization.reasons) }.rethrowCancellation()
 
             if (authorization !is PaymentAuthorization.Proceed) {
-                updateDecision(PaymentDecisionState.Blocked(level), authorization.reasons, PaymentStage.DONE)
+                updateDecision(PaymentDecisionState.Blocked(level), PaymentStage.DONE, authorization)
                 return@launch
             }
             val keyId = when (authorization.signWith) {
@@ -175,7 +178,7 @@ class TrustGateViewModel(
             )
             when (authorization.confirmation) {
                 RequiredConfirmation.NONE -> {
-                    updateDecision(PaymentDecisionState.Allowed(level), authorization.reasons, PaymentStage.PAYING)
+                    updateDecision(PaymentDecisionState.Allowed(level), PaymentStage.PAYING, authorization)
                     val submission = signAndSubmit(pending, keyProvider::signWithDeviceKey)
                     // A profile switch cancels this job; don't publish a result for the old profile.
                     ensureActive()
@@ -184,12 +187,12 @@ class TrustGateViewModel(
 
                 RequiredConfirmation.STEP_UP_KEY -> {
                     pendingPayment = pending
-                    updateDecision(PaymentDecisionState.ConfirmationRequired(level, ConfirmationMethod.DEVICE_CREDENTIAL), authorization.reasons, PaymentStage.CONFIRMING)
+                    updateDecision(PaymentDecisionState.ConfirmationRequired(level, ConfirmationMethod.DEVICE_CREDENTIAL), PaymentStage.CONFIRMING, authorization)
                 }
 
                 RequiredConfirmation.TAP -> {
                     pendingPayment = pending
-                    updateDecision(PaymentDecisionState.ConfirmationRequired(level, ConfirmationMethod.TAP), authorization.reasons, PaymentStage.CONFIRMING)
+                    updateDecision(PaymentDecisionState.ConfirmationRequired(level, ConfirmationMethod.TAP), PaymentStage.CONFIRMING, authorization)
                 }
             }
         }
@@ -236,14 +239,15 @@ class TrustGateViewModel(
         val pending = pendingPayment?.takeIf { decision.method == method } ?: return
         pendingPayment = null
         // Leave the confirmation state first so a second tap cannot record a second approval.
-        updateDecision(PaymentDecisionState.Confirmed(decision.riskLevel, method), _uiState.value.payment.reasons, PaymentStage.PAYING)
+        updateDecision(PaymentDecisionState.Confirmed(decision.riskLevel, method), PaymentStage.PAYING)
         assessmentJob?.cancel()
         actionJob = viewModelScope.launch {
             // The device may have changed while the person was confirming, so check it again before approving.
             val report = reportForSensitiveAction() ?: return@launch abandonAction("Couldn't check this phone again.")
             if (report.level == DeviceRiskLevel.HIGH) {
                 runCatching { securityService.recordBlockedAfterConfirmation(report) }.rethrowCancellation()
-                updateDecision(PaymentDecisionState.Blocked(report.level), listOf("Became high risk while waiting"), PaymentStage.DONE)
+                val stopped = PaymentAuthorization.Blocked(report.level, listOf(DecisionReason("Turned high risk while you confirmed", report.level)))
+                updateDecision(PaymentDecisionState.Blocked(report.level), PaymentStage.DONE, stopped)
                 return@launch
             }
             val recorded = runCatching {
@@ -262,12 +266,19 @@ class TrustGateViewModel(
         val decision = _uiState.value.payment.latestDecision as? PaymentDecisionState.ConfirmationRequired ?: return
         val report = _uiState.value.risk.report
         pendingPayment = null
-        updateDecision(PaymentDecisionState.Cancelled(decision.riskLevel, problem), _uiState.value.payment.reasons, PaymentStage.DONE)
+        updateDecision(PaymentDecisionState.Cancelled(decision.riskLevel, problem), PaymentStage.DONE)
         if (report != null) {
             viewModelScope.launch {
                 runCatching { securityService.cancelSensitiveAction(report) }
             }
         }
+    }
+
+    /** What the made-up integrity token claims Google Play found. Only debug builds without Play have one. */
+    fun setPretendVerdict(verdict: PretendVerdict) {
+        val source = integrityTokens as? MockIntegrityTokenSource ?: return
+        source.pretend = verdict
+        _uiState.update { current -> current.copy(pretendVerdict = verdict) }
     }
 
     fun setSimulateLostResponse(enabled: Boolean) {
@@ -520,9 +531,22 @@ class TrustGateViewModel(
         }
     }
 
-    private fun updateDecision(decision: PaymentDecisionState, reasons: List<String>, stage: PaymentStage) {
+    /** Moves the payment on to [decision]; [from] is the server's answer that led there, if this step has one. */
+    private fun updateDecision(decision: PaymentDecisionState, stage: PaymentStage, from: PaymentAuthorization? = null) {
         _uiState.update { current ->
-            current.copy(payment = PaymentUiState(stage = stage, latestDecision = decision, decidedAt = Instant.now(), reasons = reasons))
+            val previous = current.payment
+            val remedy = if (from != null) from.remedy else previous.remedy
+            current.copy(
+                payment = PaymentUiState(
+                    stage = stage,
+                    latestDecision = decision,
+                    decidedAt = Instant.now(),
+                    reasons = from?.reasons ?: previous.reasons,
+                    remedy = remedy,
+                    canShowFix = remedy != null && integrityTokens.canShowFix(remedy),
+                    scamWarning = from?.scamWarning ?: previous.scamWarning,
+                ),
+            )
         }
     }
 

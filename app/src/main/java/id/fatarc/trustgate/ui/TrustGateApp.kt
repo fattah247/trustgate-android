@@ -19,13 +19,13 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.GppGood
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.GppGood
 import androidx.compose.material.icons.filled.Science
+import androidx.compose.material.icons.outlined.GppGood
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.GppGood
 import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -57,6 +57,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.navigation
 import androidx.navigation.compose.rememberNavController
+import id.fatarc.trustgate.core.integrity.PretendVerdict
+import id.fatarc.trustgate.domain.api.Remedy
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.ui.about.AboutScreen
 import id.fatarc.trustgate.ui.events.SecurityEventLogScreen
@@ -106,6 +108,8 @@ fun TrustGateApp(
     onDismissConfirmation: (problem: String?) -> Unit,
     onSetSimulateLostResponse: (Boolean) -> Unit,
     onRunLabTest: (LabTest) -> Unit,
+    onSetPretendVerdict: (PretendVerdict) -> Unit,
+    onFixWithPlay: (Remedy) -> Unit,
     onStoreReferenceValues: () -> Unit,
     onSetScenarioRiskLevel: (DeviceRiskLevel?) -> Unit,
     onClearEvents: () -> Unit,
@@ -228,6 +232,7 @@ fun TrustGateApp(
                                         // Pushed within Home so back returns to the payment.
                                         onOpenChecks = dropUnlessResumed { navController.navigate(Routes.PAY_CHECKS) },
                                         onOpenRequest = dropUnlessResumed { navController.navigate(Routes.PAY_REQUEST) },
+                                        onFix = onFixWithPlay,
                                     )
                                 }
                                 composable(Routes.PAY_CHECKS) {
@@ -256,6 +261,7 @@ fun TrustGateApp(
                                         uiState = uiState,
                                         onRunTest = onRunLabTest,
                                         onSetSimulateLostResponse = onSetSimulateLostResponse,
+                                        onSetPretendVerdict = onSetPretendVerdict,
                                         onStoreTestValues = onStoreReferenceValues,
                                         onOpenRequest = dropUnlessResumed { navController.navigate(Routes.LAB_REQUEST) },
                                         onOpenAbout = dropUnlessResumed { navController.navigate(Routes.LAB_ABOUT) },
@@ -289,7 +295,8 @@ fun TrustGateApp(
             StepUpConfirmation(
                 method = pendingConfirmation.method,
                 requestedAt = uiState.payment.decidedAt,
-                signalNames = uiState.risk.report?.flaggedSignals().orEmpty().map { it.name },
+                problems = uiState.payment.reasons.filter { it.isProblem }.map { it.text },
+                scamWarning = uiState.payment.scamWarning,
                 onRequestSignature = onStepUpSignature,
                 onAuthenticated = onStepUpAuthenticated,
                 onConfirmTap = onConfirmWithTap,

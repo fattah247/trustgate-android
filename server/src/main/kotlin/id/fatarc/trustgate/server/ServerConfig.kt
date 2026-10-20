@@ -16,13 +16,24 @@ class ServerConfig(
     val packageName: String,
     val signingCertificateDigests: Set<String>,
     val minimumOsPatchLevel: Int?,
+    /** The oldest app version code the server serves; older versions are told to update. */
+    val minimumAppVersionCode: Long?,
+    /** Whether a phone without Play's strong integrity has to confirm each payment. */
+    val requireStrongIntegrity: Boolean,
     /** Where Google's status list is fetched from; null turns fetching off. */
     val revocationUrl: String?,
     /** A Google service account allowed to decode this app's Play Integrity tokens. */
     val playIntegrityCredentials: File?,
 ) {
     fun policy(integrity: IntegrityVerifier?): BackendPolicy = when (policyName) {
-        STRICT -> BackendPolicy.strict(packageName, signingCertificateDigests, integrity, minimumOsPatchLevel)
+        STRICT -> BackendPolicy.strict(
+            packageName = packageName,
+            signingCertificateDigests = signingCertificateDigests,
+            integrity = integrity,
+            minimumOsPatchLevel = minimumOsPatchLevel,
+            minimumAppVersionCode = minimumAppVersionCode,
+            requireStrongIntegrity = requireStrongIntegrity,
+        )
         DEVELOPMENT -> BackendPolicy.development(packageName, signingCertificateDigests)
         else -> error("Unknown policy \"$policyName\"; use $STRICT or $DEVELOPMENT.")
     }
@@ -45,6 +56,8 @@ class ServerConfig(
                 signingCertificateDigests = env["TRUSTGATE_SIGNING_DIGESTS"].orEmpty()
                     .split(',').map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet(),
                 minimumOsPatchLevel = env["TRUSTGATE_MIN_PATCH_LEVEL"]?.toInt(),
+                minimumAppVersionCode = env["TRUSTGATE_MIN_APP_VERSION"]?.toLong(),
+                requireStrongIntegrity = env["TRUSTGATE_REQUIRE_STRONG_INTEGRITY"]?.toBooleanStrict() ?: true,
                 revocationUrl = env["TRUSTGATE_REVOCATION_URL"].let { if (it == "off") null else it ?: RevocationList.URL },
                 playIntegrityCredentials = env["TRUSTGATE_PLAY_INTEGRITY_CREDENTIALS"]?.let(::File),
             )

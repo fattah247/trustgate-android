@@ -1,8 +1,11 @@
 package id.fatarc.trustgate.ui
 
+import id.fatarc.trustgate.core.integrity.PretendVerdict
 import id.fatarc.trustgate.core.keys.KeySet
 import id.fatarc.trustgate.core.security.ConfirmationMethod
 import id.fatarc.trustgate.core.storage.SecurityStorageSnapshot
+import id.fatarc.trustgate.domain.api.DecisionReason
+import id.fatarc.trustgate.domain.api.Remedy
 import id.fatarc.trustgate.domain.events.SecurityEvent
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.risk.DeviceRiskReport
@@ -23,6 +26,8 @@ data class TrustGateUiState(
     val keys: KeysUiState = KeysUiState(),
     /** Drop the first response to each payment, as a timeout would, to show retries are safe. */
     val simulateLostResponse: Boolean = false,
+    /** What the made-up integrity token claims; null when the build asks Google Play for real ones. */
+    val pretendVerdict: PretendVerdict? = null,
     val userMessage: UserMessage? = null,
 )
 
@@ -63,7 +68,13 @@ data class PaymentUiState(
     /** What happened to the request once the gate let the action through. */
     val submission: Submission? = null,
     /** Why the backend decided as it did. */
-    val reasons: List<String> = emptyList(),
+    val reasons: List<DecisionReason> = emptyList(),
+    /** What the person can do about the worst problem the server found. */
+    val remedy: Remedy? = null,
+    /** Whether Google Play can walk the person through [remedy]. */
+    val canShowFix: Boolean = false,
+    /** The server saw signs of someone talking the person into paying. */
+    val scamWarning: Boolean = false,
     /** Why the payment stopped at [stage] before an outcome, such as the server being unreachable. */
     val problem: String? = null,
 ) {

@@ -42,6 +42,14 @@ class AttestationPolicyTest {
     }
 
     @Test
+    fun `a key from an app version older than the minimum is refused`() {
+        val policy = strictPolicyTrusting(attestation, minimumAppVersionCode = 5)
+
+        assertThat(problem(policy = policy) { attestation.chainFor(it, challenge, appVersionCode = 4) }).contains("too old")
+        assertThat(problem(policy = policy) { attestation.chainFor(it, challenge, appVersionCode = 5) }).isNull()
+    }
+
+    @Test
     fun `an imported key is refused`() {
         assertThat(problem { attestation.chainFor(it, challenge, origin = 2) }).contains("instead of being generated")
     }

@@ -39,13 +39,14 @@ import java.time.Instant
 fun StepUpConfirmation(
     method: ConfirmationMethod,
     requestedAt: Instant?,
-    signalNames: List<String>,
+    problems: List<String>,
+    scamWarning: Boolean,
     onRequestSignature: () -> Signature?,
     onAuthenticated: (Signature) -> Unit,
     onConfirmTap: () -> Unit,
     onDismiss: (problem: String?) -> Unit,
 ) {
-    val reason = signalSummary(signalNames)
+    val reason = confirmationReason(problems, scamWarning)
     val activity = LocalContext.current.findFragmentActivity()
 
     when {
@@ -150,10 +151,13 @@ private fun stepUpPromptInfo(reason: String): BiometricPrompt.PromptInfo =
         }
         .build()
 
-private fun signalSummary(signalNames: List<String>): String = if (signalNames.isEmpty()) {
-    "The server wants your OK first."
-} else {
-    "The server wants your OK because it found: ${signalNames.take(2).joinToString(" and ")}."
+private fun confirmationReason(problems: List<String>, scamWarning: Boolean): String = buildString {
+    if (problems.isEmpty()) {
+        append("The server wants your OK first.")
+    } else {
+        append("The server wants your OK because it found: ${problems.take(2).joinToString(" and ")}.")
+    }
+    if (scamWarning) append(" If someone asked you to pay, stop: it's almost certainly a scam.")
 }
 
 private tailrec fun Context.findFragmentActivity(): FragmentActivity? = when (this) {

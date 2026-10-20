@@ -6,11 +6,13 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import id.fatarc.trustgate.ui.TrustGateApp
 import id.fatarc.trustgate.ui.TrustGateViewModel
 import id.fatarc.trustgate.ui.TrustGateViewModelFactory
 import id.fatarc.trustgate.ui.theme.TrustGateTheme
+import kotlinx.coroutines.launch
 
 // A FragmentActivity so the system biometric prompt can host itself for step-up confirmation.
 class MainActivity : FragmentActivity() {
@@ -34,6 +36,14 @@ class MainActivity : FragmentActivity() {
                     onDismissConfirmation = viewModel::dismissConfirmation,
                     onSetSimulateLostResponse = viewModel::setSimulateLostResponse,
                     onRunLabTest = viewModel::runLabTest,
+                    onSetPretendVerdict = viewModel::setPretendVerdict,
+                    onFixWithPlay = { remedy ->
+                        lifecycleScope.launch {
+                            // Google Play walks the person through it; once fixed, the payment runs again.
+                            val fixed = runCatching { appContainer.integrityTokens.showFix(this@MainActivity, remedy) }.getOrDefault(false)
+                            if (fixed) viewModel.attemptPayment()
+                        }
+                    },
                     onStoreReferenceValues = viewModel::storeReferenceValues,
                     onSetScenarioRiskLevel = viewModel::setScenarioRiskLevel,
                     onClearEvents = viewModel::clearSecurityEvents,

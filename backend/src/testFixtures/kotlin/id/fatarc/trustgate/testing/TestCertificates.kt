@@ -73,6 +73,7 @@ class TestAttestation(private val root: TestKey = TestKey()) {
         osPatchLevel: Int = 202609,
         authTimeoutSeconds: Int? = null,
         origin: Int = 0,
+        appVersionCode: Int = 1,
     ): List<ByteArray> {
         val enforced = listOfNotNull(
             if (requiresAuthentication) explicit(504, integer(2)) else explicit(503, tlv(0x05, ByteArray(0))),
@@ -82,7 +83,7 @@ class TestAttestation(private val root: TestKey = TestKey()) {
             explicit(706, integer(osPatchLevel)),
         )
         // Keystore itself adds the app's identity, so it sits in the software-enforced list.
-        val applicationId = explicit(709, octetString(attestationApplicationId(packageName, signerDigest)))
+        val applicationId = explicit(709, octetString(attestationApplicationId(packageName, signerDigest, appVersionCode)))
         val description = if (securityLevel == 0) {
             keyDescription(challenge, securityLevel = 0, softwareEnforced = enforced + applicationId)
         } else {
@@ -93,8 +94,8 @@ class TestAttestation(private val root: TestKey = TestKey()) {
     }
 }
 
-fun attestationApplicationId(packageName: String, signerDigest: String): ByteArray = sequence(
-    set(sequence(octetString(packageName.toByteArray()), integer(1))),
+fun attestationApplicationId(packageName: String, signerDigest: String, versionCode: Int = 1): ByteArray = sequence(
+    set(sequence(octetString(packageName.toByteArray()), integer(versionCode))),
     set(octetString(signerDigest.chunked(2).map { it.toInt(16).toByte() }.toByteArray())),
 )
 

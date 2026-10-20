@@ -6,6 +6,8 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -19,8 +21,10 @@ import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.Cancel
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.PhoneDisabled
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.RemoveCircleOutline
+import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material.icons.outlined.WifiOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -40,6 +44,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
@@ -47,13 +52,16 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.os.ConfigurationCompat
+import id.fatarc.trustgate.BuildConfig
 import id.fatarc.trustgate.core.security.ConfirmationMethod
+import id.fatarc.trustgate.domain.api.DecisionReason
+import id.fatarc.trustgate.domain.api.Remedy
 import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.domain.signing.ReferencePayment
-import id.fatarc.trustgate.ui.ChipFlow
 import id.fatarc.trustgate.ui.PaymentDecisionState
 import id.fatarc.trustgate.ui.PaymentStage
 import id.fatarc.trustgate.ui.PaymentUiState
+import id.fatarc.trustgate.ui.Pill
 import id.fatarc.trustgate.ui.RiskUiState
 import id.fatarc.trustgate.ui.ScreenScaffold
 import id.fatarc.trustgate.ui.SensitiveScreen
@@ -77,13 +85,14 @@ fun PayScreen(
     onPay: () -> Unit,
     onOpenChecks: () -> Unit,
     onOpenRequest: () -> Unit,
+    onFix: (Remedy) -> Unit,
 ) {
     SensitiveScreen()
     DecisionHaptics(uiState.payment)
     val locale = ConfigurationCompat.getLocales(LocalConfiguration.current)[0] ?: Locale.getDefault()
     val amount = formatMinorAmount(ReferencePayment.AMOUNT_MINOR, ReferencePayment.CURRENCY, locale)
     val payment = uiState.payment
-    val result = payment.result(amount)
+    val result = payment.result(amount, phoneHasProblems = uiState.risk.report?.flaggedSignals().orEmpty().isNotEmpty())
 
     ScreenScaffold(title = "Pay", onNavigateUp = onNavigateUp) {
         item(key = "order") { OrderSummary(amount) }
@@ -91,7 +100,7 @@ fun PayScreen(
         // The outcome goes above the steps so it's the first thing seen when the payment finishes.
         if (result != null) {
             item(key = "result") {
-                ResultCard(result = result, reasons = payment.reasons, onOpenChecks = onOpenChecks)
+                ResultCard(result = result, payment = payment, onOpenChecks = onOpenChecks, onFix = onFix)
             }
         }
 
@@ -286,7 +295,7 @@ private class PayResult(
     val offerChecks: Boolean = false,
 )
 
-private fun PaymentUiState.result(amount: String): PayResult? {
+private fun PaymentUiState.result(amount: String, phoneHasProblems: Boolean): PayResult? {
     problem?.let { return PayResult("Couldn't pay", "$it Nothing was charged.", Tone.CRITICAL, Icons.Outlined.ErrorOutline) }
     return when (latestDecision) {
         is PaymentDecisionState.Blocked -> PayResult(
@@ -294,7 +303,7 @@ private fun PaymentUiState.result(amount: String): PayResult? {
             body = "This phone isn't safe enough to pay from. Nothing was charged.",
             tone = Tone.CRITICAL,
             icon = Icons.Outlined.Block,
-            offerChecks = true,
+            offerChecks = phoneHasProblems,
         )
         is PaymentDecisionState.Cancelled -> PayResult("Payment cancelled", "Nothing was charged.", Tone.NEUTRAL, Icons.Outlined.Cancel)
         else -> when (val sent = submission) {
@@ -329,9 +338,11 @@ private fun PaymentUiState.result(amount: String): PayResult? {
 @Composable
 private fun ResultCard(
     result: PayResult,
-    reasons: List<String>,
+    payment: PaymentUiState,
     onOpenChecks: () -> Unit,
+    onFix: (Remedy) -> Unit,
 ) {
+    val uriHandler = LocalUriHandler.current
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(28.dp),
@@ -345,16 +356,72 @@ private fun ResultCard(
             }
             Text(result.body, style = MaterialTheme.typography.bodyLarge)
             result.note?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
-            if (reasons.isNotEmpty()) {
+            if (payment.scamWarning && result.tone != Tone.POSITIVE) ScamWarning()
+            payment.remedy?.takeIf { result.tone != Tone.POSITIVE }?.let { remedy ->
+                Text(remedy.help(), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                when {
+                    payment.canShowFix -> FilledTonalButton(onClick = { onFix(remedy) }) { Text("Fix with Google Play") }
+                    remedy == Remedy.UPDATE_APP -> FilledTonalButton(
+                        onClick = { uriHandler.openUri("https://play.google.com/store/apps/details?id=${BuildConfig.APPLICATION_ID}") },
+                    ) { Text("Open Google Play") }
+                }
+            }
+            if (payment.reasons.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
                 Text("What the server saw", style = MaterialTheme.typography.labelLarge)
-                ChipFlow(reasons, tone = result.tone)
+                ReasonChips(payment.reasons, tone = result.tone)
             }
             if (result.offerChecks) {
                 TextButton(onClick = onOpenChecks, modifier = Modifier.padding(top = 4.dp)) { Text("See what's wrong") }
             }
         }
     }
+}
+
+/** Shown when what the server found matches how payment scams usually go. */
+@Composable
+private fun ScamWarning() {
+    Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerLowest.copy(alpha = 0.7f)) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Outlined.PhoneDisabled, contentDescription = null)
+            Text(
+                "If someone asked you to pay or to install an app, stop. It's almost certainly a scam.",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+            )
+        }
+    }
+}
+
+/** Problems first, each marked, then what checked out. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ReasonChips(
+    reasons: List<DecisionReason>,
+    tone: Tone,
+) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        reasons.sortedByDescending { it.level }.forEach { reason ->
+            Pill(
+                text = reason.text,
+                tone = tone,
+                onTinted = true,
+                leadingIcon = if (reason.isProblem) Icons.Outlined.WarningAmber else null,
+            )
+        }
+    }
+}
+
+private fun Remedy.help(): String = when (this) {
+    Remedy.CLOSE_UNKNOWN_ACCESS_RISK -> "Close apps you don't recognise that can see or control your screen, then try again."
+    Remedy.CLOSE_ALL_ACCESS_RISK -> "Close apps that can see or control your screen, like remote-help apps, then try again."
+    Remedy.GET_LICENSED -> "Install the app from Google Play, then try again."
+    Remedy.FIX_PLAY_PROTECT -> "Open Play Protect in the Play Store, turn it on, and remove anything it flags."
+    Remedy.UPDATE_APP -> "This version of the app is too old. Update it from Google Play."
 }
 
 /** A light confirm or reject tap when the server answers, the way a physical latch would feel. */

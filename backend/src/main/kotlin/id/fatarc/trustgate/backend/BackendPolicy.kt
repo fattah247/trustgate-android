@@ -11,15 +11,21 @@ class BackendPolicy(
     val risk: RiskPolicy,
 ) {
     companion object {
-        /** What production enforces. Without a Play Integrity verifier every verdict counts as unverifiable. */
+        /**
+         * What production enforces. Without a Play Integrity verifier every verdict counts as
+         * unverifiable. [minimumAppVersionCode] turns away older versions of the app, both when
+         * they register a key and when they ask to pay.
+         */
         fun strict(
             packageName: String,
             signingCertificateDigests: Set<String>,
             integrity: IntegrityVerifier?,
             minimumOsPatchLevel: Int? = null,
+            minimumAppVersionCode: Long? = null,
+            requireStrongIntegrity: Boolean = true,
         ) = BackendPolicy(
             name = "strict",
-            attestation = AttestationPolicy.strict(packageName, signingCertificateDigests, minimumOsPatchLevel),
+            attestation = AttestationPolicy.strict(packageName, signingCertificateDigests, minimumOsPatchLevel, minimumAppVersionCode),
             risk = RiskPolicy(
                 integrity = integrity,
                 packageName = packageName,
@@ -27,6 +33,8 @@ class BackendPolicy(
                 acceptSimulatedEvidence = false,
                 requireIntegrityVerdict = true,
                 acceptMockVerdicts = false,
+                requireStrongIntegrity = requireStrongIntegrity,
+                minimumAppVersionCode = minimumAppVersionCode,
             ),
         )
 
