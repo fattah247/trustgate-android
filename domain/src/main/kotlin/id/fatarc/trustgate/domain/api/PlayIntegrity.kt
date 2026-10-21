@@ -34,6 +34,13 @@ object PlayIntegrityLabels {
 }
 
 /**
+ * The three bits Play Integrity's device recall keeps per device for every app of one developer
+ * account. They survive reinstalls and factory resets; the server decides what each one means.
+ */
+@Serializable
+enum class RecallBit { FIRST, SECOND, THIRD }
+
+/**
  * Something the person can do to clear a problem the server found. The first three map to the
  * dialogs Google Play shows for them; the app explains the rest in words.
  */
@@ -57,6 +64,8 @@ data class MockIntegrityClaims(
     val playProtect: String? = null,
     val deviceActivity: String? = null,
     val appLicensing: String? = null,
+    /** The device recall bits set for this phone. */
+    val recall: Set<RecallBit> = emptySet(),
 ) {
     fun encode(): String = buildString {
         append(MOCK_INTEGRITY_TOKEN_PREFIX).append(requestHash)
@@ -64,6 +73,7 @@ data class MockIntegrityClaims(
         playProtect?.let { append("|protect=").append(it) }
         deviceActivity?.let { append("|activity=").append(it) }
         appLicensing?.let { append("|licensing=").append(it) }
+        if (recall.isNotEmpty()) append("|recall=").append(recall.sorted().joinToString(",") { it.name.lowercase() })
     }
 
     companion object {
@@ -80,6 +90,9 @@ data class MockIntegrityClaims(
                 playProtect = fields["protect"],
                 deviceActivity = fields["activity"],
                 appLicensing = fields["licensing"],
+                recall = fields["recall"]?.split(',')
+                    ?.mapNotNull { name -> RecallBit.entries.firstOrNull { it.name.equals(name, ignoreCase = true) } }
+                    ?.toSet().orEmpty(),
             )
         }
     }

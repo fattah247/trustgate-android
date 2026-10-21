@@ -12,6 +12,7 @@ import com.google.android.play.core.integrity.model.IntegrityDialogResponseCode
 import com.google.android.play.core.integrity.model.IntegrityDialogTypeCode
 import id.fatarc.trustgate.domain.api.MockIntegrityClaims
 import id.fatarc.trustgate.domain.api.PlayIntegrityLabels
+import id.fatarc.trustgate.domain.api.RecallBit
 import id.fatarc.trustgate.domain.api.Remedy
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -89,6 +90,8 @@ enum class PretendVerdict(val claims: (requestHash: String) -> MockIntegrityClai
     PLAY_PROTECT_OFF({ MockIntegrityClaims(it, playProtect = PlayIntegrityLabels.PLAY_PROTECT_OFF) }),
     NOT_FROM_PLAY({ MockIntegrityClaims(it, appLicensing = PlayIntegrityLabels.UNLICENSED) }),
     TOKEN_FARMING({ MockIntegrityClaims(it, deviceActivity = PlayIntegrityLabels.ACTIVITY_LEVEL_4) }),
+    SET_UP_BEFORE({ MockIntegrityClaims(it, recall = setOf(RecallBit.FIRST)) }),
+    BLOCKED_BEFORE({ MockIntegrityClaims(it, recall = setOf(RecallBit.FIRST, RecallBit.SECOND)) }),
 }
 
 /**

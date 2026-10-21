@@ -1,6 +1,7 @@
 package id.fatarc.trustgate.server
 
 import com.google.common.truth.Truth.assertThat
+import id.fatarc.trustgate.domain.api.RecallBit
 import org.junit.Test
 
 class PlayIntegrityVerifierTest {
@@ -63,5 +64,31 @@ class PlayIntegrityVerifierTest {
         assertThat(without.appsDetected).isNull()
         assertThat(without.playProtect).isNull()
         assertThat(without.deviceActivity).isNull()
+    }
+
+    @Test
+    fun `device recall bits are read when device recall is on`() {
+        val verdict = PlayIntegrityVerifier.verdictFrom(
+            """
+            {
+              "tokenPayloadExternal": {
+                "requestDetails": {"requestPackageName": "id.fatarc.trustgate", "requestHash": "abc123", "timestampMillis": "1760000000000"},
+                "deviceIntegrity": {
+                  "deviceRecognitionVerdict": ["MEETS_DEVICE_INTEGRITY"],
+                  "deviceRecall": {"values": {"bitFirst": true, "bitSecond": false, "bitThird": true}, "writeDates": {"yyyymmFirst": 202601, "yyyymmThird": 202510}}
+                }
+              }
+            }
+            """,
+        )
+
+        assertThat(verdict.deviceRecall).containsExactly(RecallBit.FIRST, RecallBit.THIRD)
+        assertThat(PlayIntegrityVerifier.verdictFrom(response).deviceRecall).isNull()
+    }
+
+    @Test
+    fun `a device recall write sends only the bits being changed`() {
+        assertThat(PlayDeviceRecallWriter.body("token-1", mapOf(RecallBit.SECOND to true)))
+            .isEqualTo("""{"integrityToken":"token-1","newValues":{"bitSecond":true}}""")
     }
 }

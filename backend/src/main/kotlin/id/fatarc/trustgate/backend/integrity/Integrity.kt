@@ -1,6 +1,7 @@
 package id.fatarc.trustgate.backend.integrity
 
 import id.fatarc.trustgate.domain.api.MockIntegrityClaims
+import id.fatarc.trustgate.domain.api.RecallBit
 import java.time.Clock
 
 /**
@@ -27,6 +28,8 @@ data class IntegrityVerdict(
     val playProtect: String? = null,
     /** How many integrity requests this phone made lately, LEVEL_1 to LEVEL_4. */
     val deviceActivity: String? = null,
+    /** The device recall bits set for this phone; null when device recall isn't turned on. */
+    val deviceRecall: Set<RecallBit>? = null,
     /** Made up on this machine for development rather than issued by Google. */
     val mock: Boolean = false,
 )
@@ -58,7 +61,20 @@ class MockIntegrityVerifier(
             appsDetected = claims.appsDetected,
             playProtect = claims.playProtect,
             deviceActivity = claims.deviceActivity,
+            deviceRecall = claims.recall,
             mock = true,
         )
+    }
+}
+
+/**
+ * Sets device recall bits on Google's side for the phone an integrity [token] came from. Writes
+ * happen after the change that called for them is committed, and must not hold anything up.
+ */
+fun interface DeviceRecallWriter {
+    fun write(token: String, bits: Map<RecallBit, Boolean>)
+
+    companion object {
+        val NONE = DeviceRecallWriter { _, _ -> }
     }
 }

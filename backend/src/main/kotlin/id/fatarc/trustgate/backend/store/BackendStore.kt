@@ -43,9 +43,20 @@ class StoredPhone(
     val joinedAt: Instant,
     /** The account the phone asked to join with a link code, until a phone on it decides. */
     val pendingAccountId: String? = null,
+    /**
+     * The phone's latest Play Integrity token Google vouched for, and when. Google accepts a token
+     * for device recall writes for 14 days, so it's kept that long to mark the phone if it's blocked.
+     */
+    val lastIntegrityToken: String? = null,
+    val lastIntegrityAt: Instant? = null,
 ) {
-    fun copy(accountId: String = this.accountId, joinedAt: Instant = this.joinedAt, pendingAccountId: String? = this.pendingAccountId) =
-        StoredPhone(phoneId, accountId, label, joinedAt, pendingAccountId)
+    fun copy(
+        accountId: String = this.accountId,
+        joinedAt: Instant = this.joinedAt,
+        pendingAccountId: String? = this.pendingAccountId,
+        lastIntegrityToken: String? = this.lastIntegrityToken,
+        lastIntegrityAt: Instant? = this.lastIntegrityAt,
+    ) = StoredPhone(phoneId, accountId, label, joinedAt, pendingAccountId, lastIntegrityToken, lastIntegrityAt)
 }
 
 /** A one-time code a phone on [accountId] made, so another phone can ask to join. */

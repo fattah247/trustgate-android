@@ -198,8 +198,10 @@ class SqliteBackendStore(file: File) : BackendStore, AutoCloseable {
     override fun phone(phoneId: String): StoredPhone? = query("SELECT * FROM phones WHERE phone_id = ?", phoneId) { it.phone() }
 
     override fun putPhone(phone: StoredPhone) = update(
-        "INSERT OR REPLACE INTO phones (phone_id, account_id, label, joined_at, pending_account_id) VALUES (?, ?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO phones (phone_id, account_id, label, joined_at, pending_account_id, last_integrity_token, last_integrity_at) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
         phone.phoneId, phone.accountId, phone.label, phone.joinedAt.toEpochMilli(), phone.pendingAccountId,
+        phone.lastIntegrityToken, phone.lastIntegrityAt?.toEpochMilli(),
     )
 
     override fun phonesOf(accountId: String): List<StoredPhone> =
@@ -230,6 +232,8 @@ class SqliteBackendStore(file: File) : BackendStore, AutoCloseable {
         label = getString("label"),
         joinedAt = Instant.ofEpochMilli(getLong("joined_at")),
         pendingAccountId = getString("pending_account_id"),
+        lastIntegrityToken = getString("last_integrity_token"),
+        lastIntegrityAt = getLong("last_integrity_at").takeUnless { wasNull() }?.let(Instant::ofEpochMilli),
     )
 
     override fun appendAuditEntry(entry: AuditEntry) = update(
@@ -289,6 +293,12 @@ class SqliteBackendStore(file: File) : BackendStore, AutoCloseable {
         )
     }
 
+    /** Version 5: each phone's latest Google-vouched integrity token, kept for device recall writes. */
+    private fun addIntegrityTokens() {
+        update("ALTER TABLE phones ADD COLUMN last_integrity_token TEXT")
+        update("ALTER TABLE phones ADD COLUMN last_integrity_at INTEGER")
+    }
+
     /** Lets a test change a stored entry the way someone with database access could. */
     internal fun overwriteAuditDetail(sequence: Long, detail: String) = update("UPDATE audit_log SET detail = ? WHERE sequence = ?", detail, sequence)
 
@@ -314,6 +324,7 @@ class SqliteBackendStore(file: File) : BackendStore, AutoCloseable {
             SqliteBackendStore::addKeyLifecycleAndAudit,
             SqliteBackendStore::bindChallenges,
             SqliteBackendStore::addAccounts,
+            SqliteBackendStore::addIntegrityTokens,
         )
 
         /** The original schema; [MIGRATIONS] build on it. */

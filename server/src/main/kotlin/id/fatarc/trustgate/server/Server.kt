@@ -1,6 +1,7 @@
 package id.fatarc.trustgate.server
 
 import id.fatarc.trustgate.backend.ReferenceBackend
+import id.fatarc.trustgate.backend.integrity.DeviceRecallWriter
 import id.fatarc.trustgate.domain.api.ServerHealth
 import io.ktor.server.engine.applicationEngineEnvironment
 import io.ktor.server.engine.embeddedServer
@@ -15,7 +16,15 @@ fun main() {
     val store = SqliteBackendStore(config.database)
     val revocations = RevocationCache(config.revocationUrl, File(config.database.absoluteFile.parentFile, "attestation-status.json"))
     val integrity = config.playIntegrityCredentials?.let { PlayIntegrityVerifier(config.packageName, it) }
-    val backend = ReferenceBackend(policy = config.policy(integrity), revocations = revocations::current, store = store)
+    val recallWriter = config.playIntegrityCredentials?.takeIf { config.deviceRecall }
+        ?.let { PlayDeviceRecallWriter(config.packageName, it) }
+        ?: DeviceRecallWriter.NONE
+    val backend = ReferenceBackend(
+        policy = config.policy(integrity),
+        revocations = revocations::current,
+        store = store,
+        recallWriter = recallWriter,
+    )
     val password = config.keystorePassword.toCharArray()
     val keyStore = KeyStore.getInstance(config.keystore, password)
     val log = LoggerFactory.getLogger("trustgate")

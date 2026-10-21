@@ -4,6 +4,7 @@ import id.fatarc.trustgate.backend.attestation.KeyAttestationVerifier
 import id.fatarc.trustgate.backend.attestation.RevocationList
 import id.fatarc.trustgate.backend.attestation.toSummary
 import id.fatarc.trustgate.backend.audit.AuditLog
+import id.fatarc.trustgate.backend.integrity.DeviceRecallWriter
 import id.fatarc.trustgate.backend.store.BackendStore
 import id.fatarc.trustgate.backend.store.ChallengePurpose
 import id.fatarc.trustgate.backend.store.InMemoryBackendStore
@@ -29,6 +30,7 @@ import id.fatarc.trustgate.domain.api.PaymentResponse
 import id.fatarc.trustgate.domain.api.PhoneDecision
 import id.fatarc.trustgate.domain.api.PhoneStatus
 import id.fatarc.trustgate.domain.api.PhoneView
+import id.fatarc.trustgate.domain.api.RecallBit
 import id.fatarc.trustgate.domain.api.RegistrationResult
 import id.fatarc.trustgate.domain.api.RequiredConfirmation
 import id.fatarc.trustgate.domain.api.SignedAction
@@ -64,8 +66,11 @@ class ReferenceBackend(
     /** The latest copy of Google's status list; the server refreshes it in the background. */
     private val revocations: () -> RevocationList? = { RevocationList.EMPTY },
     private val store: BackendStore = InMemoryBackendStore(),
+    /** Marks phones on Google's side through device recall, so a reset doesn't wipe what the server learned. */
+    private val recallWriter: DeviceRecallWriter = DeviceRecallWriter.NONE,
 ) {
     private val gate = SensitiveActionGate()
+    private val recallWrites = mutableListOf<Pair<String, Map<RecallBit, Boolean>>>()
     private val random = SecureRandom()
     private val audit = AuditLog(store, clock)
     private val canonical = ReferenceRequestSigner()
@@ -283,12 +288,51 @@ class ReferenceBackend(
 
     /** An operator stops accepting a phone, given either of its keys. False when there's nothing live to revoke. */
     @Synchronized
-    fun revokeByOperator(keyId: String, reason: String): Boolean = store.transaction {
-        val key = store.key(keyId) ?: return@transaction false
-        val device = store.key(key.deviceKeyId)?.takeIf { !it.isRevoked } ?: return@transaction false
-        revokePhoneKeys(device, clock.instant(), "Revoked by an operator: $reason")
-        audit.record("phone-revoked", subject = device.phoneId, detail = reason)
-        true
+    fun revokeByOperator(keyId: String, reason: String): Boolean = afterCommit {
+        store.transaction {
+            val key = store.key(keyId) ?: return@transaction false
+            val device = store.key(key.deviceKeyId)?.takeIf { !it.isRevoked } ?: return@transaction false
+            revokePhoneKeys(device, clock.instant(), "Revoked by an operator: $reason")
+            audit.record("phone-revoked", subject = device.phoneId, detail = reason)
+            // Remember it on Google's side too, so the same phone wiped and set up again stays blocked.
+            val phone = phoneOf(device)
+            val token = phone.lastIntegrityToken
+            val tokenAt = phone.lastIntegrityAt
+            if (token != null && tokenAt != null && tokenAt.isAfter(clock.instant().minus(RECALL_TOKEN_LIFETIME))) {
+                recallWrites += token to mapOf(RECALL_BLOCKED to true)
+                audit.record("device-recall-marked", subject = phone.phoneId, detail = "blocked")
+            }
+            true
+        }
+    }
+
+    /** Runs [block], then sends the device recall writes it asked for, outside the transaction. */
+    private inline fun <T> afterCommit(block: () -> T): T {
+        // A transaction that failed was rolled back, and so are the writes it asked for.
+        val result = try {
+            block()
+        } catch (error: Throwable) {
+            recallWrites.clear()
+            throw error
+        }
+        val writes = recallWrites.toList()
+        recallWrites.clear()
+        writes.forEach { (token, bits) -> runCatching { recallWriter.write(token, bits) } }
+        return result
+    }
+
+    /**
+     * What Google remembers about this phone across resets: that an operator blocked it, or that
+     * it was set up here before though it now arrives as a new phone.
+     */
+    private fun recallFindings(assessment: RiskPolicy.Assessment, phone: StoredPhone, deviceKey: StoredKey, at: Instant): List<DecisionReason> {
+        val recall = assessment.deviceRecall ?: return emptyList()
+        return buildList {
+            if (RECALL_BLOCKED in recall) add(DecisionReason("This phone was blocked before", DeviceRiskLevel.HIGH))
+            if (RECALL_ENROLLED in recall && deviceKey.registeredAt.isAfter(at.minus(RECALL_FRESH_ENROLMENT))) {
+                add(DecisionReason("Set up again on this phone", DeviceRiskLevel.MEDIUM))
+            }
+        }
     }
 
     /** Revokes [device] and its step-up key, which can't outlive the key that vouched for it. */
@@ -317,6 +361,14 @@ class ReferenceBackend(
         signature: ByteArray,
         integrityToken: String?,
         receivedAt: Instant = clock.instant(),
+    ): PaymentAuthorization = afterCommit { authorizeInTransaction(deviceKeyId, evidence, signature, integrityToken, receivedAt) }
+
+    private fun authorizeInTransaction(
+        deviceKeyId: String,
+        evidence: String,
+        signature: ByteArray,
+        integrityToken: String?,
+        receivedAt: Instant,
     ): PaymentAuthorization = store.transaction {
         fun refuse(reason: String, keyRejected: Boolean = false): PaymentAuthorization {
             audit.record("authorization-refused", subject = deviceKeyId, detail = reason)
@@ -337,8 +389,16 @@ class ReferenceBackend(
         val payment = report.payment?.takeIf { it.amountMinor > 0 && it.currency.isNotBlank() && it.payee.isNotBlank() }
             ?: return@transaction refuse("Payment details missing")
         val assessment = policy.risk.assess(report, ReferenceSigningScheme.sha256Hex(evidence), integrityToken, receivedAt)
+        val phone = phoneOf(key)
+        if (assessment.googleVerdict && integrityToken != null) {
+            store.putPhone(phone.copy(lastIntegrityToken = integrityToken, lastIntegrityAt = receivedAt))
+            // The first time Google vouches for this phone, mark it as set up here.
+            if (assessment.deviceRecall != null && RECALL_ENROLLED !in assessment.deviceRecall) {
+                recallWrites += integrityToken to mapOf(RECALL_ENROLLED to true)
+            }
+        }
         val history = history(key, payment, receivedAt) + unusualFor(phoneOf(key).accountId, payment, report.utcOffsetMinutes, receivedAt)
-        val authorization = authorization(key, payment, assessment + history, receivedAt)
+        val authorization = authorization(key, payment, assessment + history + recallFindings(assessment, phone, key, receivedAt), receivedAt)
         audit.record(
             "payment-authorized",
             subject = key.phoneId,
@@ -811,6 +871,16 @@ class ReferenceBackend(
     private companion object {
         val CHALLENGE_LIFETIME: Duration = Duration.ofMinutes(5)
         val LINK_CODE_LIFETIME: Duration = Duration.ofMinutes(10)
+
+        // What the server keeps in device recall's bits, shared by every app of the developer account.
+        val RECALL_ENROLLED = RecallBit.FIRST
+        val RECALL_BLOCKED = RecallBit.SECOND
+
+        /** Google accepts a token for device recall writes this long after it was verified. */
+        val RECALL_TOKEN_LIFETIME: Duration = Duration.ofDays(14)
+
+        /** A phone recall says was set up before counts as set up again for this long after it enrols. */
+        val RECALL_FRESH_ENROLMENT: Duration = Duration.ofDays(1)
 
         /** How far back the account's habits are read, and how many payments make a habit. */
         val BEHAVIOUR_HISTORY: Duration = Duration.ofDays(90)

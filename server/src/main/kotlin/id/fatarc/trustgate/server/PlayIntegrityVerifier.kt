@@ -3,6 +3,7 @@ package id.fatarc.trustgate.server
 import com.google.auth.oauth2.GoogleCredentials
 import id.fatarc.trustgate.backend.integrity.IntegrityVerdict
 import id.fatarc.trustgate.backend.integrity.IntegrityVerifier
+import id.fatarc.trustgate.domain.api.RecallBit
 import java.io.File
 import java.net.URI
 import java.net.http.HttpClient
@@ -70,10 +71,18 @@ class PlayIntegrityVerifier(
     internal class DeviceIntegrity(
         val deviceRecognitionVerdict: List<String> = emptyList(),
         val recentDeviceActivity: RecentDeviceActivity? = null,
+        // Present only when device recall is turned on for the developer account.
+        val deviceRecall: DeviceRecall? = null,
     )
 
     @Serializable
     internal class RecentDeviceActivity(val deviceActivityLevel: String? = null)
+
+    @Serializable
+    internal class DeviceRecall(val values: RecallValues = RecallValues())
+
+    @Serializable
+    internal class RecallValues(val bitFirst: Boolean = false, val bitSecond: Boolean = false, val bitThird: Boolean = false)
 
     @Serializable
     internal class AccountDetails(val appLicensingVerdict: String? = null)
@@ -108,6 +117,13 @@ class PlayIntegrityVerifier(
                 appsDetected = payload.environmentDetails?.appAccessRiskVerdict?.appsDetected?.toSet(),
                 playProtect = payload.environmentDetails?.playProtectVerdict,
                 deviceActivity = payload.deviceIntegrity.recentDeviceActivity?.deviceActivityLevel,
+                deviceRecall = payload.deviceIntegrity.deviceRecall?.values?.let { values ->
+                    buildSet {
+                        if (values.bitFirst) add(RecallBit.FIRST)
+                        if (values.bitSecond) add(RecallBit.SECOND)
+                        if (values.bitThird) add(RecallBit.THIRD)
+                    }
+                },
             )
         }
     }

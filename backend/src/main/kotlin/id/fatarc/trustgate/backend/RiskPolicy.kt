@@ -5,6 +5,7 @@ import id.fatarc.trustgate.backend.integrity.IntegrityVerifier
 import id.fatarc.trustgate.domain.api.DecisionReason
 import id.fatarc.trustgate.domain.api.DeviceEvidence
 import id.fatarc.trustgate.domain.api.PlayIntegrityLabels
+import id.fatarc.trustgate.domain.api.RecallBit
 import id.fatarc.trustgate.domain.api.Remedy
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.risk.RiskScorer
@@ -37,12 +38,16 @@ class RiskPolicy(
         val reasons: List<DecisionReason>,
         val remedy: Remedy? = null,
         val scamWarning: Boolean = false,
+        /** The phone's device recall bits, from a verdict that held; null when there were none to read. */
+        val deviceRecall: Set<RecallBit>? = null,
+        /** The verdict came from Google, so its token can be used to write device recall bits. */
+        val googleVerdict: Boolean = false,
     ) {
         /** Adds what the backend knows beyond the report, such as the phone's payment history. */
         operator fun plus(extra: List<DecisionReason>): Assessment {
             val combined = (listOf(level) + extra.map { it.level }).max()
             // A fix for the report's worst problem no longer clears the payment if history is worse.
-            return Assessment(combined, reasons + extra, remedy.takeIf { combined == level }, scamWarning)
+            return Assessment(combined, reasons + extra, remedy.takeIf { combined == level }, scamWarning, deviceRecall, googleVerdict)
         }
     }
 
@@ -70,9 +75,11 @@ class RiskPolicy(
         val verdict = integrity?.verify(integrityToken)
         if (verdict != null && verdictHolds(verdict, requestHash, at, findings)) {
             checkEnvironment(verdict, findings)
-        } else if (verdict == null) {
-            findings.note("Play Integrity check invalid", DeviceRiskLevel.HIGH)
+            return findings.assessment().let {
+                Assessment(it.level, it.reasons, it.remedy, it.scamWarning, verdict.deviceRecall, googleVerdict = !verdict.mock)
+            }
         }
+        if (verdict == null) findings.note("Play Integrity check invalid", DeviceRiskLevel.HIGH)
         return findings.assessment()
     }
 

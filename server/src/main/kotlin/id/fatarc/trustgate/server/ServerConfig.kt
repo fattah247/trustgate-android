@@ -26,6 +26,8 @@ class ServerConfig(
     val playIntegrityCredentials: File?,
     /** The bearer token the /admin routes require; without one they aren't served at all. */
     val adminToken: String? = null,
+    /** Write device recall bits; needs Play Integrity credentials and device recall turned on in Play Console. */
+    val deviceRecall: Boolean = false,
 ) {
     fun policy(integrity: IntegrityVerifier?): BackendPolicy = when (policyName) {
         STRICT -> BackendPolicy.strict(
@@ -62,6 +64,7 @@ class ServerConfig(
                 requireStrongIntegrity = env["TRUSTGATE_REQUIRE_STRONG_INTEGRITY"]?.toBooleanStrict() ?: true,
                 revocationUrl = env["TRUSTGATE_REVOCATION_URL"].let { if (it == "off") null else it ?: RevocationList.URL },
                 playIntegrityCredentials = env["TRUSTGATE_PLAY_INTEGRITY_CREDENTIALS"]?.let(::File),
+                deviceRecall = env["TRUSTGATE_DEVICE_RECALL"] == "on",
                 adminToken = env["TRUSTGATE_ADMIN_TOKEN_FILE"]?.let { File(it).readText().trim() }?.also { token ->
                     require(token.length >= 32) { "The admin token must be at least 32 characters." }
                 },

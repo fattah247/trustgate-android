@@ -316,6 +316,8 @@ private val PretendVerdict.title: String
         PretendVerdict.PLAY_PROTECT_OFF -> "Play Protect turned off"
         PretendVerdict.NOT_FROM_PLAY -> "App not installed from Google Play"
         PretendVerdict.TOKEN_FARMING -> "Too many checks from this phone"
+        PretendVerdict.SET_UP_BEFORE -> "This phone was set up here before"
+        PretendVerdict.BLOCKED_BEFORE -> "This phone was blocked before"
     }
 
 @Composable
