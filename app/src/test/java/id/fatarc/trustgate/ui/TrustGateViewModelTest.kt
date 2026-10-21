@@ -10,7 +10,9 @@ import id.fatarc.trustgate.core.integrity.PretendVerdict
 import id.fatarc.trustgate.core.keys.KeyRegistrar
 import id.fatarc.trustgate.core.security.ConfirmationMethod
 import id.fatarc.trustgate.core.security.TrustGateSecurityService
+import id.fatarc.trustgate.domain.api.PhoneStatus
 import id.fatarc.trustgate.domain.api.Remedy
+import id.fatarc.trustgate.domain.api.SignedAction
 import id.fatarc.trustgate.domain.events.SecurityEventType
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.risk.RiskScorer
@@ -19,14 +21,17 @@ import id.fatarc.trustgate.domain.risk.SignalSeverity
 import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.domain.signing.ReferencePayment
 import id.fatarc.trustgate.domain.signing.ReferenceRequestSigner
+import id.fatarc.trustgate.domain.signing.ReferenceSigningScheme
 import id.fatarc.trustgate.domain.signing.RejectionReason
 import id.fatarc.trustgate.domain.signing.VerificationResult
 import id.fatarc.trustgate.testing.InMemorySecureValueStore
 import id.fatarc.trustgate.testing.InMemorySecurityEventRepository
 import id.fatarc.trustgate.testing.MutableSignalCollector
 import id.fatarc.trustgate.testing.SoftwareKeyProvider
+import id.fatarc.trustgate.testing.TestKey
 import id.fatarc.trustgate.testing.developmentPolicy
 import id.fatarc.trustgate.testing.riskSignal
+import id.fatarc.trustgate.testing.selfSignedChain
 import java.security.KeyStoreException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -384,6 +389,35 @@ class TrustGateViewModelTest {
         assertThat(payment.submission).isInstanceOf(Submission.Charged::class.java)
         assertThat(signed.payload.payee).isEqualTo(payee.id)
         assertThat(signed.payload.amountMinor).isEqualTo(ReferencePayment.AMOUNTS_MINOR[1])
+    }
+
+    @Test
+    fun `a phone asking to join is approved from this phone, which confirms with its screen lock`() = runTest(dispatcher) {
+        val viewModel = start()
+        viewModel.createLinkCode()
+        advanceUntilIdle()
+        val code = requireNotNull(viewModel.uiState.value.account.linkCode).code
+        // Another phone, registered on its own, asks to join with the code.
+        val other = TestKey()
+        val registration = backend.issueRegistrationChallenge()
+        backend.registerKey(KeyRole.DEVICE, other.encodedPublicKey, selfSignedChain(other), registration, phoneLabel = "Other phone")
+        val challenge = backend.issueRegistrationChallenge(other.keyId)
+        val proof = other.sign(ReferenceSigningScheme.keyBindingInput(ReferenceSigningScheme.ACTION_JOIN_ACCOUNT, challenge, code))
+        backend.joinAccount(SignedAction(other.keyId, ReferenceSigningScheme.encode(challenge), ReferenceSigningScheme.encode(proof), code))
+
+        viewModel.refreshAccount()
+        advanceUntilIdle()
+        val waiting = viewModel.uiState.value.account.view?.phones?.single { !it.thisPhone }
+        viewModel.decideAboutPhone(other.keyId, ReferenceSigningScheme.DECISION_APPROVE)
+        advanceUntilIdle()
+        val asked = viewModel.uiState.value.account.deciding
+        viewModel.completeDecision(requireNotNull(viewModel.decisionSignatureForPrompt()))
+        advanceUntilIdle()
+
+        assertThat(waiting?.status).isEqualTo(PhoneStatus.WAITING_FOR_APPROVAL)
+        assertThat(asked?.method).isEqualTo(ConfirmationMethod.DEVICE_CREDENTIAL)
+        assertThat(viewModel.uiState.value.account.view?.phones?.single { !it.thisPhone }?.status).isEqualTo(PhoneStatus.ACTIVE)
+        assertThat(keys.stepUpSignaturesHandedOut).isEqualTo(1)
     }
 
     @Test

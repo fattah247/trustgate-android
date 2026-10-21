@@ -5,6 +5,7 @@ import androidx.compose.material.icons.outlined.Autorenew
 import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.Cancel
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Devices
 import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.GppBad
 import androidx.compose.material.icons.outlined.Key
@@ -87,6 +88,13 @@ fun SecurityEvent.headline(): String = when (type) {
     }
     SecurityEventType.KEY_ROTATED -> "Phone key replaced"
     SecurityEventType.PHONE_REMOVED -> "Phone set up again"
+    SecurityEventType.ACCOUNT_CHANGED -> when (metadata["action"]) {
+        "link-code" -> "Link code made"
+        "join-requested" -> "Asked to join an account"
+        "approve" -> "Phone approved"
+        "decline" -> "Phone not let in"
+        else -> "Phone removed from account"
+    }
 }
 
 fun SecurityEvent.tone(): Tone = when (type) {
@@ -118,6 +126,7 @@ fun SecurityEvent.tone(): Tone = when (type) {
     }
 
     SecurityEventType.KEY_ROTATED -> Tone.POSITIVE
+    SecurityEventType.ACCOUNT_CHANGED -> if (metadata["action"] == "remove") Tone.CAUTION else Tone.NEUTRAL
     SecurityEventType.PHONE_REMOVED -> if (metadata["decidedBy"] == "reference-backend") Tone.CAUTION else Tone.NEUTRAL
 
     SecurityEventType.SENSITIVE_ACTION_CANCELLED,
@@ -152,6 +161,7 @@ val SecurityEvent.icon: ImageVector
         }
         SecurityEventType.KEY_ROTATED -> Icons.Outlined.Autorenew
         SecurityEventType.PHONE_REMOVED -> Icons.Outlined.PhonelinkErase
+        SecurityEventType.ACCOUNT_CHANGED -> Icons.Outlined.Devices
     }
 
 fun metadataLabel(key: String): String = when (key) {
@@ -252,6 +262,7 @@ private fun SecurityEvent.group(): EventFilter = when (type) {
     SecurityEventType.SECURE_VALUE_STORED,
     SecurityEventType.KEY_ROTATED,
     SecurityEventType.PHONE_REMOVED,
+    SecurityEventType.ACCOUNT_CHANGED,
     -> EventFilter.LAB
 }
 

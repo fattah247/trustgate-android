@@ -2,6 +2,7 @@ package id.fatarc.trustgate.server
 
 import id.fatarc.trustgate.backend.ReferenceBackend
 import id.fatarc.trustgate.domain.api.AdminRevocationRequest
+import id.fatarc.trustgate.domain.api.DecisionChallengeRequest
 import id.fatarc.trustgate.domain.api.DeviceRemoval
 import id.fatarc.trustgate.domain.api.DeviceRemovalRequest
 import id.fatarc.trustgate.domain.api.ErrorResponse
@@ -10,10 +11,12 @@ import id.fatarc.trustgate.domain.api.KeyRotationRequest
 import id.fatarc.trustgate.domain.api.PaymentAuthorization
 import id.fatarc.trustgate.domain.api.PaymentAuthorizationRequest
 import id.fatarc.trustgate.domain.api.PaymentResponse
+import id.fatarc.trustgate.domain.api.PhoneDecision
 import id.fatarc.trustgate.domain.api.RegistrationChallenge
 import id.fatarc.trustgate.domain.api.RegistrationChallengeRequest
 import id.fatarc.trustgate.domain.api.RegistrationResult
 import id.fatarc.trustgate.domain.api.ServerHealth
+import id.fatarc.trustgate.domain.api.SignedAction
 import id.fatarc.trustgate.domain.api.StepUpRemoval
 import id.fatarc.trustgate.domain.api.StepUpRemovalRequest
 import id.fatarc.trustgate.domain.api.TrustGateJson
@@ -54,10 +57,10 @@ import kotlin.time.Duration.Companion.minutes
 private const val MAX_SIGNED_BODY_BYTES = 16 * 1024
 
 /**
- * How many requests one client address may make per minute. Key registration is the cheapest
- * thing to flood, so it gets the lower limit; payments have their own per-phone limits as well.
+ * How many requests one client address may make per minute. Key and account requests are the
+ * cheapest to flood, so they get the lower limit; payments have their own per-account limits too.
  */
-class RequestLimits(val keysPerMinute: Int = 20, val paymentsPerMinute: Int = 60)
+class RequestLimits(val keysPerMinute: Int = 40, val paymentsPerMinute: Int = 60)
 
 private val KEYS = RateLimitName("keys")
 private val PAYMENTS = RateLimitName("payments")
@@ -140,6 +143,7 @@ private fun Route.keyRoutes(backend: ReferenceBackend) {
             challenge = bytes(request.challenge),
             deviceKeyId = request.deviceKeyId,
             deviceKeyProof = request.deviceKeyProof?.let(::bytes),
+            phoneLabel = request.phoneLabel,
         )
         call.respond<RegistrationResult>(result)
     }
@@ -166,6 +170,31 @@ private fun Route.keyRoutes(backend: ReferenceBackend) {
         val request = call.receive<DeviceRemovalRequest>()
         call.respond(DeviceRemoval(backend.removeDevice(request.deviceKeyId, bytes(request.challenge), bytes(request.proof))))
     }
+
+    // A phone's account: answered with 403 and nothing more when the signature or the phone doesn't check out.
+    post(TrustGateRoutes.ACCOUNT) {
+        call.respondOrForbid(backend.accountView(call.receive<SignedAction>()))
+    }
+
+    post(TrustGateRoutes.LINK_CODE) {
+        call.respondOrForbid(backend.createLinkCode(call.receive<SignedAction>()))
+    }
+
+    post(TrustGateRoutes.JOIN_ACCOUNT) {
+        call.respond(backend.joinAccount(call.receive<SignedAction>()))
+    }
+
+    post(TrustGateRoutes.DECISION_CHALLENGE) {
+        call.respondOrForbid(backend.decisionChallenge(call.receive<DecisionChallengeRequest>()))
+    }
+
+    post(TrustGateRoutes.DECIDE) {
+        call.respond(backend.decide(call.receive<PhoneDecision>()))
+    }
+}
+
+private suspend inline fun <reified T : Any> ApplicationCall.respondOrForbid(value: T?) {
+    if (value == null) respond(HttpStatusCode.Forbidden, ErrorResponse("Not allowed.")) else respond(value)
 }
 
 private fun Route.paymentRoutes(backend: ReferenceBackend) {

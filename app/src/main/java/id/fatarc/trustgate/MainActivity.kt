@@ -11,6 +11,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import id.fatarc.trustgate.ui.TrustGateApp
 import id.fatarc.trustgate.ui.TrustGateViewModel
 import id.fatarc.trustgate.ui.TrustGateViewModelFactory
+import id.fatarc.trustgate.ui.lab.AccountActions
 import id.fatarc.trustgate.ui.theme.TrustGateTheme
 import kotlinx.coroutines.launch
 
@@ -51,6 +52,17 @@ class MainActivity : FragmentActivity() {
                     onSetPretendVerdict = viewModel::setPretendVerdict,
                     onRotateKey = viewModel::rotateDeviceKey,
                     onRemovePhone = viewModel::removeThisPhone,
+                    accountActions = AccountActions(
+                        onRefresh = viewModel::refreshAccount,
+                        onCreateLinkCode = viewModel::createLinkCode,
+                        onDismissLinkCode = viewModel::dismissLinkCode,
+                        onJoin = viewModel::joinAccount,
+                        onDecide = viewModel::decideAboutPhone,
+                    ),
+                    onDecisionSignature = viewModel::decisionSignatureForPrompt,
+                    onDecisionAuthenticated = viewModel::completeDecision,
+                    onConfirmDecisionWithTap = viewModel::confirmDecisionWithTap,
+                    onDismissDecision = viewModel::dismissDecision,
                     onFixWithPlay = { remedy ->
                         lifecycleScope.launch {
                             // Google Play walks the person through it; once fixed, the payment runs again.

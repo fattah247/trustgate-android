@@ -161,6 +161,11 @@ class TrustGateSecurityService(
         )
     }
 
+    /** Something changed about which phones can use the account; [action] says what. */
+    suspend fun recordAccountChange(action: String, message: String) {
+        eventRepository.record(SecurityEvent(type = SecurityEventType.ACCOUNT_CHANGED, message = message, metadata = mapOf("action" to action)))
+    }
+
     suspend fun recordPayment(request: SignedRequest, outcome: SubmitOutcome) {
         val response = outcome.response
         eventRepository.record(

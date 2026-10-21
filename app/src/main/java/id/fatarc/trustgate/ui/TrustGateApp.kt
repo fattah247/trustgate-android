@@ -61,9 +61,11 @@ import id.fatarc.trustgate.core.integrity.PretendVerdict
 import id.fatarc.trustgate.domain.api.Remedy
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.signing.Payee
+import id.fatarc.trustgate.domain.signing.ReferenceSigningScheme
 import id.fatarc.trustgate.ui.about.AboutScreen
 import id.fatarc.trustgate.ui.events.SecurityEventLogScreen
 import id.fatarc.trustgate.ui.home.HomeScreen
+import id.fatarc.trustgate.ui.lab.AccountActions
 import id.fatarc.trustgate.ui.lab.LabScreen
 import id.fatarc.trustgate.ui.lab.RequestDetailsScreen
 import id.fatarc.trustgate.ui.payment.PayScreen
@@ -113,6 +115,11 @@ fun TrustGateApp(
     onFixWithPlay: (Remedy) -> Unit,
     onRotateKey: () -> Unit,
     onRemovePhone: () -> Unit,
+    accountActions: AccountActions,
+    onDecisionSignature: () -> Signature?,
+    onDecisionAuthenticated: (Signature) -> Unit,
+    onConfirmDecisionWithTap: () -> Unit,
+    onDismissDecision: (problem: String?) -> Unit,
     onStoreReferenceValues: () -> Unit,
     onSetScenarioRiskLevel: (DeviceRiskLevel?) -> Unit,
     onSetCheckout: (Payee, Long) -> Unit,
@@ -269,6 +276,7 @@ fun TrustGateApp(
                                         onSetPretendVerdict = onSetPretendVerdict,
                                         onRotateKey = onRotateKey,
                                         onRemovePhone = onRemovePhone,
+                                        account = accountActions,
                                         onStoreTestValues = onStoreReferenceValues,
                                         onOpenRequest = dropUnlessResumed { navController.navigate(Routes.LAB_REQUEST) },
                                         onOpenAbout = dropUnlessResumed { navController.navigate(Routes.LAB_ABOUT) },
@@ -308,6 +316,30 @@ fun TrustGateApp(
                 onAuthenticated = onStepUpAuthenticated,
                 onConfirmTap = onConfirmWithTap,
                 onDismiss = onDismissConfirmation,
+            )
+        }
+        uiState.account.deciding?.let { deciding ->
+            val (title, verb) = when (deciding.action) {
+                ReferenceSigningScheme.DECISION_APPROVE -> "Let ${deciding.phoneLabel} in" to "Approve"
+                ReferenceSigningScheme.DECISION_DECLINE -> "Keep ${deciding.phoneLabel} out" to "Decline"
+                else -> "Remove ${deciding.phoneLabel}" to "Remove"
+            }
+            StepUpConfirmation(
+                method = deciding.method,
+                requestedAt = deciding.requestedAt,
+                problems = emptyList(),
+                scamWarning = false,
+                onRequestSignature = onDecisionSignature,
+                onAuthenticated = onDecisionAuthenticated,
+                onConfirmTap = onConfirmDecisionWithTap,
+                onDismiss = onDismissDecision,
+                title = title,
+                confirmLabel = verb,
+                message = if (deciding.action == ReferenceSigningScheme.DECISION_APPROVE) {
+                    "Only approve a phone you're holding yourself. A phone you let in can pay from this account."
+                } else {
+                    "Confirm it's you."
+                },
             )
         }
     }

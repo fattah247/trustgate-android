@@ -1,8 +1,11 @@
 package id.fatarc.trustgate.attacklab
 
+import id.fatarc.trustgate.domain.api.DecisionChallengeRequest
 import id.fatarc.trustgate.domain.api.DeviceEvidence
+import id.fatarc.trustgate.domain.api.JoinResult
 import id.fatarc.trustgate.domain.api.KeyRegistrationRequest
 import id.fatarc.trustgate.domain.api.KeyRotationRequest
+import id.fatarc.trustgate.domain.api.LinkCode
 import id.fatarc.trustgate.domain.api.MockIntegrityClaims
 import id.fatarc.trustgate.domain.api.PaymentAuthorization
 import id.fatarc.trustgate.domain.api.PaymentAuthorizationRequest
@@ -11,6 +14,7 @@ import id.fatarc.trustgate.domain.api.RegistrationChallenge
 import id.fatarc.trustgate.domain.api.RegistrationChallengeRequest
 import id.fatarc.trustgate.domain.api.RegistrationResult
 import id.fatarc.trustgate.domain.api.ReportedSignal
+import id.fatarc.trustgate.domain.api.SignedAction
 import id.fatarc.trustgate.domain.api.TrustGateJson
 import id.fatarc.trustgate.domain.api.TrustGateRoutes
 import id.fatarc.trustgate.domain.api.VerificationChallenge
@@ -57,6 +61,16 @@ class AttackLab(
     private val signer = ReferenceRequestSigner()
     private val stranger = TestKey()
 
+    /**
+     * Registers a new phone of its own and asks to join the account whose phone showed [code], so a
+     * person with one emulator can watch the approval from the app.
+     */
+    fun joinAsNewPhone(code: String): JoinResult {
+        val phone = TestKey()
+        check(register(phone, label = "Second phone (lab)") is RegistrationResult.Registered) { "This server won't register the lab's key." }
+        return join(phone, ReferenceSigningScheme.normalizeLinkCode(code))
+    }
+
     fun run(): List<AttackResult> {
         val phone = TestKey()
         val registration = register(phone)
@@ -89,6 +103,9 @@ class AttackLab(
             slipInStepUpKey(phone),
             hijackRotation(phone),
             useReplacedKey(),
+            guessLinkCode(phone),
+            approveFromOutside(),
+            removeSomeoneElsesPhone(phone),
             payPastTheLimit(),
             readAuditWithoutToken(),
             floodRegistration(),
@@ -200,6 +217,52 @@ class AttackLab(
         return verdict("Keep using a key after it was replaced", check(request.asReceived()))
     }
 
+    private fun guessLinkCode(phone: TestKey): AttackResult {
+        val result = join(phone, "ABCD2345")
+        return AttackResult("Join an account by guessing its code", !result.waitingForApproval, result.message)
+    }
+
+    /** A phone that got a code, so it's waiting to join, approved by a phone that isn't on that account. */
+    private fun approveFromOutside(): AttackResult {
+        val owner = TestKey().also { register(it) }
+        val intruder = TestKey().also { register(it) }
+        val accomplice = TestKey().also { register(it) }
+        val code = post(
+            TrustGateRoutes.LINK_CODE,
+            signedAction(owner, ReferenceSigningScheme.ACTION_LINK_CODE),
+            SignedAction.serializer(),
+            LinkCode.serializer(),
+        ).code
+        join(intruder, code)
+        val asked = server.post(
+            TrustGateRoutes.DECISION_CHALLENGE,
+            json(DecisionChallengeRequest(accomplice.keyId, intruder.keyId, ReferenceSigningScheme.DECISION_APPROVE), DecisionChallengeRequest.serializer()),
+        )
+        return AttackResult("Let a phone in from off the account", asked.status == 403, "HTTP ${asked.status}")
+    }
+
+    private fun removeSomeoneElsesPhone(phone: TestKey): AttackResult {
+        val victim = TestKey().also { register(it) }
+        val asked = server.post(
+            TrustGateRoutes.DECISION_CHALLENGE,
+            json(DecisionChallengeRequest(phone.keyId, victim.keyId, ReferenceSigningScheme.DECISION_REMOVE), DecisionChallengeRequest.serializer()),
+        )
+        return AttackResult("Remove a phone from someone else's account", asked.status == 403, "HTTP ${asked.status}")
+    }
+
+    private fun join(phone: TestKey, code: String): JoinResult = post(
+        TrustGateRoutes.JOIN_ACCOUNT,
+        signedAction(phone, ReferenceSigningScheme.ACTION_JOIN_ACCOUNT, code),
+        SignedAction.serializer(),
+        JoinResult.serializer(),
+    )
+
+    private fun signedAction(key: TestKey, action: String, subject: String = ""): SignedAction {
+        val challenge = registrationChallenge(key.keyId)
+        val proof = key.sign(ReferenceSigningScheme.keyBindingInput(action, challenge, subject))
+        return SignedAction(key.keyId, base64(challenge), base64(proof), subject)
+    }
+
     private fun payPastTheLimit(): AttackResult {
         val phone = TestKey().also { register(it) }
         // Authorizations first, payments after, so the limit can't be met one authorization at a time.
@@ -233,11 +296,17 @@ class AttackLab(
 
     // The protocol, as any client would speak it.
 
-    private fun register(key: TestKey): RegistrationResult {
+    private fun register(key: TestKey, label: String = "Attack lab phone"): RegistrationResult {
         val challenge = registrationChallenge(null)
         return post(
             TrustGateRoutes.KEYS,
-            KeyRegistrationRequest(KeyRole.DEVICE, base64(key.encodedPublicKey), selfSignedChain(key).map(::base64), base64(challenge)),
+            KeyRegistrationRequest(
+                KeyRole.DEVICE,
+                base64(key.encodedPublicKey),
+                selfSignedChain(key).map(::base64),
+                base64(challenge),
+                phoneLabel = label,
+            ),
             KeyRegistrationRequest.serializer(),
             RegistrationResult.serializer(),
         )
@@ -344,7 +413,7 @@ class AttackLab(
         /** More than any policy's per-window payment count. */
         const val RAPID_PAYMENTS = 6
 
-        /** More than the server's per-minute registration allowance. */
-        const val FLOOD_REQUESTS = 40
+        /** More than the server's per-minute allowance for key and account requests. */
+        const val FLOOD_REQUESTS = 60
     }
 }

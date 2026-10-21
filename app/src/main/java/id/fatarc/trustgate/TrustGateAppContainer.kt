@@ -1,6 +1,7 @@
 package id.fatarc.trustgate
 
 import android.content.Context
+import android.os.Build
 import id.fatarc.trustgate.core.backend.BackendTransport
 import id.fatarc.trustgate.core.backend.HttpTrustGateApi
 import id.fatarc.trustgate.core.backend.PaymentClient
@@ -31,7 +32,12 @@ class TrustGateAppContainer(
 
     val api: TrustGateApi = HttpTrustGateApi(BuildConfig.SERVER_URL)
     val keyProvider: DeviceKeyProvider = AndroidDeviceKeyProvider(context)
-    val keyRegistrar = KeyRegistrar(keyProvider, api, registered = PreferencesRegisteredKeyStore(context))
+    val keyRegistrar = KeyRegistrar(
+        provider = keyProvider,
+        api = api,
+        registered = PreferencesRegisteredKeyStore(context),
+        phoneLabel = "${Build.MANUFACTURER.replaceFirstChar { it.uppercase() }} ${Build.MODEL}",
+    )
     val transport = BackendTransport(api)
     val paymentClient = PaymentClient(transport)
     val integrityTokens: IntegrityTokenSource = when {

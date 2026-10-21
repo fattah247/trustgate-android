@@ -34,6 +34,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -77,6 +78,7 @@ fun LabScreen(
     onSetPretendVerdict: (PretendVerdict) -> Unit,
     onRotateKey: () -> Unit,
     onRemovePhone: () -> Unit,
+    account: AccountActions,
     onStoreTestValues: () -> Unit,
     onOpenRequest: () -> Unit,
     onOpenAbout: () -> Unit,
@@ -85,6 +87,7 @@ fun LabScreen(
     var openKey by rememberSaveable { mutableStateOf<KeyRole?>(null) }
     var choosingVerdict by rememberSaveable { mutableStateOf(false) }
     var confirmRemove by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(Unit) { account.onRefresh() }
     val keys = uiState.keys.keys
 
     ScreenScaffold(title = "Lab") {
@@ -173,6 +176,10 @@ fun LabScreen(
                     else -> ListRow(headline = "Setting up keys…", leadingIcon = KeyRole.DEVICE.icon())
                 }
             }
+        }
+
+        item(key = "account") {
+            AccountSection(state = uiState.account, actions = account)
         }
 
         item(key = "storage") {

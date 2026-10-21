@@ -32,6 +32,8 @@ class KeyRegistrar(
     private val api: TrustGateApi,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val registered: RegisteredKeyStore = InMemoryRegisteredKeyStore(),
+    /** How the phone appears to the person's other phones, such as its model. */
+    private val phoneLabel: String? = null,
 ) {
     private val lock = Mutex()
     private var current: KeySet? = null
@@ -175,6 +177,7 @@ class KeyRegistrar(
                 challenge = challenge,
                 deviceKeyId = deviceKeyId,
                 deviceKeyProof = proof,
+                phoneLabel = phoneLabel.takeIf { role == KeyRole.DEVICE },
             )
         ) {
             is RegistrationResult.Registered -> RegisteredKey(role, result.keyId, generated.protection, result.attestation)

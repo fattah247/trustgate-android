@@ -10,16 +10,28 @@ import id.fatarc.trustgate.backend.store.InMemoryBackendStore
 import id.fatarc.trustgate.backend.store.LedgerEntry
 import id.fatarc.trustgate.backend.store.StoredChallenge
 import id.fatarc.trustgate.backend.store.StoredKey
+import id.fatarc.trustgate.backend.store.StoredLinkCode
+import id.fatarc.trustgate.backend.store.StoredPhone
 import id.fatarc.trustgate.domain.actiongate.SensitiveActionDecision
 import id.fatarc.trustgate.domain.actiongate.SensitiveActionGate
+import id.fatarc.trustgate.domain.api.AccountView
 import id.fatarc.trustgate.domain.api.AuditStatus
+import id.fatarc.trustgate.domain.api.DecisionChallenge
+import id.fatarc.trustgate.domain.api.DecisionChallengeRequest
 import id.fatarc.trustgate.domain.api.DecisionReason
+import id.fatarc.trustgate.domain.api.DecisionResult
 import id.fatarc.trustgate.domain.api.DeviceEvidence
+import id.fatarc.trustgate.domain.api.JoinResult
+import id.fatarc.trustgate.domain.api.LinkCode
 import id.fatarc.trustgate.domain.api.Payment
 import id.fatarc.trustgate.domain.api.PaymentAuthorization
 import id.fatarc.trustgate.domain.api.PaymentResponse
+import id.fatarc.trustgate.domain.api.PhoneDecision
+import id.fatarc.trustgate.domain.api.PhoneStatus
+import id.fatarc.trustgate.domain.api.PhoneView
 import id.fatarc.trustgate.domain.api.RegistrationResult
 import id.fatarc.trustgate.domain.api.RequiredConfirmation
+import id.fatarc.trustgate.domain.api.SignedAction
 import id.fatarc.trustgate.domain.api.TrustGateJson
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.signing.KeyRole
@@ -96,8 +108,9 @@ class ReferenceBackend(
         challenge: ByteArray,
         deviceKeyId: String? = null,
         deviceKeyProof: ByteArray? = null,
+        phoneLabel: String? = null,
     ): RegistrationResult = store.transaction {
-        val result = register(role, encodedPublicKey, attestationChain, challenge, deviceKeyId, deviceKeyProof)
+        val result = register(role, encodedPublicKey, attestationChain, challenge, deviceKeyId, deviceKeyProof, phoneLabel)
         when (result) {
             is RegistrationResult.Registered -> audit.record(
                 "key-registered",
@@ -120,6 +133,7 @@ class ReferenceBackend(
         challenge: ByteArray,
         deviceKeyId: String?,
         deviceKeyProof: ByteArray?,
+        phoneLabel: String?,
     ): RegistrationResult {
         if (!spendRegistrationChallenge(challenge, deviceKeyId)) {
             return RegistrationResult.Refused("The registration challenge doesn't match this request, or has expired.")
@@ -146,6 +160,8 @@ class ReferenceBackend(
             KeyRole.DEVICE -> {
                 if (deviceKeyId != null) return RegistrationResult.Refused("A device key can't belong to another key.")
                 store.putKey(stored(owner = keyId, phoneId = keyId, phoneEnrolledAt = clock.instant()))
+                // A phone starts on an account of its own; joining another needs a phone there to approve it.
+                store.putPhone(StoredPhone(keyId, newId("acc_"), cleanLabel(phoneLabel), clock.instant()))
             }
 
             KeyRole.STEP_UP -> {
@@ -343,17 +359,26 @@ class ReferenceBackend(
         if (isNewPhone(deviceKey, at)) add(DecisionReason("New phone", DeviceRiskLevel.MEDIUM))
     }
 
-    private fun isNewPhone(deviceKey: StoredKey, at: Instant): Boolean =
-        policy.limits.newPhonePeriod?.let { period -> deviceKey.phoneEnrolledAt.isAfter(at.minus(period)) } == true
+    private fun isNewPhone(deviceKey: StoredKey, at: Instant): Boolean = isNewPhone(phoneOf(deviceKey), at)
+
+    /** New since it enrolled or joined its account, whichever came later. */
+    private fun isNewPhone(phone: StoredPhone, at: Instant): Boolean =
+        policy.limits.newPhonePeriod?.let { period -> phone.joinedAt.isAfter(at.minus(period)) } == true
+
+    /** The phone [deviceKey] belongs to; one registered before accounts existed gets an account of its own. */
+    private fun phoneOf(deviceKey: StoredKey): StoredPhone = store.phone(deviceKey.phoneId)
+        ?: StoredPhone(deviceKey.phoneId, newId("acc_"), "Phone", deviceKey.phoneEnrolledAt).also(store::putPhone)
 
     /** Why charging [amountMinor] now would break the phone's limits, or null when it wouldn't. */
     private fun limitBroken(deviceKey: StoredKey, amountMinor: Long, at: Instant): RejectionReason? {
         val limits = policy.limits
-        if (store.paymentsSince(deviceKey.phoneId, at.minus(limits.window)).size >= limits.maxPayments) {
+        // Counted across every phone on the account, so adding a phone doesn't add allowance.
+        val account = phoneOf(deviceKey).accountId
+        if (store.paymentsOfAccount(account, at.minus(limits.window)).size >= limits.maxPayments) {
             return RejectionReason.TOO_MANY_PAYMENTS
         }
         val daily = limits.dailyAmountMinor
-        if (daily != null && store.paymentsSince(deviceKey.phoneId, at.minus(Duration.ofDays(1))).sumOf { it.amountMinor } + amountMinor > daily) {
+        if (daily != null && store.paymentsOfAccount(account, at.minus(Duration.ofDays(1))).sumOf { it.amountMinor } + amountMinor > daily) {
             return RejectionReason.OVER_LIMIT
         }
         val newPhoneCap = limits.newPhoneAmountMinor
@@ -401,6 +426,166 @@ class ReferenceBackend(
             }
         }
     }
+
+    // Accounts: the phones that act for one person, and how a new one gets added.
+
+    /** The account [action]'s phone belongs to, with its phones and those waiting to join. */
+    @Synchronized
+    fun accountView(action: SignedAction): AccountView? = store.transaction {
+        val device = signedBy(action, ReferenceSigningScheme.ACTION_VIEW_ACCOUNT) ?: return@transaction null
+        val phone = phoneOf(device)
+        val now = clock.instant()
+        AccountView(
+            accountId = phone.accountId,
+            phones = store.phonesOf(phone.accountId)
+                .filter { store.activeDeviceKey(it.phoneId) != null }
+                .map { other ->
+                    PhoneView(
+                        phoneId = other.phoneId,
+                        label = other.label,
+                        joinedAt = other.joinedAt.toString(),
+                        status = when {
+                            other.accountId != phone.accountId -> PhoneStatus.WAITING_FOR_APPROVAL
+                            isNewPhone(other, now) -> PhoneStatus.NEW
+                            else -> PhoneStatus.ACTIVE
+                        },
+                        thisPhone = other.phoneId == phone.phoneId,
+                    )
+                },
+            waitingToJoin = phone.pendingAccountId != null,
+        )
+    }
+
+    /**
+     * A one-time code another phone enters to ask to join this account. Only a phone that's been on
+     * the account past the new-phone period can make one, so a phone that just got in can't let more in.
+     */
+    @Synchronized
+    fun createLinkCode(action: SignedAction): LinkCode? = store.transaction {
+        val device = signedBy(action, ReferenceSigningScheme.ACTION_LINK_CODE) ?: return@transaction null
+        val phone = phoneOf(device)
+        if (isNewPhone(phone, clock.instant())) return@transaction null
+        val code = StoredLinkCode(newLinkCode(), phone.accountId, phone.phoneId, clock.instant().plus(LINK_CODE_LIFETIME))
+        store.putLinkCode(code)
+        audit.record("link-code-issued", subject = phone.accountId, detail = "by ${phone.phoneId}")
+        LinkCode(code.code, code.expiresAt.toString())
+    }
+
+    /** The phone signing [action] asks to join the account whose link code is [SignedAction.subject]. */
+    @Synchronized
+    fun joinAccount(action: SignedAction): JoinResult = store.transaction {
+        val device = signedBy(action, ReferenceSigningScheme.ACTION_JOIN_ACCOUNT)
+            ?: return@transaction JoinResult(false, "This phone isn't registered.")
+        val phone = phoneOf(device)
+        val code = store.linkCode(ReferenceSigningScheme.normalizeLinkCode(action.subject))
+            ?.takeIf { it.expiresAt.isAfter(clock.instant()) && it.accountId != phone.accountId }
+        if (code == null) {
+            audit.record("join-refused", subject = phone.phoneId, detail = "code not valid")
+            return@transaction JoinResult(false, "That code isn't valid. Make a new one on your other phone.")
+        }
+        // Single use: whoever saw the code can't use it again after this phone has.
+        store.deleteLinkCode(code.code)
+        store.putPhone(phone.copy(pendingAccountId = code.accountId))
+        audit.record("join-requested", subject = code.accountId, detail = "by ${phone.phoneId}")
+        JoinResult(true, "Now approve this phone on your other phone.")
+    }
+
+    /**
+     * Before deciding about another phone, the deciding phone gets a one-time challenge bound to
+     * that decision, and learns which key has to sign it: the step-up key when it has one.
+     */
+    @Synchronized
+    fun decisionChallenge(request: DecisionChallengeRequest): DecisionChallenge? = store.transaction {
+        val device = store.key(request.deviceKeyId)?.takeIf { it.role == KeyRole.DEVICE && !it.isRevoked } ?: return@transaction null
+        decisionProblem(phoneOf(device), request.phoneId, request.action)?.let { return@transaction null }
+        val hasStepUp = store.stepUpKeyOf(device.keyId) != null
+        val confirmation = if (hasStepUp) RequiredConfirmation.STEP_UP_KEY else RequiredConfirmation.TAP
+        val nonce = issueChallenge(ChallengePurpose.DECISION, device.keyId, confirmation, decisionHash(request.action, request.phoneId))
+        DecisionChallenge(nonce, if (hasStepUp) KeyRole.STEP_UP else KeyRole.DEVICE, confirmation)
+    }
+
+    /** Approves or declines a phone waiting to join, or removes one from the account. */
+    @Synchronized
+    fun decide(decision: PhoneDecision): DecisionResult = store.transaction {
+        fun refuse(reason: String): DecisionResult {
+            audit.record("decision-refused", subject = decision.phoneId, detail = "${decision.action}: $reason")
+            return DecisionResult(false, reason)
+        }
+        val key = store.key(decision.keyId)?.takeIf { !it.isRevoked } ?: return@transaction refuse("Unknown key")
+        val device = store.key(key.deviceKeyId)?.takeIf { !it.isRevoked } ?: return@transaction refuse("Unknown phone")
+        val challenge = challengeFor(decision.nonce, ChallengePurpose.DECISION, device.keyId, clock.instant())
+            ?.takeIf { it.boundHash == decisionHash(decision.action, decision.phoneId) }
+            ?: return@transaction refuse("This decision wasn't asked for, or took too long")
+        val confirmed = when (challenge.confirmation) {
+            RequiredConfirmation.STEP_UP_KEY -> key.role == KeyRole.STEP_UP
+            RequiredConfirmation.TAP -> key.role == KeyRole.DEVICE && decision.tapConfirmed
+            RequiredConfirmation.NONE -> false
+        }
+        if (!confirmed) return@transaction refuse("Not confirmed the way the server asked")
+        val signature = ReferenceSigningScheme.decodeOrNull(decision.signature)
+        val input = ReferenceSigningScheme.decisionInput(decision.action, decision.nonce, decision.phoneId, decision.tapConfirmed)
+        if (signature == null || !verifySignature(key, input, signature)) return@transaction refuse("Signature doesn't match")
+        val deciding = phoneOf(device)
+        decisionProblem(deciding, decision.phoneId, decision.action)?.let { return@transaction refuse(it) }
+        store.spendChallenge(decision.nonce, clock.instant())
+
+        val other = checkNotNull(store.phone(decision.phoneId))
+        val now = clock.instant()
+        when (decision.action) {
+            ReferenceSigningScheme.DECISION_APPROVE -> {
+                store.putPhone(other.copy(accountId = deciding.accountId, joinedAt = now, pendingAccountId = null))
+                audit.record("phone-approved", subject = deciding.accountId, detail = "${other.phoneId} by ${deciding.phoneId}")
+                DecisionResult(true, "${other.label} can now use this account.")
+            }
+            ReferenceSigningScheme.DECISION_DECLINE -> {
+                store.putPhone(other.copy(pendingAccountId = null))
+                audit.record("join-declined", subject = deciding.accountId, detail = "${other.phoneId} by ${deciding.phoneId}")
+                DecisionResult(true, "${other.label} wasn't let in.")
+            }
+            else -> {
+                store.activeDeviceKey(other.phoneId)?.let { revokePhoneKeys(it, now, "Removed by ${deciding.phoneId}") }
+                audit.record("phone-removed-from-account", subject = deciding.accountId, detail = "${other.phoneId} by ${deciding.phoneId}")
+                DecisionResult(true, "${other.label} was removed and can't pay any more.")
+            }
+        }
+    }
+
+    /** Why [deciding] can't [action] the phone [phoneId], or null when it can. */
+    private fun decisionProblem(deciding: StoredPhone, phoneId: String, action: String): String? {
+        val other = store.phone(phoneId) ?: return "Unknown phone"
+        if (isNewPhone(deciding, clock.instant())) return "A phone that's new on the account can't decide about others yet"
+        return when (action) {
+            ReferenceSigningScheme.DECISION_APPROVE, ReferenceSigningScheme.DECISION_DECLINE ->
+                if (other.pendingAccountId != deciding.accountId) "That phone isn't waiting to join this account" else null
+            ReferenceSigningScheme.DECISION_REMOVE -> when {
+                other.accountId != deciding.accountId -> "That phone isn't on this account"
+                other.phoneId == deciding.phoneId -> "A phone can't remove itself this way"
+                else -> null
+            }
+            else -> "Unknown decision"
+        }
+    }
+
+    /** The device key that signed [action] for [expected], with its challenge spent, or null. */
+    private fun signedBy(action: SignedAction, expected: String): StoredKey? {
+        val challenge = ReferenceSigningScheme.decodeOrNull(action.challenge) ?: return null
+        val proof = ReferenceSigningScheme.decodeOrNull(action.proof) ?: return null
+        val device = store.key(action.deviceKeyId)?.takeIf { it.role == KeyRole.DEVICE && !it.isRevoked } ?: return null
+        if (!verifySignature(device, ReferenceSigningScheme.keyBindingInput(expected, challenge, action.subject), proof)) return null
+        if (!spendRegistrationChallenge(challenge, action.deviceKeyId)) return null
+        return device
+    }
+
+    private fun decisionHash(action: String, phoneId: String): String = ReferenceSigningScheme.sha256Hex("decide-phone\n$action\n$phoneId")
+
+    private fun newLinkCode(): String =
+        (1..LINK_CODE_LENGTH).map { ReferenceSigningScheme.LINK_CODE_ALPHABET[random.nextInt(ReferenceSigningScheme.LINK_CODE_ALPHABET.length)] }
+            .joinToString("")
+
+    private fun newId(prefix: String): String = prefix + ReferenceSigningScheme.hex(ByteArray(8).also(random::nextBytes))
+
+    private fun cleanLabel(label: String?): String =
+        label?.filter { it.isLetterOrDigit() || it in " -_.()" }?.trim()?.take(40)?.ifBlank { null } ?: "Phone"
 
     /** Checks a signed request against a verification challenge and spends it, charging nothing. */
     @Synchronized
@@ -598,6 +783,10 @@ class ReferenceBackend(
 
     private companion object {
         val CHALLENGE_LIFETIME: Duration = Duration.ofMinutes(5)
+        val LINK_CODE_LIFETIME: Duration = Duration.ofMinutes(10)
+
+        /** 31 symbols over 8 places: about 8.5 × 10¹¹ codes, each valid once for ten minutes, behind rate limits. */
+        const val LINK_CODE_LENGTH = 8
     }
 }
 

@@ -39,6 +39,29 @@ object ReferenceSigningScheme {
     /** The device key asks the backend to stop accepting this phone's keys. */
     const val ACTION_REMOVE_DEVICE = "remove-device"
 
+    // A phone acting on its account, signed by its device key.
+    const val ACTION_VIEW_ACCOUNT = "view-account"
+    const val ACTION_LINK_CODE = "link-code"
+    const val ACTION_JOIN_ACCOUNT = "join-account"
+
+    // What a phone on an account can decide about another phone.
+    const val DECISION_APPROVE = "approve"
+    const val DECISION_DECLINE = "decline"
+    const val DECISION_REMOVE = "remove"
+
+    /** Link codes use letters and digits that can't be misread for each other. */
+    const val LINK_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+
+    /** A code as typed, uppercased and without the spaces or dashes people add. */
+    fun normalizeLinkCode(code: String): String = code.uppercase().filter { it in LINK_CODE_ALPHABET }
+
+    /**
+     * What a phone signs to decide about another: the action, the server's one-time [nonce], the
+     * other phone, and whether the person confirmed with a tap for want of a screen lock.
+     */
+    fun decisionInput(action: String, nonce: String, phoneId: String, tapConfirmed: Boolean): ByteArray =
+        listOf("decide-phone", action, nonce, phoneId, if (tapConfirmed) CONFIRMATION_TAP else "").joinToString("\n").toByteArray(StandardCharsets.UTF_8)
+
     /**
      * Every value the signature covers, one per line. Changing any of them, including dropping or
      * adding the optional idempotency key or confirmation, breaks the signature.

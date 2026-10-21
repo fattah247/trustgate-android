@@ -27,6 +27,7 @@ enum class SecurityEventType {
     PAYMENT_SUBMITTED,
     KEY_ROTATED,
     PHONE_REMOVED,
+    ACCOUNT_CHANGED,
 }
 
 @Serializable

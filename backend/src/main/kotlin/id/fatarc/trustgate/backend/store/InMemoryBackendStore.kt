@@ -2,6 +2,7 @@ package id.fatarc.trustgate.backend.store
 
 import id.fatarc.trustgate.backend.audit.AuditEntry
 import id.fatarc.trustgate.domain.api.Payment
+import id.fatarc.trustgate.domain.signing.KeyRole
 import java.time.Instant
 
 /** Keeps everything in memory, for tests and for running the backend inside one process. */
@@ -12,6 +13,8 @@ class InMemoryBackendStore : BackendStore {
     private val spent = HashMap<String, Instant>()
     private val ledger = HashMap<Pair<String, String>, LedgerEntry>()
     private val audit = mutableListOf<AuditEntry>()
+    private val phones = HashMap<String, StoredPhone>()
+    private val linkCodes = HashMap<String, StoredLinkCode>()
 
     @Synchronized
     override fun <T> transaction(block: () -> T): T = block()
@@ -58,12 +61,35 @@ class InMemoryBackendStore : BackendStore {
 
     override fun ledgerSize(): Int = ledger.size
 
-    override fun paymentsSince(phoneId: String, since: Instant): List<Payment> = ledger
-        .filterKeys { (device, _) -> keys[device]?.phoneId == phoneId }
+    override fun paymentsOfAccount(accountId: String, since: Instant): List<Payment> = ledger
+        .filterKeys { (device, _) -> keys[device]?.phoneId?.let(phones::get)?.accountId == accountId }
         .values
         .map { it.payment }
         .filter { !Instant.parse(it.processedAt).isBefore(since) }
         .sortedBy { Instant.parse(it.processedAt) }
+
+    override fun phone(phoneId: String): StoredPhone? = phones[phoneId]
+
+    override fun putPhone(phone: StoredPhone) {
+        phones[phone.phoneId] = phone
+    }
+
+    override fun phonesOf(accountId: String): List<StoredPhone> =
+        phones.values.filter { it.accountId == accountId || it.pendingAccountId == accountId }.sortedBy { it.joinedAt }
+
+    override fun activeDeviceKey(phoneId: String): StoredKey? =
+        keys.values.firstOrNull { it.phoneId == phoneId && it.role == KeyRole.DEVICE && !it.isRevoked }
+
+    override fun putLinkCode(code: StoredLinkCode) {
+        linkCodes.values.removeAll { it.accountId == code.accountId }
+        linkCodes[code.code] = code
+    }
+
+    override fun linkCode(code: String): StoredLinkCode? = linkCodes[code]
+
+    override fun deleteLinkCode(code: String) {
+        linkCodes.remove(code)
+    }
 
     override fun appendAuditEntry(entry: AuditEntry) {
         audit += entry

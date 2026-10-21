@@ -116,6 +116,15 @@ tasks.register<JavaExec>("attackLab") {
     args("https://127.0.0.1:8443", devTlsDir.get().file("server.pem").asFile.path)
 }
 
+tasks.register<JavaExec>("joinAccount") {
+    group = "verification"
+    description = "Plays a second phone that asks to join the account whose code is given as -Pcode=CODE."
+    dependsOn(generateDevCertificate)
+    classpath = attackLab.runtimeClasspath
+    mainClass.set("id.fatarc.trustgate.attacklab.JoinAccountMainKt")
+    args(providers.gradleProperty("code").getOrElse(""), "https://127.0.0.1:8443", devTlsDir.get().file("server.pem").asFile.path)
+}
+
 tasks.named<JavaExec>("run") {
     dependsOn(generateDevCertificate)
     val dir = devTlsDir.get().asFile

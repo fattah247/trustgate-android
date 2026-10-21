@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import id.fatarc.trustgate.BuildConfig
 import id.fatarc.trustgate.TrustGateAppContainer
+import id.fatarc.trustgate.core.account.AccountClient
 import id.fatarc.trustgate.core.backend.BackendRequestException
 import id.fatarc.trustgate.core.backend.BackendTransport
 import id.fatarc.trustgate.core.backend.PaymentClient
@@ -29,6 +30,7 @@ import id.fatarc.trustgate.domain.api.DeviceEvidence
 import id.fatarc.trustgate.domain.api.PaymentAuthorization
 import id.fatarc.trustgate.domain.api.PaymentAuthorizationRequest
 import id.fatarc.trustgate.domain.api.PaymentResponse
+import id.fatarc.trustgate.domain.api.PhoneDecision
 import id.fatarc.trustgate.domain.api.ReportedSignal
 import id.fatarc.trustgate.domain.api.RequiredConfirmation
 import id.fatarc.trustgate.domain.api.TrustGateJson
@@ -79,6 +81,7 @@ class TrustGateViewModel(
     private val transport: BackendTransport,
     private val paymentClient: PaymentClient,
     private val integrityTokens: IntegrityTokenSource,
+    private val accounts: AccountClient = AccountClient(keyProvider, api),
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(
@@ -100,6 +103,11 @@ class TrustGateViewModel(
     private val storageLock = Mutex()
     private var actionJob: Job? = null
     private var keyJob: Job? = null
+    private var accountJob: Job? = null
+    private var pendingDecision: PendingDecision? = null
+
+    /** A decision about another phone that waits for this phone's confirmation. */
+    private class PendingDecision(val phoneId: String, val action: String, val nonce: String, val keyId: String, val tap: Boolean)
     private var rotateAfterPayment = false
     private var pendingPayment: PendingPayment? = null
     private var nextMessageId = 0L
@@ -299,6 +307,136 @@ class TrustGateViewModel(
         val source = integrityTokens as? MockIntegrityTokenSource ?: return
         source.pretend = verdict
         _uiState.update { current -> current.copy(pretendVerdict = verdict) }
+    }
+
+    // The phones on this account.
+
+    /** Loads the account's phones, including any waiting for this phone to approve them. */
+    fun refreshAccount() {
+        if (accountJob?.isActive == true) return
+        accountJob = viewModelScope.launch { loadAccount() }
+    }
+
+    private suspend fun loadAccount() {
+        _uiState.update { current -> current.copy(account = current.account.copy(loading = true, problem = null)) }
+        val keys = ensureKeys()
+        val view = keys?.let { runCatching { withContext(ioDispatcher) { accounts.view(it.device.keyId) } }.rethrowCancellation().getOrNull() }
+        _uiState.update { current ->
+            current.copy(
+                account = current.account.copy(
+                    view = view ?: current.account.view,
+                    loading = false,
+                    problem = if (view == null) "Couldn't load this account's phones." else null,
+                ),
+            )
+        }
+    }
+
+    /** A one-time code another phone enters to ask to join this account. */
+    fun createLinkCode() = accountAction {
+        val keys = checkNotNull(ensureKeys()) { "This phone's key isn't ready." }
+        val code = runCatching { accounts.createLinkCode(keys.device.keyId) }
+            .getOrElse { throw IllegalStateException("A phone that's new on this account can't add others yet.", it) }
+        _uiState.update { current -> current.copy(account = current.account.copy(linkCode = code)) }
+        runCatching { securityService.recordAccountChange("link-code", "Made a code for another phone to join this account.") }
+    }
+
+    fun dismissLinkCode() {
+        _uiState.update { current -> current.copy(account = current.account.copy(linkCode = null)) }
+    }
+
+    /** Asks to join the account whose phone showed [code]. */
+    fun joinAccount(code: String) = accountAction {
+        val keys = checkNotNull(ensureKeys()) { "This phone's key isn't ready." }
+        val result = accounts.join(keys.device.keyId, code)
+        showMessage(result.message)
+        if (result.waitingForApproval) {
+            runCatching { securityService.recordAccountChange("join-requested", "Asked to join another account. A phone there has to approve it.") }
+        }
+        loadAccount()
+    }
+
+    /** Starts approving, declining, or removing another phone; the server says how to confirm. */
+    fun decideAboutPhone(phoneId: String, action: String) = accountAction {
+        val keys = checkNotNull(ensureKeys()) { "This phone's key isn't ready." }
+        val challenge = accounts.decisionChallenge(keys.device.keyId, phoneId, action)
+        val signingKey = when (challenge.signWith) {
+            KeyRole.DEVICE -> keys.device.keyId
+            KeyRole.STEP_UP -> checkNotNull(keys.stepUp?.keyId) { "This phone's screen-lock key isn't set up." }
+        }
+        val tap = challenge.confirmation == RequiredConfirmation.TAP
+        pendingDecision = PendingDecision(phoneId, action, challenge.nonce, signingKey, tap)
+        val label = _uiState.value.account.view?.phones?.firstOrNull { it.phoneId == phoneId }?.label ?: "the other phone"
+        _uiState.update { current ->
+            current.copy(
+                account = current.account.copy(
+                    deciding = DecisionUiState(
+                        action = action,
+                        phoneLabel = label,
+                        method = if (tap) ConfirmationMethod.TAP else ConfirmationMethod.DEVICE_CREDENTIAL,
+                        requestedAt = Instant.now(),
+                    ),
+                ),
+            )
+        }
+    }
+
+    /** The step-up key's signature for the system prompt, as for a payment. */
+    fun decisionSignatureForPrompt(): Signature? {
+        if (pendingDecision?.tap != false) return null
+        return try {
+            keyProvider.stepUpSignature()
+        } catch (error: Exception) {
+            dismissDecision("Couldn't use the screen-lock key. Try again.")
+            null
+        }
+    }
+
+    fun completeDecision(authenticated: Signature) = finishDecision { input ->
+        authenticated.update(input)
+        authenticated.sign()
+    }
+
+    fun confirmDecisionWithTap() = finishDecision(keyProvider::signWithDeviceKey)
+
+    fun dismissDecision(problem: String? = null) {
+        pendingDecision = null
+        _uiState.update { current -> current.copy(account = current.account.copy(deciding = null)) }
+        problem?.let(::showMessage)
+    }
+
+    private fun finishDecision(sign: (ByteArray) -> ByteArray) {
+        val pending = pendingDecision ?: return
+        pendingDecision = null
+        _uiState.update { current -> current.copy(account = current.account.copy(deciding = null)) }
+        accountAction {
+            val input = ReferenceSigningScheme.decisionInput(pending.action, pending.nonce, pending.phoneId, pending.tap)
+            val decision = PhoneDecision(
+                keyId = pending.keyId,
+                phoneId = pending.phoneId,
+                action = pending.action,
+                nonce = pending.nonce,
+                signature = ReferenceSigningScheme.encode(sign(input)),
+                tapConfirmed = pending.tap,
+            )
+            val result = accounts.decide(decision)
+            showMessage(result.message)
+            if (result.done) runCatching { securityService.recordAccountChange(pending.action, result.message) }
+            loadAccount()
+        }
+    }
+
+    /** Runs an account change, showing what went wrong instead of failing silently. */
+    private fun accountAction(block: suspend () -> Unit) {
+        if (accountJob?.isActive == true) return
+        accountJob = viewModelScope.launch {
+            runCatching { withContext(ioDispatcher) { block() } }
+                .rethrowCancellation()
+                .onFailure { error ->
+                    showMessage(if (error is IOException) "Couldn't reach the server." else error.message ?: "That didn't work.")
+                    _uiState.update { current -> current.copy(account = current.account.copy(loading = false)) }
+                }
+        }
     }
 
     /** Who the next payment goes to, and how much. */

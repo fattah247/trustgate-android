@@ -1,5 +1,6 @@
 package id.fatarc.trustgate.server
 
+import id.fatarc.trustgate.testing.TEST_PAYMENT
 import com.google.common.truth.Truth.assertThat
 import id.fatarc.trustgate.backend.ReferenceBackend
 import id.fatarc.trustgate.domain.api.Payment
@@ -15,7 +16,6 @@ import id.fatarc.trustgate.domain.signing.ReferenceRequestSigner
 import id.fatarc.trustgate.domain.signing.RejectionReason
 import id.fatarc.trustgate.domain.signing.asReceived
 import id.fatarc.trustgate.testing.MutableClock
-import id.fatarc.trustgate.testing.TEST_PAYMENT
 import id.fatarc.trustgate.testing.TestKey
 import id.fatarc.trustgate.testing.authorize
 import id.fatarc.trustgate.testing.developmentPolicy
@@ -108,8 +108,10 @@ class SqliteBackendStoreTest {
 
         val store = SqliteBackendStore(file).also(stores::add)
 
-        assertThat(store.paymentsSince(device.keyId, clock.now.minusSeconds(60))).containsExactly(payment)
-        assertThat(store.paymentsSince(device.keyId, clock.now.plusSeconds(1))).isEmpty()
+        // Each phone from before is the only phone on an account of its own.
+        val account = checkNotNull(store.phone(device.keyId)).accountId
+        assertThat(store.paymentsOfAccount(account, clock.now.minusSeconds(60))).containsExactly(payment)
+        assertThat(store.paymentsOfAccount(account, clock.now.plusSeconds(1))).isEmpty()
         assertThat(store.key(device.keyId)?.phoneId).isEqualTo(device.keyId)
         assertThat(store.key(device.keyId)?.phoneEnrolledAt).isEqualTo(clock.now)
     }

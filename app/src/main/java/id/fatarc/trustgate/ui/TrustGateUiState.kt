@@ -4,7 +4,9 @@ import id.fatarc.trustgate.core.integrity.PretendVerdict
 import id.fatarc.trustgate.core.keys.KeySet
 import id.fatarc.trustgate.core.security.ConfirmationMethod
 import id.fatarc.trustgate.core.storage.SecurityStorageSnapshot
+import id.fatarc.trustgate.domain.api.AccountView
 import id.fatarc.trustgate.domain.api.DecisionReason
+import id.fatarc.trustgate.domain.api.LinkCode
 import id.fatarc.trustgate.domain.api.Remedy
 import id.fatarc.trustgate.domain.events.SecurityEvent
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
@@ -28,11 +30,29 @@ data class TrustGateUiState(
     val keys: KeysUiState = KeysUiState(),
     /** The payment the Pay button makes. */
     val checkout: Checkout = Checkout(),
+    val account: AccountUiState = AccountUiState(),
     /** Drop the first response to each payment, as a timeout would, to show retries are safe. */
     val simulateLostResponse: Boolean = false,
     /** What the made-up integrity token claims; null when the build asks Google Play for real ones. */
     val pretendVerdict: PretendVerdict? = null,
     val userMessage: UserMessage? = null,
+)
+
+data class AccountUiState(
+    val view: AccountView? = null,
+    val loading: Boolean = false,
+    val problem: String? = null,
+    /** A code this phone made for another one to join with. */
+    val linkCode: LinkCode? = null,
+    /** A decision about another phone waiting for this phone's confirmation. */
+    val deciding: DecisionUiState? = null,
+)
+
+data class DecisionUiState(
+    val action: String,
+    val phoneLabel: String,
+    val method: ConfirmationMethod,
+    val requestedAt: Instant,
 )
 
 data class Checkout(

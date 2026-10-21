@@ -6,6 +6,8 @@ import id.fatarc.trustgate.backend.store.ChallengePurpose
 import id.fatarc.trustgate.backend.store.LedgerEntry
 import id.fatarc.trustgate.backend.store.StoredChallenge
 import id.fatarc.trustgate.backend.store.StoredKey
+import id.fatarc.trustgate.backend.store.StoredLinkCode
+import id.fatarc.trustgate.backend.store.StoredPhone
 import id.fatarc.trustgate.domain.api.Payment
 import id.fatarc.trustgate.domain.api.RequiredConfirmation
 import id.fatarc.trustgate.domain.api.TrustGateJson
@@ -180,16 +182,55 @@ class SqliteBackendStore(file: File) : BackendStore, AutoCloseable {
 
     override fun ledgerSize(): Int = query("SELECT COUNT(*) FROM ledger") { it.getInt(1) } ?: 0
 
-    override fun paymentsSince(phoneId: String, since: Instant): List<Payment> =
+    override fun paymentsOfAccount(accountId: String, since: Instant): List<Payment> =
         connection.prepareStatement(
-            "SELECT payment FROM ledger WHERE device_key_id IN (SELECT key_id FROM keys WHERE phone_id = ?) AND charged_at >= ? ORDER BY charged_at",
+            "SELECT payment FROM ledger WHERE device_key_id IN " +
+                "(SELECT key_id FROM keys JOIN phones ON keys.phone_id = phones.phone_id WHERE phones.account_id = ?) " +
+                "AND charged_at >= ? ORDER BY charged_at",
         ).use { statement ->
-            statement.setString(1, phoneId)
+            statement.setString(1, accountId)
             statement.setLong(2, since.toEpochMilli())
             statement.executeQuery().use { rows ->
                 buildList { while (rows.next()) add(TrustGateJson.decodeFromString(Payment.serializer(), rows.getString(1))) }
             }
         }
+
+    override fun phone(phoneId: String): StoredPhone? = query("SELECT * FROM phones WHERE phone_id = ?", phoneId) { it.phone() }
+
+    override fun putPhone(phone: StoredPhone) = update(
+        "INSERT OR REPLACE INTO phones (phone_id, account_id, label, joined_at, pending_account_id) VALUES (?, ?, ?, ?, ?)",
+        phone.phoneId, phone.accountId, phone.label, phone.joinedAt.toEpochMilli(), phone.pendingAccountId,
+    )
+
+    override fun phonesOf(accountId: String): List<StoredPhone> =
+        connection.prepareStatement("SELECT * FROM phones WHERE account_id = ? OR pending_account_id = ? ORDER BY joined_at").use { statement ->
+            statement.setString(1, accountId)
+            statement.setString(2, accountId)
+            statement.executeQuery().use { rows -> buildList { while (rows.next()) add(rows.phone()) } }
+        }
+
+    override fun activeDeviceKey(phoneId: String): StoredKey? =
+        query("SELECT key_id FROM keys WHERE phone_id = ? AND role = 'DEVICE' AND revoked_at IS NULL", phoneId) { it.getString(1) }
+            ?.let(::key)
+
+    override fun putLinkCode(code: StoredLinkCode) {
+        update("DELETE FROM link_codes WHERE account_id = ?", code.accountId)
+        update("INSERT INTO link_codes VALUES (?, ?, ?, ?)", code.code, code.accountId, code.issuedBy, code.expiresAt.toEpochMilli())
+    }
+
+    override fun linkCode(code: String): StoredLinkCode? = query("SELECT * FROM link_codes WHERE code = ?", code) { row ->
+        StoredLinkCode(row.getString("code"), row.getString("account_id"), row.getString("issued_by"), Instant.ofEpochMilli(row.getLong("expires_at")))
+    }
+
+    override fun deleteLinkCode(code: String) = update("DELETE FROM link_codes WHERE code = ?", code)
+
+    private fun ResultSet.phone() = StoredPhone(
+        phoneId = getString("phone_id"),
+        accountId = getString("account_id"),
+        label = getString("label"),
+        joinedAt = Instant.ofEpochMilli(getLong("joined_at")),
+        pendingAccountId = getString("pending_account_id"),
+    )
 
     override fun appendAuditEntry(entry: AuditEntry) = update(
         "INSERT INTO audit_log VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -227,6 +268,27 @@ class SqliteBackendStore(file: File) : BackendStore, AutoCloseable {
         update("ALTER TABLE challenges ADD COLUMN bound_hash TEXT")
     }
 
+    /**
+     * Version 4: phones and the accounts they belong to, and link codes. Every phone from before
+     * becomes the only phone on an account of its own.
+     */
+    private fun addAccounts() {
+        update(
+            """CREATE TABLE IF NOT EXISTS phones (
+                phone_id TEXT PRIMARY KEY, account_id TEXT NOT NULL, label TEXT NOT NULL, joined_at INTEGER NOT NULL,
+                pending_account_id TEXT)""",
+        )
+        update("CREATE INDEX IF NOT EXISTS phones_by_account ON phones (account_id)")
+        update(
+            "INSERT OR IGNORE INTO phones (phone_id, account_id, label, joined_at) " +
+                "SELECT phone_id, 'acc_' || phone_id, 'Phone', phone_enrolled_at FROM keys WHERE role = 'DEVICE'",
+        )
+        update(
+            """CREATE TABLE IF NOT EXISTS link_codes (
+                code TEXT PRIMARY KEY, account_id TEXT NOT NULL, issued_by TEXT NOT NULL, expires_at INTEGER NOT NULL)""",
+        )
+    }
+
     /** Lets a test change a stored entry the way someone with database access could. */
     internal fun overwriteAuditDetail(sequence: Long, detail: String) = update("UPDATE audit_log SET detail = ? WHERE sequence = ?", detail, sequence)
 
@@ -251,6 +313,7 @@ class SqliteBackendStore(file: File) : BackendStore, AutoCloseable {
             SqliteBackendStore::addLedgerTimes,
             SqliteBackendStore::addKeyLifecycleAndAudit,
             SqliteBackendStore::bindChallenges,
+            SqliteBackendStore::addAccounts,
         )
 
         /** The original schema; [MIGRATIONS] build on it. */

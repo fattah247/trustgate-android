@@ -31,7 +31,30 @@ class StoredKey(
     )
 }
 
-enum class ChallengePurpose { REGISTRATION, VERIFICATION, PAYMENT }
+enum class ChallengePurpose { REGISTRATION, VERIFICATION, PAYMENT, DECISION }
+
+/** A phone and the account it belongs to. Its keys come and go; the phone stays. */
+class StoredPhone(
+    val phoneId: String,
+    val accountId: String,
+    /** The phone's model, as it said when it registered. */
+    val label: String,
+    /** When the phone joined [accountId]; the new-phone rules count from here. */
+    val joinedAt: Instant,
+    /** The account the phone asked to join with a link code, until a phone on it decides. */
+    val pendingAccountId: String? = null,
+) {
+    fun copy(accountId: String = this.accountId, joinedAt: Instant = this.joinedAt, pendingAccountId: String? = this.pendingAccountId) =
+        StoredPhone(phoneId, accountId, label, joinedAt, pendingAccountId)
+}
+
+/** A one-time code a phone on [accountId] made, so another phone can ask to join. */
+class StoredLinkCode(
+    val code: String,
+    val accountId: String,
+    val issuedBy: String,
+    val expiresAt: Instant,
+)
 
 class StoredChallenge(
     val nonce: String,
@@ -83,8 +106,25 @@ interface BackendStore {
 
     fun ledgerSize(): Int
 
-    /** What [phoneId] was charged at or after [since], with any of its device keys, oldest first. */
-    fun paymentsSince(phoneId: String, since: Instant): List<Payment>
+    /** What the phones now on [accountId] were charged at or after [since], oldest first. */
+    fun paymentsOfAccount(accountId: String, since: Instant): List<Payment>
+
+    fun phone(phoneId: String): StoredPhone?
+
+    fun putPhone(phone: StoredPhone)
+
+    /** The phones on [accountId], and those waiting to join it. */
+    fun phonesOf(accountId: String): List<StoredPhone>
+
+    /** The phone's device key that's still accepted, if any. */
+    fun activeDeviceKey(phoneId: String): StoredKey?
+
+    /** Stores [code], replacing any other code the same account had. */
+    fun putLinkCode(code: StoredLinkCode)
+
+    fun linkCode(code: String): StoredLinkCode?
+
+    fun deleteLinkCode(code: String)
 
     fun appendAuditEntry(entry: AuditEntry)
 

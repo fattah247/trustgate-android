@@ -1,15 +1,23 @@
 package id.fatarc.trustgate.core.backend
 
+import id.fatarc.trustgate.domain.api.AccountView
+import id.fatarc.trustgate.domain.api.DecisionChallenge
+import id.fatarc.trustgate.domain.api.DecisionChallengeRequest
+import id.fatarc.trustgate.domain.api.DecisionResult
 import id.fatarc.trustgate.domain.api.DeviceRemoval
 import id.fatarc.trustgate.domain.api.DeviceRemovalRequest
+import id.fatarc.trustgate.domain.api.JoinResult
 import id.fatarc.trustgate.domain.api.KeyRegistrationRequest
 import id.fatarc.trustgate.domain.api.KeyRotationRequest
+import id.fatarc.trustgate.domain.api.LinkCode
 import id.fatarc.trustgate.domain.api.PaymentAuthorization
 import id.fatarc.trustgate.domain.api.PaymentAuthorizationRequest
 import id.fatarc.trustgate.domain.api.PaymentResponse
+import id.fatarc.trustgate.domain.api.PhoneDecision
 import id.fatarc.trustgate.domain.api.RegistrationChallenge
 import id.fatarc.trustgate.domain.api.RegistrationChallengeRequest
 import id.fatarc.trustgate.domain.api.RegistrationResult
+import id.fatarc.trustgate.domain.api.SignedAction
 import id.fatarc.trustgate.domain.api.StepUpRemoval
 import id.fatarc.trustgate.domain.api.StepUpRemovalRequest
 import id.fatarc.trustgate.domain.api.TrustGateJson
@@ -58,6 +66,7 @@ class HttpTrustGateApi(
         challenge: ByteArray,
         deviceKeyId: String?,
         deviceKeyProof: ByteArray?,
+        phoneLabel: String?,
     ): RegistrationResult = post(
         TrustGateRoutes.KEYS,
         KeyRegistrationRequest(
@@ -67,6 +76,7 @@ class HttpTrustGateApi(
             challenge = base64(challenge),
             deviceKeyId = deviceKeyId,
             deviceKeyProof = deviceKeyProof?.let(::base64),
+            phoneLabel = phoneLabel,
         ),
     )
 
@@ -102,6 +112,16 @@ class HttpTrustGateApi(
     override suspend fun checkRequest(request: ReceivedRequest): VerificationResult = send(TrustGateRoutes.PAYMENT_CHECK, request)
 
     override suspend fun submitPayment(request: ReceivedRequest): PaymentResponse = send(TrustGateRoutes.PAYMENT, request)
+
+    override suspend fun accountView(action: SignedAction): AccountView = post(TrustGateRoutes.ACCOUNT, action)
+
+    override suspend fun createLinkCode(action: SignedAction): LinkCode = post(TrustGateRoutes.LINK_CODE, action)
+
+    override suspend fun joinAccount(action: SignedAction): JoinResult = post(TrustGateRoutes.JOIN_ACCOUNT, action)
+
+    override suspend fun decisionChallenge(request: DecisionChallengeRequest): DecisionChallenge = post(TrustGateRoutes.DECISION_CHALLENGE, request)
+
+    override suspend fun decide(decision: PhoneDecision): DecisionResult = post(TrustGateRoutes.DECIDE, decision)
 
     private suspend inline fun <reified Req, reified Res> post(path: String, body: Req): Res =
         TrustGateJson.decodeFromString(execute(path, TrustGateJson.encodeToString(body), emptyMap()))

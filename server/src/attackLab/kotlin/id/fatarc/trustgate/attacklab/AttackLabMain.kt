@@ -39,7 +39,7 @@ fun main(args: Array<String>) {
 }
 
 /** HTTPS that trusts only the given certificate, the way the app's debug build trusts the development server. */
-private class HttpsTransport(private val baseUrl: String, certificate: File) : Transport {
+internal class HttpsTransport(private val baseUrl: String, certificate: File) : Transport {
     private val client: HttpClient = HttpClient.newBuilder()
         .sslContext(sslTrusting(certificate))
         .connectTimeout(Duration.ofSeconds(5))

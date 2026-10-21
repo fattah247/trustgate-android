@@ -1,6 +1,14 @@
 package id.fatarc.trustgate.core.backend
 
+import id.fatarc.trustgate.domain.api.AccountView
+import id.fatarc.trustgate.domain.api.DecisionChallenge
+import id.fatarc.trustgate.domain.api.DecisionChallengeRequest
+import id.fatarc.trustgate.domain.api.DecisionResult
+import id.fatarc.trustgate.domain.api.JoinResult
+import id.fatarc.trustgate.domain.api.LinkCode
 import id.fatarc.trustgate.domain.api.PaymentAuthorization
+import id.fatarc.trustgate.domain.api.PhoneDecision
+import id.fatarc.trustgate.domain.api.SignedAction
 import id.fatarc.trustgate.domain.api.PaymentAuthorizationRequest
 import id.fatarc.trustgate.domain.api.PaymentResponse
 import id.fatarc.trustgate.domain.api.RegistrationResult
@@ -20,6 +28,7 @@ interface TrustGateApi {
         challenge: ByteArray,
         deviceKeyId: String? = null,
         deviceKeyProof: ByteArray? = null,
+        phoneLabel: String? = null,
     ): RegistrationResult
 
     suspend fun removeStepUpKey(deviceKeyId: String, challenge: ByteArray, deviceKeyProof: ByteArray): Boolean
@@ -44,4 +53,14 @@ interface TrustGateApi {
     suspend fun checkRequest(request: ReceivedRequest): VerificationResult
 
     suspend fun submitPayment(request: ReceivedRequest): PaymentResponse
+
+    suspend fun accountView(action: SignedAction): AccountView
+
+    suspend fun createLinkCode(action: SignedAction): LinkCode
+
+    suspend fun joinAccount(action: SignedAction): JoinResult
+
+    suspend fun decisionChallenge(request: DecisionChallengeRequest): DecisionChallenge
+
+    suspend fun decide(decision: PhoneDecision): DecisionResult
 }

@@ -15,6 +15,12 @@ object TrustGateRoutes {
     const val ROTATE_DEVICE_KEY = "/v1/keys/rotate"
     const val REMOVE_DEVICE = "/v1/keys/remove"
 
+    const val ACCOUNT = "/v1/account"
+    const val LINK_CODE = "/v1/account/link-code"
+    const val JOIN_ACCOUNT = "/v1/account/join"
+    const val DECISION_CHALLENGE = "/v1/account/decision-challenge"
+    const val DECIDE = "/v1/account/decide"
+
     /** Operator routes, served only when the server has an admin token set. */
     const val ADMIN_REVOKE = "/admin/keys/revoke"
     const val ADMIN_AUDIT = "/admin/audit"
@@ -62,6 +68,8 @@ data class KeyRegistrationRequest(
     val challenge: String,
     val deviceKeyId: String? = null,
     val deviceKeyProof: String? = null,
+    /** The phone's model, shown to the person's other phones; it's never trusted for anything. */
+    val phoneLabel: String? = null,
 )
 
 @Serializable
