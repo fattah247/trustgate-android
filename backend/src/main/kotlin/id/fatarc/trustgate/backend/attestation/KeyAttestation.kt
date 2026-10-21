@@ -177,15 +177,22 @@ object KeyDescriptionParser {
     private fun applicationId(element: Der.Element): AttestationApplicationId {
         val fields = Der.Reader(element.content).readElement().expectSequence().children()
         require(fields.size >= 2) { "AttestationApplicationId has ${fields.size} fields, expected 2." }
+        // Each AttestationPackageInfo is a name and a version; a shorter one is malformed, not empty.
+        val packages = fields[0].children().map { info ->
+            val parts = info.children()
+            require(parts.size >= 2) { "AttestationPackageInfo has ${parts.size} fields, expected 2." }
+            parts[0].content.decodeToString() to parts[1].longValue()
+        }
         return AttestationApplicationId(
-            packageNames = fields[0].children().mapTo(mutableSetOf()) { info -> info.children()[0].content.decodeToString() },
+            packageNames = packages.mapTo(mutableSetOf()) { (name, _) -> name },
             signatureDigests = fields[1].children().mapTo(mutableSetOf()) { digest -> ReferenceSigningScheme.hex(digest.content) },
-            packageVersions = fields[0].children().associate { info -> info.children()[0].content.decodeToString() to info.children()[1].longValue() },
+            packageVersions = packages.toMap(),
         )
     }
 
     private fun rootOfTrust(element: Der.Element): RootOfTrust {
         val fields = element.expectSequence().children()
+        require(fields.size >= 3) { "RootOfTrust has ${fields.size} fields, expected at least 3." }
         return RootOfTrust(
             deviceLocked = fields[1].booleanValue(),
             verifiedBootState = when (fields[2].integerValue()) {

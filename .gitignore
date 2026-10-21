@@ -7,3 +7,9 @@ local.properties
 captures/
 app/build/
 
+
+# Jazzer: the corpus a fuzzing run grows, and the inputs it found (move those into the test inputs to keep them)
+.cifuzz-corpus/
+crash-*
+timeout-*
+slow-unit-*

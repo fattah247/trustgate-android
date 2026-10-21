@@ -1,0 +1,56 @@
+name: Fuzzing
+
+# Every test run already replays the saved inputs; this generates new ones, two minutes per parser.
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "11 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - derElements
+          - keyDescription
+          - keyDescriptionNearValid
+          - attestationChain
+          - revocationList
+          - mockIntegrityToken
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+
+      - name: Fuzz ${{ matrix.target }}
+        env:
+          JAZZER_FUZZ: "1"
+        run: ./gradlew :backend:test --tests "*ParserFuzzTest.${{ matrix.target }}" --rerun --console=plain
+
+      # A finding is the input that broke the parser; saved under the test's inputs, it becomes a regression test.
+      - name: Keep what the fuzzer found
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-finding-${{ matrix.target }}
+          path: backend/crash-*
+          if-no-files-found: ignore
