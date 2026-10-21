@@ -40,6 +40,8 @@ class StoredChallenge(
     val deviceKeyId: String?,
     val confirmation: RequiredConfirmation,
     val expiresAt: Instant,
+    /** SHA-256 of what the challenge was issued for, such as the exact payment; the request must match it. */
+    val boundHash: String? = null,
 )
 
 class LedgerEntry(

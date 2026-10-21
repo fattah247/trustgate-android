@@ -3,22 +3,31 @@ package id.fatarc.trustgate.ui.home
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Storefront
 import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -30,12 +39,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.os.ConfigurationCompat
 import id.fatarc.trustgate.domain.events.SecurityEvent
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
+import id.fatarc.trustgate.domain.signing.Payee
 import id.fatarc.trustgate.domain.signing.ReferencePayment
+import id.fatarc.trustgate.ui.Checkout
 import id.fatarc.trustgate.ui.DemoPhone
 import id.fatarc.trustgate.ui.DemoPhoneButton
 import id.fatarc.trustgate.ui.DemoPhoneSheet
@@ -66,6 +78,7 @@ fun HomeScreen(
     onRefreshRisk: () -> Unit,
     onPay: () -> Unit,
     onSelectDemoPhone: (DeviceRiskLevel?) -> Unit,
+    onSetCheckout: (Payee, Long) -> Unit,
     onOpenActivity: () -> Unit,
     onOpenAbout: () -> Unit,
 ) {
@@ -110,7 +123,12 @@ fun HomeScreen(
         }
 
         item(key = "pay") {
-            CheckoutCard(onPay = onPay, enabled = risk.report != null && !uiState.payment.isRunning)
+            CheckoutCard(
+                checkout = uiState.checkout,
+                onChange = onSetCheckout,
+                onPay = onPay,
+                enabled = risk.report != null && !uiState.payment.isRunning,
+            )
         }
 
         item(key = "recent") {
@@ -147,13 +165,17 @@ fun HomeScreen(
 }
 
 /** The test purchase: who it's to, how much, and the one button that starts it. */
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 private fun CheckoutCard(
+    checkout: Checkout,
+    onChange: (Payee, Long) -> Unit,
     onPay: () -> Unit,
     enabled: Boolean,
 ) {
     val locale = ConfigurationCompat.getLocales(LocalConfiguration.current)[0] ?: Locale.getDefault()
-    val amount = formatMinorAmount(ReferencePayment.AMOUNT_MINOR, ReferencePayment.CURRENCY, locale)
+    val amount = formatMinorAmount(checkout.amountMinor, ReferencePayment.CURRENCY, locale)
+    var choosingPayee by rememberSaveable { mutableStateOf(false) }
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(28.dp),
@@ -163,13 +185,24 @@ private fun CheckoutCard(
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 MerchantBadge()
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("TrustGate Store", style = MaterialTheme.typography.titleMedium)
-                    Text("Test payment", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Pay to", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(checkout.payee.name, style = MaterialTheme.typography.titleMedium)
                 }
+                TextButton(onClick = { choosingPayee = true }) { Text("Change") }
             }
             Spacer(Modifier.height(16.dp))
             Text(amount, style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(8.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ReferencePayment.AMOUNTS_MINOR.forEach { option ->
+                    FilterChip(
+                        selected = option == checkout.amountMinor,
+                        onClick = { onChange(checkout.payee, option) },
+                        label = { Text(formatMinorAmount(option, ReferencePayment.CURRENCY, locale, wholeUnits = true)) },
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
             Button(
                 onClick = onPay,
                 enabled = enabled,
@@ -178,6 +211,33 @@ private fun CheckoutCard(
                     .heightIn(min = 56.dp),
             ) {
                 Text("Pay $amount", style = MaterialTheme.typography.titleMedium)
+            }
+        }
+    }
+    if (choosingPayee) {
+        ModalBottomSheet(onDismissRequest = { choosingPayee = false }) {
+            Column(modifier = Modifier.navigationBarsPadding().padding(bottom = 16.dp).selectableGroup()) {
+                Text("Pay to", modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 8.dp), style = MaterialTheme.typography.titleLarge)
+                ReferencePayment.PAYEES.forEach { payee ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(
+                                selected = payee == checkout.payee,
+                                role = Role.RadioButton,
+                                onClick = {
+                                    choosingPayee = false
+                                    onChange(payee, checkout.amountMinor)
+                                },
+                            )
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        RadioButton(selected = payee == checkout.payee, onClick = null)
+                        Text(payee.name, style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
             }
         }
     }

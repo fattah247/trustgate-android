@@ -41,7 +41,7 @@ class ReferenceRequestSignerTest {
         val request = prepare(body = payload.copy(merchantReference = "REF-\"1001\""))
 
         assertThat(request.canonicalBody)
-            .isEqualTo("{\"amountMinor\":125000,\"currency\":\"IDR\",\"merchantReference\":\"REF-\\\"1001\\\"\"}")
+            .isEqualTo("{\"amountMinor\":125000,\"currency\":\"IDR\",\"merchantReference\":\"REF-\\\"1001\\\"\",\"payee\":\"trustgate-store\"}")
     }
 
     @Test

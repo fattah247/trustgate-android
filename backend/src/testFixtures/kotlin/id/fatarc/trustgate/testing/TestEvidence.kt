@@ -7,7 +7,11 @@ import id.fatarc.trustgate.domain.api.ReportedSignal
 import id.fatarc.trustgate.domain.api.TrustGateJson
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.risk.SignalCatalog
+import id.fatarc.trustgate.domain.signing.PaymentRequestPayload
 import java.time.Instant
+
+/** The payment tests approve and make unless they say otherwise; fixed, so approval and payment always match. */
+val TEST_PAYMENT = PaymentRequestPayload(amountMinor = 125_000, currency = "IDR", merchantReference = "REF-1001")
 
 /** Signals that score to [level] on their own. */
 fun signalsFor(level: DeviceRiskLevel): List<ReportedSignal> = when (level) {
@@ -16,19 +20,31 @@ fun signalsFor(level: DeviceRiskLevel): List<ReportedSignal> = when (level) {
     DeviceRiskLevel.HIGH -> listOf(ReportedSignal(SignalCatalog.DEBUGGER_CONNECTED.id, detected = true))
 }
 
-fun evidenceJson(deviceKeyId: String, level: DeviceRiskLevel, at: Instant): String =
-    TrustGateJson.encodeToString(DeviceEvidence.serializer(), DeviceEvidence(deviceKeyId, at.toString(), signalsFor(level)))
+fun evidenceJson(
+    deviceKeyId: String,
+    level: DeviceRiskLevel,
+    at: Instant,
+    payment: PaymentRequestPayload = TEST_PAYMENT,
+): String = TrustGateJson.encodeToString(
+    DeviceEvidence.serializer(),
+    DeviceEvidence(deviceKeyId, at.toString(), signalsFor(level), payment = payment),
+)
 
-/** Asks [this] backend to authorize a payment, reporting signals that score [level], signed by [sign]. */
+/** Asks [this] backend to authorize [payment], reporting signals that score [level], signed by [sign]. */
 fun ReferenceBackend.authorize(
     deviceKeyId: String,
     sign: (ByteArray) -> ByteArray,
     level: DeviceRiskLevel,
     at: Instant = Instant.now(),
+    payment: PaymentRequestPayload = TEST_PAYMENT,
 ): PaymentAuthorization {
-    val evidence = evidenceJson(deviceKeyId, level, at)
+    val evidence = evidenceJson(deviceKeyId, level, at, payment)
     return authorizePayment(deviceKeyId, evidence, sign(evidence.toByteArray()), integrityToken = null, receivedAt = at)
 }
 
-fun ReferenceBackend.authorize(device: TestKey, level: DeviceRiskLevel, at: Instant = Instant.now()): PaymentAuthorization =
-    authorize(device.keyId, device::sign, level, at)
+fun ReferenceBackend.authorize(
+    device: TestKey,
+    level: DeviceRiskLevel,
+    at: Instant = Instant.now(),
+    payment: PaymentRequestPayload = TEST_PAYMENT,
+): PaymentAuthorization = authorize(device.keyId, device::sign, level, at, payment)

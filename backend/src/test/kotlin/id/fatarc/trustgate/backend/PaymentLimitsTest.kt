@@ -34,17 +34,23 @@ class PaymentLimitsTest {
         check(registerKey(KeyRole.DEVICE, device.encodedPublicKey, selfSignedChain(device), challenge) is RegistrationResult.Registered)
     }
 
-    private fun ReferenceBackend.authorization(): PaymentAuthorization = authorize(device, DeviceRiskLevel.LOW, clock.now)
+    /** An approval for one payment of [amountMinor], to be made with [pay]. */
+    private class Approval(val authorization: PaymentAuthorization, val payment: PaymentRequestPayload)
 
-    private fun ReferenceBackend.pay(authorization: PaymentAuthorization, amountMinor: Long = 125_000): PaymentResponse {
-        val proceed = authorization as PaymentAuthorization.Proceed
+    private fun ReferenceBackend.authorization(amountMinor: Long = 125_000): Approval {
+        val payment = PaymentRequestPayload(amountMinor = amountMinor, currency = "IDR", merchantReference = "REF-${++paymentsSent}")
+        return Approval(authorize(device, DeviceRiskLevel.LOW, clock.now, payment), payment)
+    }
+
+    private fun ReferenceBackend.pay(approval: Approval): PaymentResponse {
+        val proceed = approval.authorization as PaymentAuthorization.Proceed
         val request = device.sign(
             signer.prepare(
-                payload = PaymentRequestPayload(amountMinor = amountMinor, currency = "IDR", merchantReference = "REF-${++paymentsSent}"),
+                payload = approval.payment,
                 nonce = proceed.nonce,
                 keyId = device.keyId,
                 timestamp = clock.now.toString(),
-                idempotencyKey = "idem-$paymentsSent",
+                idempotencyKey = "idem-${approval.payment.merchantReference}",
                 confirmation = ReferenceSigningScheme.CONFIRMATION_TAP.takeIf { proceed.decision == SensitiveActionDecision.REQUIRE_CONFIRMATION },
             ),
         )
@@ -75,7 +81,7 @@ class PaymentLimitsTest {
         val backend = backendWith(limits(maxPayments = 2))
         repeat(2) { backend.pay(backend.authorization()) }
 
-        val tooSoon = backend.authorization()
+        val tooSoon = backend.authorization().authorization
         clock.advanceSeconds(61)
         val later = backend.authorization()
 
@@ -87,24 +93,30 @@ class PaymentLimitsTest {
     @Test
     fun `a payment that would pass the daily amount is refused`() {
         val backend = backendWith(limits(dailyAmountMinor = 200_000))
+        // Both approved while nothing has been paid yet; paying them both would pass the cap.
+        val first = backend.authorization()
+        val second = backend.authorization()
 
-        assertThat(backend.pay(backend.authorization())).isInstanceOf(PaymentResponse.Processed::class.java)
-        assertThat(backend.pay(backend.authorization())).isEqualTo(PaymentResponse.Rejected(RejectionReason.OVER_LIMIT))
+        assertThat(backend.pay(first)).isInstanceOf(PaymentResponse.Processed::class.java)
+        assertThat(backend.pay(second)).isEqualTo(PaymentResponse.Rejected(RejectionReason.OVER_LIMIT))
+        assertThat(backend.authorization().authorization.reasons.map { it.text }).contains("Over this phone's limit")
     }
 
     @Test
     fun `a new phone has to confirm and may only pay small amounts until it has been registered a while`() {
         val backend = backendWith(limits(newPhonePeriod = Duration.ofDays(1), newPhoneAmountMinor = 100_000))
 
-        val asNew = backend.authorization()
-        val bigWhileNew = backend.pay(asNew, amountMinor = 125_000)
+        val small = backend.authorization(amountMinor = 50_000)
+        val big = backend.authorization(amountMinor = 125_000)
         clock.advanceSeconds(Duration.ofDays(1).seconds + 1)
-        val settled = backend.authorization()
+        val settled = backend.authorization(amountMinor = 125_000)
 
-        assertThat(asNew.decision).isEqualTo(SensitiveActionDecision.REQUIRE_CONFIRMATION)
-        assertThat(asNew.reasons.map { it.text }).contains("New phone")
-        assertThat(bigWhileNew).isEqualTo(PaymentResponse.Rejected(RejectionReason.OVER_LIMIT))
-        assertThat(settled.decision).isEqualTo(SensitiveActionDecision.ALLOW)
-        assertThat(backend.pay(settled, amountMinor = 125_000)).isInstanceOf(PaymentResponse.Processed::class.java)
+        assertThat(small.authorization.decision).isEqualTo(SensitiveActionDecision.REQUIRE_CONFIRMATION)
+        assertThat(small.authorization.reasons.map { it.text }).contains("New phone")
+        // Too much for a new phone: said at approval, and refused if paid anyway.
+        assertThat(big.authorization.decision).isEqualTo(SensitiveActionDecision.BLOCK)
+        assertThat(big.authorization.reasons.map { it.text }).contains("Over this phone's limit")
+        assertThat(settled.authorization.decision).isEqualTo(SensitiveActionDecision.ALLOW)
+        assertThat(backend.pay(settled)).isInstanceOf(PaymentResponse.Processed::class.java)
     }
 }

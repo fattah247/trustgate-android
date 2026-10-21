@@ -347,6 +347,7 @@ class TrustGateSecurityService(
         RejectionReason.TOO_MANY_PAYMENTS -> "this phone made too many payments in a short time"
         RejectionReason.OVER_LIMIT -> "it would go over this phone's limit"
         RejectionReason.KEY_REVOKED -> "the key that signed it was replaced or removed"
+        RejectionReason.PAYMENT_CHANGED -> "it isn't the payment that was approved"
     }
 
     private fun DeviceRiskLevel.demoPhone(): String = when (this) {

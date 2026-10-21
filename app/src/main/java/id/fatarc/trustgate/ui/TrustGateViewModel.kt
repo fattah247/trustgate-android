@@ -37,6 +37,8 @@ import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.risk.DeviceRiskReport
 import id.fatarc.trustgate.domain.risk.scenarioRiskReport
 import id.fatarc.trustgate.domain.signing.KeyRole
+import id.fatarc.trustgate.domain.signing.Payee
+import id.fatarc.trustgate.domain.signing.PaymentRequestPayload
 import id.fatarc.trustgate.domain.signing.ReferencePayment
 import id.fatarc.trustgate.domain.signing.ReferenceRequestSigner
 import id.fatarc.trustgate.domain.signing.ReferenceSigningScheme
@@ -49,6 +51,7 @@ import java.io.IOException
 import java.security.Signature
 import java.time.Duration
 import java.time.Instant
+import java.time.ZoneId
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -85,6 +88,7 @@ class TrustGateViewModel(
 
     /** A payment the backend authorized that waits for the person to confirm it. */
     private class PendingPayment(
+        val payment: PaymentRequestPayload,
         val nonce: String,
         val keyId: String,
         val signWith: KeyRole,
@@ -160,7 +164,9 @@ class TrustGateViewModel(
             val report = reportForSensitiveAction() ?: return@launch abandonAction("Couldn't check this phone.")
             val keys = ensureKeys() ?: return@launch abandonAction(_uiState.value.keys.errorMessage ?: "This phone's key isn't ready.")
             _uiState.update { current -> current.copy(payment = current.payment.copy(stage = PaymentStage.ASKING_SERVER)) }
-            val authorization = runCatching { withContext(ioDispatcher) { api.authorizePayment(authorizationRequest(report, keys.device.keyId)) } }
+            // The server binds its answer to this payment; signing anything else later would be refused.
+            val payment = _uiState.value.checkout.let { ReferencePayment.payload(it.payee, it.amountMinor) }
+            val authorization = runCatching { withContext(ioDispatcher) { api.authorizePayment(authorizationRequest(report, keys.device.keyId, payment)) } }
                 .rethrowCancellation()
                 .getOrElse { error ->
                     return@launch abandonAction(if (error is BackendRequestException) error.message.orEmpty() else "Couldn't reach the server.")
@@ -183,6 +189,7 @@ class TrustGateViewModel(
             // after the payment, so the payment itself isn't held up.
             if (authorization.rotateKey) rotateAfterPayment = true
             val pending = PendingPayment(
+                payment = payment,
                 nonce = authorization.nonce,
                 keyId = keyId,
                 signWith = authorization.signWith,
@@ -294,6 +301,11 @@ class TrustGateViewModel(
         _uiState.update { current -> current.copy(pretendVerdict = verdict) }
     }
 
+    /** Who the next payment goes to, and how much. */
+    fun setCheckout(payee: Payee, amountMinor: Long) {
+        _uiState.update { current -> current.copy(checkout = Checkout(payee, amountMinor)) }
+    }
+
     fun setSimulateLostResponse(enabled: Boolean) {
         _uiState.update { current -> current.copy(simulateLostResponse = enabled) }
     }
@@ -392,7 +404,9 @@ class TrustGateViewModel(
      */
     private suspend fun rapidPayments(deviceKeyId: String): LabResult {
         val authorizations = List(RAPID_PAYMENT_TRIES) {
-            withContext(ioDispatcher) { api.authorizePayment(authorizationRequest(scenarioRiskReport(DeviceRiskLevel.LOW), deviceKeyId, simulated = true)) }
+            withContext(ioDispatcher) {
+                api.authorizePayment(authorizationRequest(scenarioRiskReport(DeviceRiskLevel.LOW), deviceKeyId, ReferencePayment.payload(), simulated = true))
+            }
         }
         var paid = 0
         for (authorization in authorizations) {
@@ -618,15 +632,19 @@ class TrustGateViewModel(
     private suspend fun authorizationRequest(
         report: DeviceRiskReport,
         deviceKeyId: String,
+        payment: PaymentRequestPayload,
         simulated: Boolean = _uiState.value.risk.source == RiskReportSource.SCENARIO,
     ): PaymentAuthorizationRequest {
+        val now = Instant.now()
         val evidence = TrustGateJson.encodeToString(
             DeviceEvidence.serializer(),
             DeviceEvidence(
                 deviceKeyId = deviceKeyId,
-                collectedAt = Instant.now().toString(),
+                collectedAt = now.toString(),
                 signals = report.signals.map { ReportedSignal(it.id, it.detected) },
                 simulated = simulated,
+                payment = payment,
+                utcOffsetMinutes = ZoneId.systemDefault().rules.getOffset(now).totalSeconds / 60,
             ),
         )
         val integrityToken = runCatching { integrityTokens.token(ReferenceSigningScheme.sha256Hex(evidence)) }.rethrowCancellation().getOrNull()
@@ -729,7 +747,7 @@ class TrustGateViewModel(
         val signed = runCatching {
             withContext(ioDispatcher) {
                 val prepared = requestSigner.prepare(
-                    payload = ReferencePayment.payload(),
+                    payload = pending.payment,
                     nonce = pending.nonce,
                     keyId = pending.keyId,
                     timestamp = Instant.now().toString(),

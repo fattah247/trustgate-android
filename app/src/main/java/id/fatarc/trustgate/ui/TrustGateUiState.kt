@@ -10,6 +10,8 @@ import id.fatarc.trustgate.domain.events.SecurityEvent
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.risk.DeviceRiskReport
 import id.fatarc.trustgate.domain.signing.KeyRole
+import id.fatarc.trustgate.domain.signing.Payee
+import id.fatarc.trustgate.domain.signing.ReferencePayment
 import id.fatarc.trustgate.domain.signing.RejectionReason
 import id.fatarc.trustgate.domain.signing.SignedRequest
 import id.fatarc.trustgate.domain.signing.VerificationResult
@@ -24,11 +26,18 @@ data class TrustGateUiState(
     val lab: LabUiState = LabUiState(),
     val storage: StorageUiState = StorageUiState(),
     val keys: KeysUiState = KeysUiState(),
+    /** The payment the Pay button makes. */
+    val checkout: Checkout = Checkout(),
     /** Drop the first response to each payment, as a timeout would, to show retries are safe. */
     val simulateLostResponse: Boolean = false,
     /** What the made-up integrity token claims; null when the build asks Google Play for real ones. */
     val pretendVerdict: PretendVerdict? = null,
     val userMessage: UserMessage? = null,
+)
+
+data class Checkout(
+    val payee: Payee = ReferencePayment.STORE,
+    val amountMinor: Long = ReferencePayment.AMOUNT_MINOR,
 )
 
 data class KeysUiState(

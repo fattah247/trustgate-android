@@ -1,5 +1,6 @@
 package id.fatarc.trustgate.backend
 
+import id.fatarc.trustgate.testing.TEST_PAYMENT
 import com.google.common.truth.Truth.assertThat
 import id.fatarc.trustgate.backend.integrity.IntegrityVerdict
 import id.fatarc.trustgate.domain.actiongate.SensitiveActionDecision
@@ -43,7 +44,7 @@ class PaymentAuthorizationTest {
     }
 
     private fun evidence(signals: List<ReportedSignal> = emptyList(), simulated: Boolean = false, collectedAt: String = clock.now.toString()) =
-        TrustGateJson.encodeToString(DeviceEvidence.serializer(), DeviceEvidence(device.keyId, collectedAt, signals, simulated))
+        TrustGateJson.encodeToString(DeviceEvidence.serializer(), DeviceEvidence(device.keyId, collectedAt, signals, simulated, payment = TEST_PAYMENT))
 
     private fun ReferenceBackend.authorize(evidence: String, token: String? = null, signedBy: TestKey = device) =
         authorizePayment(device.keyId, evidence, signedBy.sign(evidence.toByteArray()), token, clock.now)

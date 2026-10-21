@@ -25,6 +25,7 @@ import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.domain.signing.PaymentRequestPayload
 import id.fatarc.trustgate.domain.signing.ReceivedRequest
+import id.fatarc.trustgate.domain.signing.ReferenceRequestSigner
 import id.fatarc.trustgate.domain.signing.ReferenceSigningScheme
 import id.fatarc.trustgate.domain.signing.RejectionReason
 import id.fatarc.trustgate.domain.signing.VerificationResult
@@ -54,6 +55,7 @@ class ReferenceBackend(
     private val gate = SensitiveActionGate()
     private val random = SecureRandom()
     private val audit = AuditLog(store, clock)
+    private val canonical = ReferenceRequestSigner()
 
     /** How many payments were actually charged, however many requests arrived. */
     val chargedPayments: Int @Synchronized get() = store.transaction { store.ledgerSize() }
@@ -314,8 +316,11 @@ class ReferenceBackend(
         if (collectedAt == null || Duration.between(collectedAt, receivedAt).abs() > ReferenceSigningScheme.TIME_WINDOW) {
             return@transaction refuse("Report out of date")
         }
+        // The challenge is bound to these details, so they must be there to bind to.
+        val payment = report.payment?.takeIf { it.amountMinor > 0 && it.currency.isNotBlank() && it.payee.isNotBlank() }
+            ?: return@transaction refuse("Payment details missing")
         val assessment = policy.risk.assess(report, ReferenceSigningScheme.sha256Hex(evidence), integrityToken, receivedAt)
-        val authorization = authorization(key, assessment + history(key, receivedAt), receivedAt)
+        val authorization = authorization(key, payment, assessment + history(key, payment, receivedAt), receivedAt)
         audit.record(
             "payment-authorized",
             subject = key.phoneId,
@@ -329,10 +334,11 @@ class ReferenceBackend(
      * What the phone's record adds to its report. Charging enforces the limits whatever this says;
      * saying it here first spares the person a confirmation that would end in a refusal.
      */
-    private fun history(deviceKey: StoredKey, at: Instant): List<DecisionReason> = buildList {
-        val limits = policy.limits
-        if (store.paymentsSince(deviceKey.phoneId, at.minus(limits.window)).size >= limits.maxPayments) {
-            add(DecisionReason("Too many payments. Try again in a few minutes", DeviceRiskLevel.HIGH))
+    private fun history(deviceKey: StoredKey, payment: PaymentRequestPayload, at: Instant): List<DecisionReason> = buildList {
+        when (limitBroken(deviceKey, payment.amountMinor, at)) {
+            RejectionReason.TOO_MANY_PAYMENTS -> add(DecisionReason("Too many payments. Try again in a few minutes", DeviceRiskLevel.HIGH))
+            RejectionReason.OVER_LIMIT -> add(DecisionReason("Over this phone's limit", DeviceRiskLevel.HIGH))
+            else -> Unit
         }
         if (isNewPhone(deviceKey, at)) add(DecisionReason("New phone", DeviceRiskLevel.MEDIUM))
     }
@@ -357,7 +363,12 @@ class ReferenceBackend(
         return null
     }
 
-    private fun authorization(deviceKey: StoredKey, assessment: RiskPolicy.Assessment, at: Instant): PaymentAuthorization {
+    private fun authorization(
+        deviceKey: StoredKey,
+        payment: PaymentRequestPayload,
+        assessment: RiskPolicy.Assessment,
+        at: Instant,
+    ): PaymentAuthorization {
         val deviceKeyId = deviceKey.keyId
         val level = assessment.level
         return when (val decision = gate.decide(level)) {
@@ -374,7 +385,8 @@ class ReferenceBackend(
                     hasStepUpKey -> RequiredConfirmation.STEP_UP_KEY
                     else -> RequiredConfirmation.TAP
                 }
-                val nonce = issueChallenge(ChallengePurpose.PAYMENT, deviceKeyId, confirmation)
+                val boundHash = ReferenceSigningScheme.sha256Hex(canonical.canonicalize(payment))
+                val nonce = issueChallenge(ChallengePurpose.PAYMENT, deviceKeyId, confirmation, boundHash)
                 PaymentAuthorization.Proceed(
                     decision = decision,
                     level = level,
@@ -456,6 +468,10 @@ class ReferenceBackend(
         val nonce = request.header(ReferenceSigningScheme.HEADER_NONCE).orEmpty()
         val challenge = challengeFor(nonce, ChallengePurpose.PAYMENT, key.deviceKeyId, receivedAt)
             ?: return PaymentResponse.Rejected(missingChallengeReason(nonce))
+        // What was authorized is what gets paid: approving a small payment can't carry a large one.
+        if (challenge.boundHash != null && challenge.boundHash != ReferenceSigningScheme.sha256Hex(canonical.canonicalize(payload))) {
+            return PaymentResponse.Rejected(RejectionReason.PAYMENT_CHANGED)
+        }
         val confirmed = when (challenge.confirmation) {
             RequiredConfirmation.NONE -> key.role == KeyRole.DEVICE
             RequiredConfirmation.STEP_UP_KEY -> key.role == KeyRole.STEP_UP
@@ -475,6 +491,7 @@ class ReferenceBackend(
             signedWith = key.role,
             confirmation = challenge.confirmation,
             processedAt = receivedAt.toString(),
+            payee = payload.payee,
         )
         store.putLedgerEntry(key.deviceKeyId, idempotencyKey, LedgerEntry(fingerprint, payment))
         return PaymentResponse.Processed(payment, replayed = false)
@@ -564,9 +581,14 @@ class ReferenceBackend(
         return true
     }
 
-    private fun issueChallenge(purpose: ChallengePurpose, deviceKeyId: String, confirmation: RequiredConfirmation): String {
+    private fun issueChallenge(
+        purpose: ChallengePurpose,
+        deviceKeyId: String,
+        confirmation: RequiredConfirmation,
+        boundHash: String? = null,
+    ): String {
         val nonce = ReferenceSigningScheme.hex(ByteArray(16).also(random::nextBytes))
-        store.putChallenge(StoredChallenge(nonce, purpose, deviceKeyId, confirmation, clock.instant().plus(CHALLENGE_LIFETIME)))
+        store.putChallenge(StoredChallenge(nonce, purpose, deviceKeyId, confirmation, clock.instant().plus(CHALLENGE_LIFETIME), boundHash))
         return nonce
     }
 

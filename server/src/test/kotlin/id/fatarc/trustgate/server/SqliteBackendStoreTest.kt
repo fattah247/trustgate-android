@@ -15,6 +15,7 @@ import id.fatarc.trustgate.domain.signing.ReferenceRequestSigner
 import id.fatarc.trustgate.domain.signing.RejectionReason
 import id.fatarc.trustgate.domain.signing.asReceived
 import id.fatarc.trustgate.testing.MutableClock
+import id.fatarc.trustgate.testing.TEST_PAYMENT
 import id.fatarc.trustgate.testing.TestKey
 import id.fatarc.trustgate.testing.authorize
 import id.fatarc.trustgate.testing.developmentPolicy
@@ -46,7 +47,7 @@ class SqliteBackendStoreTest {
             .isInstanceOf(RegistrationResult.Registered::class.java)
         val nonce = (before.authorize(device, DeviceRiskLevel.LOW, clock.now) as PaymentAuthorization.Proceed).nonce
         val payment = device.sign(
-            ReferenceRequestSigner().prepare(ReferencePayment.payload(), nonce, device.keyId, clock.now.toString(), idempotencyKey = "idem-1"),
+            ReferenceRequestSigner().prepare(TEST_PAYMENT, nonce, device.keyId, clock.now.toString(), idempotencyKey = "idem-1"),
         ).asReceived()
         val charged = before.submitPayment(payment) as PaymentResponse.Processed
 
@@ -65,7 +66,7 @@ class SqliteBackendStoreTest {
         val before = backend()
         before.registerKey(KeyRole.DEVICE, device.encodedPublicKey, selfSignedChain(device), before.issueRegistrationChallenge())
         val nonce = before.issueVerificationChallenge(device.keyId)
-        val request = device.sign(ReferenceRequestSigner().prepare(ReferencePayment.payload(), nonce, device.keyId, clock.now.toString())).asReceived()
+        val request = device.sign(ReferenceRequestSigner().prepare(TEST_PAYMENT, nonce, device.keyId, clock.now.toString())).asReceived()
         before.authenticate(request)
 
         assertThat(backend().authenticate(request).toString()).contains(RejectionReason.CHALLENGE_REUSED.name)

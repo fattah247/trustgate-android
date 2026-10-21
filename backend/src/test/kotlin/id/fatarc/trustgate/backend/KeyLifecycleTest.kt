@@ -1,5 +1,6 @@
 package id.fatarc.trustgate.backend
 
+import id.fatarc.trustgate.testing.TEST_PAYMENT
 import com.google.common.truth.Truth.assertThat
 import id.fatarc.trustgate.backend.audit.AuditEntry
 import id.fatarc.trustgate.backend.store.InMemoryBackendStore
@@ -49,10 +50,11 @@ class KeyLifecycleTest {
     }
 
     private fun ReferenceBackend.pay(key: TestKey): PaymentResponse {
-        val nonce = (authorize(key, DeviceRiskLevel.LOW, clock.now) as PaymentAuthorization.Proceed).nonce
+        val payment = PaymentRequestPayload(125_000, "IDR", "REF-${++paymentsSent}")
+        val nonce = (authorize(key, DeviceRiskLevel.LOW, clock.now, payment) as PaymentAuthorization.Proceed).nonce
         val request = key.sign(
             signer.prepare(
-                PaymentRequestPayload(125_000, "IDR", "REF-${++paymentsSent}"),
+                payment,
                 nonce,
                 key.keyId,
                 clock.now.toString(),
@@ -83,7 +85,7 @@ class KeyLifecycleTest {
         val nonce = (backend.authorize(device, DeviceRiskLevel.LOW, clock.now) as PaymentAuthorization.Proceed).nonce
         backend.rotate(TestKey())
 
-        val late = device.sign(signer.prepare(PaymentRequestPayload(125_000, "IDR", "REF-1"), nonce, device.keyId, clock.now.toString(), idempotencyKey = "idem-1"))
+        val late = device.sign(signer.prepare(TEST_PAYMENT, nonce, device.keyId, clock.now.toString(), idempotencyKey = "idem-1"))
 
         assertThat(backend.submitPayment(late.asReceived(), clock.now)).isEqualTo(PaymentResponse.Rejected(RejectionReason.KEY_REVOKED))
     }

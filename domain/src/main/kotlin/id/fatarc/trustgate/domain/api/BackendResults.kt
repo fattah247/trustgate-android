@@ -93,6 +93,7 @@ data class Payment(
     val confirmation: RequiredConfirmation,
     /** ISO-8601 instant the backend charged it. */
     val processedAt: String,
+    val payee: String = "",
 )
 
 @Serializable

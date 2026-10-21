@@ -7,6 +7,8 @@ data class PaymentRequestPayload(
     val amountMinor: Long,
     val currency: String,
     val merchantReference: String,
+    /** Who receives the money, by the ID the server knows them by. */
+    val payee: String = ReferencePayment.STORE.id,
 )
 
 /** Which device key signs a request. The backend decides which one a given request must use. */

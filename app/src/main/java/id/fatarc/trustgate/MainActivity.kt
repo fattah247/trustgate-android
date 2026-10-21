@@ -60,6 +60,7 @@ class MainActivity : FragmentActivity() {
                     },
                     onStoreReferenceValues = viewModel::storeReferenceValues,
                     onSetScenarioRiskLevel = viewModel::setScenarioRiskLevel,
+                    onSetCheckout = viewModel::setCheckout,
                     onClearEvents = viewModel::clearSecurityEvents,
                     onExportEvents = viewModel::buildAuditExport,
                     onAppResumed = viewModel::onAppResumed,

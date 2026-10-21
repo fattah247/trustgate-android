@@ -41,4 +41,5 @@ fun RejectionReason.shortLabel(): String = when (this) {
     RejectionReason.TOO_MANY_PAYMENTS -> "too many payments"
     RejectionReason.OVER_LIMIT -> "over the limit"
     RejectionReason.KEY_REVOKED -> "key no longer valid"
+    RejectionReason.PAYMENT_CHANGED -> "not the payment you approved"
 }

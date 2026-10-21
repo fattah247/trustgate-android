@@ -1,5 +1,6 @@
 package id.fatarc.trustgate.server
 
+import id.fatarc.trustgate.testing.TEST_PAYMENT
 import com.google.common.truth.Truth.assertThat
 import id.fatarc.trustgate.backend.ReferenceBackend
 import id.fatarc.trustgate.domain.api.AdminRevocationRequest
@@ -97,7 +98,7 @@ class ServerRoutesTest {
             },
         ) as PaymentAuthorization.Proceed
         return device.sign(
-            signer.prepare(ReferencePayment.payload(), authorization.nonce, device.keyId, Instant.now().toString(), idempotencyKey = "idem-1"),
+            signer.prepare(TEST_PAYMENT, authorization.nonce, device.keyId, Instant.now().toString(), idempotencyKey = "idem-1"),
         )
     }
 
@@ -132,7 +133,7 @@ class ServerRoutesTest {
             TrustGateRoutes.VERIFICATION_CHALLENGE,
             VerificationChallengeRequest(device.keyId),
         ).nonce
-        val request = device.sign(signer.prepare(ReferencePayment.payload(), nonce, device.keyId, Instant.now().toString()))
+        val request = device.sign(signer.prepare(TEST_PAYMENT, nonce, device.keyId, Instant.now().toString()))
 
         val first = client.send<VerificationResult>(TrustGateRoutes.PAYMENT_CHECK, request)
         val replay = client.send<VerificationResult>(TrustGateRoutes.PAYMENT_CHECK, request)

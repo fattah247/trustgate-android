@@ -60,6 +60,7 @@ import androidx.navigation.compose.rememberNavController
 import id.fatarc.trustgate.core.integrity.PretendVerdict
 import id.fatarc.trustgate.domain.api.Remedy
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
+import id.fatarc.trustgate.domain.signing.Payee
 import id.fatarc.trustgate.ui.about.AboutScreen
 import id.fatarc.trustgate.ui.events.SecurityEventLogScreen
 import id.fatarc.trustgate.ui.home.HomeScreen
@@ -114,6 +115,7 @@ fun TrustGateApp(
     onRemovePhone: () -> Unit,
     onStoreReferenceValues: () -> Unit,
     onSetScenarioRiskLevel: (DeviceRiskLevel?) -> Unit,
+    onSetCheckout: (Payee, Long) -> Unit,
     onClearEvents: () -> Unit,
     onExportEvents: () -> String,
     onAppResumed: () -> Unit,
@@ -222,6 +224,7 @@ fun TrustGateApp(
                                             navController.navigate(Routes.PAY)
                                         },
                                         onSelectDemoPhone = onSetScenarioRiskLevel,
+                                        onSetCheckout = onSetCheckout,
                                         onOpenActivity = dropUnlessResumed { navController.navigateToTab(Tab.Activity) },
                                         onOpenAbout = dropUnlessResumed { navController.navigate(Routes.ABOUT) },
                                     )

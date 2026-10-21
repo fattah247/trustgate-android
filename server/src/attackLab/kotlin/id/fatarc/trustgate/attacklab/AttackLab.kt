@@ -78,6 +78,7 @@ class AttackLab(
         }
         return listOf(
             replayPayment(phone),
+            payMoreThanApproved(phone),
             changeAmount(phone),
             sendLate(phone),
             unknownKey(),
@@ -105,6 +106,14 @@ class AttackLab(
             stopped = chargedOnce || again is PaymentResponse.Rejected,
             serverSaid = if (chargedOnce) "Same payment returned, charged once" else describe(again),
         )
+    }
+
+    private fun payMoreThanApproved(phone: TestKey): AttackResult {
+        val approved = authorize(phone) as PaymentAuthorization.Proceed
+        // Signed properly by the phone's own key, just not for the payment the server approved.
+        val bigger = REFERENCE_PAYLOAD.copy(amountMinor = REFERENCE_PAYLOAD.amountMinor * 1000)
+        val response = pay(phone.sign(signer.prepare(bigger, approved.nonce, phone.keyId, clock.instant().toString(), idempotencyKey = newKey())))
+        return AttackResult("Pay more than was approved", response is PaymentResponse.Rejected, describe(response))
     }
 
     private fun changeAmount(phone: TestKey): AttackResult {
@@ -260,9 +269,13 @@ class AttackLab(
     private fun verificationRequest(key: TestKey): SignedRequest =
         key.sign(signer.prepare(REFERENCE_PAYLOAD, verificationChallenge(key.keyId), key.keyId, clock.instant().toString()))
 
-    private fun evidence(deviceKeyId: String, signals: List<ReportedSignal> = emptyList()): String = TrustGateJson.encodeToString(
+    private fun evidence(
+        deviceKeyId: String,
+        signals: List<ReportedSignal> = emptyList(),
+        payment: PaymentRequestPayload = REFERENCE_PAYLOAD,
+    ): String = TrustGateJson.encodeToString(
         DeviceEvidence.serializer(),
-        DeviceEvidence(deviceKeyId, clock.instant().toString(), signals),
+        DeviceEvidence(deviceKeyId, clock.instant().toString(), signals, payment = payment),
     )
 
     private fun authorize(phone: TestKey): PaymentAuthorization {

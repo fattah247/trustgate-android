@@ -1,6 +1,7 @@
 package id.fatarc.trustgate.domain.api
 
 import id.fatarc.trustgate.domain.signing.KeyRole
+import id.fatarc.trustgate.domain.signing.PaymentRequestPayload
 import id.fatarc.trustgate.domain.signing.ReferenceSigningScheme
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -126,6 +127,13 @@ data class DeviceEvidence(
     val signals: List<ReportedSignal>,
     /** The signals come from a simulated profile the person picked rather than from this device. */
     val simulated: Boolean = false,
+    /**
+     * The payment the person is about to make. The server binds the challenge it issues to these
+     * exact details, so the payment that follows can't be for anything else.
+     */
+    val payment: PaymentRequestPayload? = null,
+    /** The phone's offset from UTC, so the server can tell what time it is where the person is. */
+    val utcOffsetMinutes: Int? = null,
 )
 
 @Serializable

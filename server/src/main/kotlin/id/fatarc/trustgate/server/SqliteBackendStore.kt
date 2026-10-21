@@ -130,8 +130,13 @@ class SqliteBackendStore(file: File) : BackendStore, AutoCloseable {
     }
 
     override fun putChallenge(challenge: StoredChallenge) = update(
-        "INSERT INTO challenges VALUES (?, ?, ?, ?, ?)",
-        challenge.nonce, challenge.purpose.name, challenge.deviceKeyId, challenge.confirmation.name, challenge.expiresAt.toEpochMilli(),
+        "INSERT INTO challenges (nonce, purpose, device_key_id, confirmation, expires_at, bound_hash) VALUES (?, ?, ?, ?, ?, ?)",
+        challenge.nonce,
+        challenge.purpose.name,
+        challenge.deviceKeyId,
+        challenge.confirmation.name,
+        challenge.expiresAt.toEpochMilli(),
+        challenge.boundHash,
     )
 
     override fun challenge(nonce: String): StoredChallenge? = query("SELECT * FROM challenges WHERE nonce = ?", nonce) { row ->
@@ -141,6 +146,7 @@ class SqliteBackendStore(file: File) : BackendStore, AutoCloseable {
             deviceKeyId = row.getString("device_key_id"),
             confirmation = RequiredConfirmation.valueOf(row.getString("confirmation")),
             expiresAt = Instant.ofEpochMilli(row.getLong("expires_at")),
+            boundHash = row.getString("bound_hash"),
         )
     }
 
@@ -216,6 +222,11 @@ class SqliteBackendStore(file: File) : BackendStore, AutoCloseable {
         hash = getString("hash"),
     )
 
+    /** Version 3: what each challenge was issued for, such as the exact payment, which the request must match. */
+    private fun bindChallenges() {
+        update("ALTER TABLE challenges ADD COLUMN bound_hash TEXT")
+    }
+
     /** Lets a test change a stored entry the way someone with database access could. */
     internal fun overwriteAuditDetail(sequence: Long, detail: String) = update("UPDATE audit_log SET detail = ? WHERE sequence = ?", detail, sequence)
 
@@ -239,6 +250,7 @@ class SqliteBackendStore(file: File) : BackendStore, AutoCloseable {
         val MIGRATIONS: List<(SqliteBackendStore) -> Unit> = listOf(
             SqliteBackendStore::addLedgerTimes,
             SqliteBackendStore::addKeyLifecycleAndAudit,
+            SqliteBackendStore::bindChallenges,
         )
 
         /** The original schema; [MIGRATIONS] build on it. */

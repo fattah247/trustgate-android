@@ -71,4 +71,7 @@ enum class RejectionReason {
 
     /** The key was replaced, or the phone was removed, so the backend no longer accepts it. */
     KEY_REVOKED,
+
+    /** The payment isn't the one the person was authorized to make: another amount, payee, or currency. */
+    PAYMENT_CHANGED,
 }

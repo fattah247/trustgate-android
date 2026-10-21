@@ -1,5 +1,6 @@
 package id.fatarc.trustgate.core.backend
 
+import id.fatarc.trustgate.testing.TEST_PAYMENT
 import com.google.common.truth.Truth.assertThat
 import id.fatarc.trustgate.backend.ReferenceBackend
 import id.fatarc.trustgate.domain.api.PaymentAuthorization
@@ -33,7 +34,7 @@ class PaymentClientTest {
         val authorization = backend.authorize(device, DeviceRiskLevel.LOW, clock.now) as PaymentAuthorization.Proceed
         return device.sign(
             ReferenceRequestSigner().prepare(
-                payload = PaymentRequestPayload(125_000, "IDR", "REF-1"),
+                payload = TEST_PAYMENT,
                 nonce = authorization.nonce,
                 keyId = device.keyId,
                 timestamp = clock.now.toString(),

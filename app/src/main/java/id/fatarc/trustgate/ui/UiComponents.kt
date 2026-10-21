@@ -188,9 +188,13 @@ fun SignalSeverity.tone(): Tone = when (this) {
 }
 
 /** The reference payment as people read amounts, for example "IDR 1,250.00" or "Rp 1.250,00". */
-fun formatMinorAmount(amountMinor: Long, currencyCode: String, locale: Locale): String {
+fun formatMinorAmount(amountMinor: Long, currencyCode: String, locale: Locale, wholeUnits: Boolean = false): String {
     val currency = Currency.getInstance(currencyCode)
-    val format = NumberFormat.getCurrencyInstance(locale).apply { this.currency = currency }
+    val format = NumberFormat.getCurrencyInstance(locale).apply {
+        this.currency = currency
+        // For short labels such as amount choices, where the cents add nothing.
+        if (wholeUnits) maximumFractionDigits = 0
+    }
     return format.format(BigDecimal.valueOf(amountMinor, currency.defaultFractionDigits.coerceAtLeast(0)))
 }
 

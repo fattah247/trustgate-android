@@ -90,12 +90,13 @@ fun PayScreen(
     SensitiveScreen()
     DecisionHaptics(uiState.payment)
     val locale = ConfigurationCompat.getLocales(LocalConfiguration.current)[0] ?: Locale.getDefault()
-    val amount = formatMinorAmount(ReferencePayment.AMOUNT_MINOR, ReferencePayment.CURRENCY, locale)
+    val checkout = uiState.checkout
+    val amount = formatMinorAmount(checkout.amountMinor, ReferencePayment.CURRENCY, locale)
     val payment = uiState.payment
-    val result = payment.result(amount, phoneHasProblems = uiState.risk.report?.flaggedSignals().orEmpty().isNotEmpty())
+    val result = payment.result("$amount to ${checkout.payee.name}", phoneHasProblems = uiState.risk.report?.flaggedSignals().orEmpty().isNotEmpty())
 
     ScreenScaffold(title = "Pay", onNavigateUp = onNavigateUp) {
-        item(key = "order") { OrderSummary(amount) }
+        item(key = "order") { OrderSummary(amount, checkout.payee.name) }
 
         // The outcome goes above the steps so it's the first thing seen when the payment finishes.
         if (result != null) {
@@ -133,7 +134,7 @@ fun PayScreen(
 }
 
 @Composable
-private fun OrderSummary(amount: String) {
+private fun OrderSummary(amount: String, payee: String) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(28.dp),
@@ -143,7 +144,7 @@ private fun OrderSummary(amount: String) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 MerchantBadge()
                 Column {
-                    Text("TrustGate Store", style = MaterialTheme.typography.titleMedium)
+                    Text(payee, style = MaterialTheme.typography.titleMedium)
                     Text(
                         "Order ${ReferencePayment.payload().merchantReference}",
                         style = MaterialTheme.typography.bodyMedium,
@@ -295,7 +296,7 @@ private class PayResult(
     val offerChecks: Boolean = false,
 )
 
-private fun PaymentUiState.result(amount: String, phoneHasProblems: Boolean): PayResult? {
+private fun PaymentUiState.result(paidTo: String, phoneHasProblems: Boolean): PayResult? {
     problem?.let { return PayResult("Couldn't pay", "$it Nothing was charged.", Tone.CRITICAL, Icons.Outlined.ErrorOutline) }
     return when (latestDecision) {
         is PaymentDecisionState.Blocked -> PayResult(
@@ -309,7 +310,7 @@ private fun PaymentUiState.result(amount: String, phoneHasProblems: Boolean): Pa
         else -> when (val sent = submission) {
             is Submission.Charged -> PayResult(
                 title = "Paid",
-                body = "$amount to TrustGate Store · ${sent.paymentId}",
+                body = "$paidTo · ${sent.paymentId}",
                 tone = Tone.POSITIVE,
                 icon = Icons.Outlined.CheckCircle,
                 note = listOfNotNull(

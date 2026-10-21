@@ -17,6 +17,7 @@ import id.fatarc.trustgate.domain.risk.RiskScorer
 import id.fatarc.trustgate.domain.risk.SignalCategory
 import id.fatarc.trustgate.domain.risk.SignalSeverity
 import id.fatarc.trustgate.domain.signing.KeyRole
+import id.fatarc.trustgate.domain.signing.ReferencePayment
 import id.fatarc.trustgate.domain.signing.ReferenceRequestSigner
 import id.fatarc.trustgate.domain.signing.RejectionReason
 import id.fatarc.trustgate.domain.signing.VerificationResult
@@ -368,6 +369,21 @@ class TrustGateViewModelTest {
 
         assertThat(viewModel.uiState.value.keys.keys?.device?.keyId).isNotEqualTo(before)
         assertThat(backend.auditStatus().intact).isTrue()
+    }
+
+    @Test
+    fun `the payment made is the one chosen at checkout`() = runTest(dispatcher) {
+        val viewModel = start()
+        val payee = ReferencePayment.PAYEES[1]
+
+        viewModel.setCheckout(payee, ReferencePayment.AMOUNTS_MINOR[1])
+        viewModel.attemptPayment()
+        advanceUntilIdle()
+
+        val signed = requireNotNull(viewModel.uiState.value.lastRequest)
+        assertThat(payment.submission).isInstanceOf(Submission.Charged::class.java)
+        assertThat(signed.payload.payee).isEqualTo(payee.id)
+        assertThat(signed.payload.amountMinor).isEqualTo(ReferencePayment.AMOUNTS_MINOR[1])
     }
 
     @Test
