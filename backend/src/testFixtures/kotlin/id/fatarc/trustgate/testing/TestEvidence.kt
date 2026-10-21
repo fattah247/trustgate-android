@@ -25,9 +25,10 @@ fun evidenceJson(
     level: DeviceRiskLevel,
     at: Instant,
     payment: PaymentRequestPayload = TEST_PAYMENT,
+    utcOffsetMinutes: Int? = null,
 ): String = TrustGateJson.encodeToString(
     DeviceEvidence.serializer(),
-    DeviceEvidence(deviceKeyId, at.toString(), signalsFor(level), payment = payment),
+    DeviceEvidence(deviceKeyId, at.toString(), signalsFor(level), payment = payment, utcOffsetMinutes = utcOffsetMinutes),
 )
 
 /** Asks [this] backend to authorize [payment], reporting signals that score [level], signed by [sign]. */
@@ -37,8 +38,9 @@ fun ReferenceBackend.authorize(
     level: DeviceRiskLevel,
     at: Instant = Instant.now(),
     payment: PaymentRequestPayload = TEST_PAYMENT,
+    utcOffsetMinutes: Int? = null,
 ): PaymentAuthorization {
-    val evidence = evidenceJson(deviceKeyId, level, at, payment)
+    val evidence = evidenceJson(deviceKeyId, level, at, payment, utcOffsetMinutes)
     return authorizePayment(deviceKeyId, evidence, sign(evidence.toByteArray()), integrityToken = null, receivedAt = at)
 }
 
@@ -47,4 +49,5 @@ fun ReferenceBackend.authorize(
     level: DeviceRiskLevel,
     at: Instant = Instant.now(),
     payment: PaymentRequestPayload = TEST_PAYMENT,
-): PaymentAuthorization = authorize(device.keyId, device::sign, level, at, payment)
+    utcOffsetMinutes: Int? = null,
+): PaymentAuthorization = authorize(device.keyId, device::sign, level, at, payment, utcOffsetMinutes)

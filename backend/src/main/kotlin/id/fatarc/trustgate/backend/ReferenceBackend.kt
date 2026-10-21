@@ -49,6 +49,7 @@ import java.security.spec.X509EncodedKeySpec
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
+import java.time.ZoneOffset
 import java.time.format.DateTimeParseException
 import kotlinx.serialization.json.Json
 
@@ -336,7 +337,8 @@ class ReferenceBackend(
         val payment = report.payment?.takeIf { it.amountMinor > 0 && it.currency.isNotBlank() && it.payee.isNotBlank() }
             ?: return@transaction refuse("Payment details missing")
         val assessment = policy.risk.assess(report, ReferenceSigningScheme.sha256Hex(evidence), integrityToken, receivedAt)
-        val authorization = authorization(key, payment, assessment + history(key, payment, receivedAt), receivedAt)
+        val history = history(key, payment, receivedAt) + unusualFor(phoneOf(key).accountId, payment, report.utcOffsetMinutes, receivedAt)
+        val authorization = authorization(key, payment, assessment + history, receivedAt)
         audit.record(
             "payment-authorized",
             subject = key.phoneId,
@@ -357,6 +359,31 @@ class ReferenceBackend(
             else -> Unit
         }
         if (isNewPhone(deviceKey, at)) add(DecisionReason("New phone", DeviceRiskLevel.MEDIUM))
+    }
+
+    /**
+     * What doesn't fit how this account usually pays: a payee it hasn't paid before, far more than
+     * it usually pays, or an hour of the night it doesn't pay at. Each is common enough when it's
+     * really the person, so it asks for their OK rather than blocking. An account with no history
+     * has nothing to compare with; the new-phone rules cover it instead.
+     */
+    private fun unusualFor(accountId: String, payment: PaymentRequestPayload, utcOffsetMinutes: Int?, at: Instant): List<DecisionReason> {
+        val past = store.paymentsOfAccount(accountId, at.minus(BEHAVIOUR_HISTORY)).filter { it.currency == payment.currency }
+        if (past.isEmpty()) return emptyList()
+        return buildList {
+            if (past.none { it.payee == payment.payee }) add(DecisionReason("First payment to this payee", DeviceRiskLevel.MEDIUM))
+            if (past.size >= BEHAVIOUR_BASELINE && payment.amountMinor > LARGE_PAYMENT_FACTOR * past.maxOf { it.amountMinor }) {
+                add(DecisionReason("Much more than this account usually pays", DeviceRiskLevel.MEDIUM))
+            }
+            // The phone says its time zone; a wrong one only costs the person a confirmation.
+            val offset = utcOffsetMinutes?.takeIf { it in -14 * 60..14 * 60 }
+            if (offset != null && past.size >= BEHAVIOUR_BASELINE) {
+                fun isNight(instant: Instant) = instant.atOffset(ZoneOffset.ofTotalSeconds(offset * 60)).hour in NIGHT_HOURS
+                if (isNight(at) && past.count { isNight(Instant.parse(it.processedAt)) } < BEHAVIOUR_BASELINE) {
+                    add(DecisionReason("Unusual time for this account", DeviceRiskLevel.MEDIUM))
+                }
+            }
+        }
     }
 
     private fun isNewPhone(deviceKey: StoredKey, at: Instant): Boolean = isNewPhone(phoneOf(deviceKey), at)
@@ -784,6 +811,12 @@ class ReferenceBackend(
     private companion object {
         val CHALLENGE_LIFETIME: Duration = Duration.ofMinutes(5)
         val LINK_CODE_LIFETIME: Duration = Duration.ofMinutes(10)
+
+        /** How far back the account's habits are read, and how many payments make a habit. */
+        val BEHAVIOUR_HISTORY: Duration = Duration.ofDays(90)
+        const val BEHAVIOUR_BASELINE = 3
+        const val LARGE_PAYMENT_FACTOR = 2
+        val NIGHT_HOURS = 0..4
 
         /** 31 symbols over 8 places: about 8.5 × 10¹¹ codes, each valid once for ten minutes, behind rate limits. */
         const val LINK_CODE_LENGTH = 8
