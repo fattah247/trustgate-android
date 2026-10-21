@@ -13,7 +13,17 @@ The Lab tab signs real requests with the phone's own key and sends them to the s
 | Send it late | A request signed just outside the five-minute window | Refused: too late |
 | Pay 6 times at once | Six authorizations collected first, then six payments as fast as possible | Pays up to the limit, then refuses: too many payments |
 
-The same tab can lose the first reply to a payment (the app retries and the server charges once), pretend Google Play's integrity verdict found a remote-control app, a screen recorder, harmful apps, or an unlicensed copy (debug builds without Play only), replace the phone's key, and remove the phone.
+The same tab can lose the first reply to a payment (the app retries and the server charges once), replace the phone's key, and remove the phone. In debug builds without Play, it can also pretend Google Play's verdict found a remote-control app, a screen recorder, harmful apps, an unlicensed copy, or, through device recall, a phone that was set up here or blocked before.
+
+**Phones on this account** lists the account's phones and lets one join: Add another phone makes a code, the other phone enters it under Join another account, and the first phone approves it with its screen lock, or a signed tap on a phone without one. To try it with one emulator, make a code in the app and play the second phone from the harness:
+
+```bash
+./gradlew :server:joinAccount -Pcode=CODE
+```
+
+The app then shows "Second phone (lab)" waiting for approval.
+
+On Home, paying the seller you haven't paid before, or the largest amount, shows the habit checks asking for confirmation once the account has some history.
 
 ## The harness
 
@@ -28,6 +38,7 @@ Against the development policy:
 
 ```text
 STOPPED      Replay a payment                                    Same payment returned, charged once
+STOPPED      Pay more than was approved                          Refused: payment_changed
 STOPPED      Raise the amount after signing                      Refused: signature_mismatch
 STOPPED      Deliver a request after the time window             Refused: outside_time_window
 STOPPED      Sign with a key the server never registered         Refused: unknown_key
@@ -38,11 +49,14 @@ STOPPED      Pay without the confirmation the server asked for   Refused: confir
 STOPPED      Add a confirmation key the phone didn't approve     Refused: The device key didn't vouch for this step-up key.
 STOPPED      Take over a phone by replacing its key              Refused: The current key didn't vouch for the new one.
 STOPPED      Keep using a key after it was replaced              Refused: key_revoked
+STOPPED      Join an account by guessing its code                That code isn't valid. Make a new one on your other phone.
+STOPPED      Let a phone in from off the account                 HTTP 403
+STOPPED      Remove a phone from someone else's account          HTTP 403
 STOPPED      Pay 6 times as fast as possible                     3 paid, then refused: too_many_payments
 STOPPED      Read the audit log without the operator token       HTTP 401
-STOPPED      Flood key registration                              Slowed down after 6 requests (HTTP 429)
+STOPPED      Flood key registration                              Slowed down after 10 requests (HTTP 429)
 
-14 of 14 attacks stopped.
+18 of 18 attacks stopped.
 ```
 
 Against the strict policy (`./gradlew :server:run -Ptrustgate.policy=strict`), the harness can't even register: its keys are software keys with no hardware attestation, which is the point.

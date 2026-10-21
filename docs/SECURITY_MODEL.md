@@ -14,13 +14,14 @@ The server enforces one of two policies, chosen together for keys and devices so
 | Boot | Verified, bootloader locked | Not required |
 | Play Integrity | Required; strong integrity or a confirmation | Made-up answers accepted, and labelled |
 | Demo phones | Refused | Accepted, and labelled |
-| Payment limits | 5 per 10 minutes, IDR 10,000,000 a day, new phones confirm and stay under IDR 1,000,000 for a day | 3 a minute, same daily cap, no new-phone rules |
+| Payment limits, per account | 5 per 10 minutes, IDR 10,000,000 a day, new phones confirm and stay under IDR 1,000,000 for a day | 3 a minute, same daily cap, no new-phone rules |
+| Habit checks | On | On |
 | Key age | Replaced after 90 days | No limit |
 | Minimum patch level, app version | Configurable | Off |
 
 ## Device evidence
 
-Before a payment the app checks the phone and signs what it found with its device key:
+Before a payment the app checks the phone and signs what it found with its device key, together with the payment it's for (payee, amount, currency, reference) and the phone's UTC offset:
 
 | Signal | Severity |
 | --- | --- |
@@ -53,8 +54,12 @@ The app requests a Standard Play Integrity token with the SHA-256 of the exact e
 | Unusually many integrity requests from the phone | Confirm | |
 | Only basic integrity, under the strict policy | Confirm | |
 | App version below the minimum | Block | Update from Google Play |
+| Device recall: this phone was blocked before | Block | |
+| Device recall: set up here before, on a key registered in the last day | Confirm | |
 
 Only a fix for the worst problem is offered, and none when something else blocks the payment anyway.
+
+**Device recall** (beta) keeps three bits per phone on Google's side, and they survive a factory reset. The server uses two: the first time Google vouches for a phone, it sets *set up here*; when an operator revokes a phone, it sets *blocked*, using the phone's last Google-verified token if that's under 14 days old. Writes go out in the background once the change that called for them is committed, and marking a phone blocked is recorded in the audit log. So a phone that was blocked stays blocked after a wipe, and one that comes back as "new" says it isn't. Writing needs `TRUSTGATE_DEVICE_RECALL=on`, the Play Integrity credentials, and device recall turned on in Play Console.
 
 ## Keys
 
@@ -73,6 +78,16 @@ Each key is generated with a one-time challenge from the server, which registers
 
 The app remembers which keys are registered, so it keeps one identity across launches.
 
+## Accounts
+
+Every phone belongs to an account; a phone that registers starts on one of its own. A phone joins another account only with approval from a phone already on it:
+
+1. A phone on the account makes a **link code**: 8 characters from an alphabet without look-alikes, valid for 10 minutes and for one join. A phone that is itself new on the account can't make one.
+2. The new phone sends the code, signed with its device key over a fresh challenge. It now waits; it can't pay from the account.
+3. A phone on the account **approves** or **declines** it. The decision is signed over a one-time challenge bound to the action and the phone it's about, with the deciding phone's step-up key, so it takes biometrics or the screen lock. A phone without a step-up key confirms with a signed tap.
+
+The same signed decision **removes** a lost phone, which revokes its keys. A phone that's waiting, new, or on another account can't decide anything. A phone that joins counts as new from the moment it joins, so it confirms every payment and stays under the new-phone cap for a day, and every phone on an account shares the account's limits.
+
 ## The gate
 
 From the evidence, the verdict, and the phone's history, the server decides:
@@ -89,19 +104,23 @@ A signed request covers the method, path, timestamp, nonce, key ID, idempotency 
 
 ## Payments
 
+- **Bound to what was approved.** The challenge issued for a payment is bound to the SHA-256 of the payment the server weighed. The payment later signed with it must be exactly that one; a different payee, amount, currency, or reference is refused as `payment_changed`.
 - **Idempotency.** Every payment carries an idempotency key scoped to the phone. The same signed request sent again gets the original payment back without a second charge; the same key with a different body is refused. The app resends the identical request after a lost response, up to three attempts with exponential backoff and jitter, and finishes and logs a payment even if the person leaves the screen.
-- **Limits.** Counted per phone across key rotations and enforced when charging, so authorizations collected in advance can't add up past them. Authorization mentions a limit already reached, so the person isn't asked to confirm a payment that would be refused.
-- **Rate limits.** Each client address may make 20 requests a minute to the key routes and 60 to the payment routes.
+- **Habits.** The server compares each payment with the account's last 90 days in the same currency and asks for confirmation when it's the first payment to a payee; when it's more than twice the largest payment, once there are 3 to compare with; or when it's at night (midnight to 5 a.m. in the phone's time zone) for an account with fewer than 3 night payments. The phone reports its own time zone, so a false one only costs a confirmation.
+- **Limits.** Counted per account, across its phones and their key rotations, and enforced when charging, so authorizations collected in advance can't add up past them. Authorization mentions a limit already reached, so the person isn't asked to confirm a payment that would be refused.
+- **Rate limits.** Each client address may make 40 requests a minute to the key and account routes and 60 to the payment routes.
 
 ## Audit log
 
-The server appends an entry for every registration, refusal, rotation, removal, revocation, decision, request check, and payment, in the same SQLite transaction as the change. Each entry's hash covers its fields, length-prefixed, and the previous entry's hash. The server checks the chain from the start at launch and logs the head hash outside the database; operators can check it at any time through `/admin/audit`. Changing, removing, or reordering an entry breaks the chain from that entry on.
+The server appends an entry for every registration, refusal, rotation, removal, revocation, account change, decision, device recall mark, request check, and payment, in the same SQLite transaction as the change. Each entry's hash covers its fields, length-prefixed, and the previous entry's hash. The server checks the chain from the start at launch and logs the head hash outside the database; operators can check it at any time through `/admin/audit`. Changing, removing, or reordering an entry breaks the chain from that entry on.
+
+**Checkpoints.** A chain alone doesn't catch someone who rewrites the whole table and recomputes every hash. So every ten minutes, and when an operator asks through `/admin/audit/checkpoint`, the server signs the head (entry number, hash, time) with an anchor key kept apart from the database and appends it to a checkpoint file outside it. With `TRUSTGATE_TSA_URL` set, an RFC 3161 timestamping authority also signs each checkpoint, and only tokens from its pinned certificates count. At launch and in `/admin/audit`, the server checks every checkpoint's signature and timestamp, and that the log still holds the recorded hash at that entry. To pass, a rewrite would also need the anchor key and a timestamp from before it happened.
 
 Admin routes are served only when an operator token is configured, and compare it in constant time.
 
 ## Transport
 
-The server serves HTTPS only, on the loopback interface by default. The app's network security config is generated per build and disallows cleartext: debug builds trust only the development server's own certificate for `10.0.2.2` and pin its key; release builds pin the keys given as Gradle properties. The development certificate, its password, and the operator token are generated on first run and never committed.
+The server serves HTTPS only, on the loopback interface by default. The app's network security config is generated per build and disallows cleartext: debug builds trust only the development server's own certificate for `10.0.2.2` and pin its key; release builds pin the keys given as Gradle properties. The development certificate, its password, the operator token, and the audit anchor key are generated on first run and never committed.
 
 ## On the phone
 

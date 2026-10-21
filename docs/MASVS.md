@@ -22,9 +22,9 @@ This is a self-assessment against the control statements, not a MASTG test run o
 
 | Control | Status | How |
 | --- | --- | --- |
-| AUTH-1: secure authentication and authorization | Partly | Every request is signed by a registered, attested key and bound to a one-time server challenge, a five-minute window, and an idempotency key; the server decides what each phone may do. There are no user accounts: identity is the phone's key, so binding a phone to a person is left to the host app's login. |
+| AUTH-1: secure authentication and authorization | Partly | Every request is signed by a registered, attested key and bound to a one-time server challenge, a five-minute window, and an idempotency key; a payment's challenge is bound to the payment itself. Phones belong to accounts, and a new phone gets in only with a one-time code and approval signed by a phone already on the account. Nothing binds an account to a person: login and recovery are left to the host app. |
 | AUTH-2: local authentication done the platform's way | Met | Confirmation goes through `BiometricPrompt` with a `CryptoObject`, so authentication unlocks a key the server checks rather than a callback the app trusts. |
-| AUTH-3: extra authentication for sensitive operations | Met | The server asks for step-up confirmation on medium risk, for new phones, and when Play Integrity is only basic; the payment must then be signed by the step-up key. |
+| AUTH-3: extra authentication for sensitive operations | Met | The server asks for step-up confirmation on medium risk, for new phones, for payments unlike the account's habits, for phones set up again, and when Play Integrity is only basic; the payment must then be signed by the step-up key. Approving or removing a phone on the account takes the step-up key too, when the phone has one. |
 
 ## MASVS-NETWORK
 
@@ -48,7 +48,7 @@ This is a self-assessment against the control statements, not a MASTG test run o
 | CODE-1: requires an up-to-date platform | Partly | `minSdk` is 26 and `targetSdk` 35. The strict policy can refuse phones below a security patch level, and requires Play's strong integrity, which on Android 13+ includes a recent patch, or a confirmation. |
 | CODE-2: enforces app updates | Met | The strict policy refuses app versions below a configured minimum, both when they register a key (from the attestation) and when they pay (from the Play Integrity verdict), and the app sends the person to Google Play. |
 | CODE-3: no components with known vulnerabilities | Met | Dependabot for Gradle and Actions, dependency review on pull requests, the dependency graph submitted to GitHub, and Gradle dependency verification against recorded SHA-256 checksums. See [SUPPLY_CHAIN.md](SUPPLY_CHAIN.md). |
-| CODE-4: validates untrusted input | Met | The server reads payment bodies strictly, caps signed bodies at 16 KB, refuses header values that could shift signed fields, and parses attestation DER defensively. CodeQL's extended security queries run on every pull request. |
+| CODE-4: validates untrusted input | Met | The server reads payment bodies strictly, caps signed bodies at 16 KB, refuses header values that could shift signed fields, and parses attestation DER defensively. Jazzer fuzzes the hand-written parsers for attestation chains, the revocation list, and integrity tokens nightly in CI, and each input that broke one is kept as a regression test. CodeQL's extended security queries run on every pull request. |
 
 ## MASVS-RESILIENCE
 

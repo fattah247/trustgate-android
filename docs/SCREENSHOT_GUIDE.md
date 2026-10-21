@@ -17,7 +17,7 @@ Phone screenshots come from the emulator in light theme at font scale 1.0, with 
 | `09-ci-passing.png` | GitHub Actions | CI green on `main` | The run summary for the latest push to `main`, with the branch, status, and jobs visible. |
 | `10-repo-overview.png` | GitHub | The repository and its README | The branch tree view with the README preview. Check the contributor list and latest-commit row. |
 | `11-activity.png` | Activity | The log of checks, payments, and Lab tests | Open the Activity tab after the steps above. |
-| `12-tests-passing.png` | `./gradlew test --no-build-cache --console=plain` | Every module's tests passing | Run `cleanTest`, `:app:cleanTestDebugUnitTest`, and `:app:cleanTestReleaseUnitTest` first so every test runs. Rendered from the command's output, with the test count from the JUnit reports. |
+| `12-tests-passing.png` | `./gradlew test --no-build-cache --console=plain` | Every module's tests passing | Run `cleanTest`, `:app:cleanTestDebugUnitTest`, and `:app:cleanTestReleaseUnitTest` first so every test runs. Rendered from the command's output, with the test count from the JUnit reports, counting the app's tests once although they run for debug and release. |
 | `13-attack-lab.png` | `./gradlew :server:attackLab` | The harness's attacks against the running server | Run against `./gradlew :server:run`, rendered from the command's output. |
 
 ## Demo GIF
