@@ -40,6 +40,8 @@ dependencies {
     implementation("ch.qos.logback:logback-classic:1.5.6")
     // Service-account access tokens for Google's Play Integrity API.
     implementation("com.google.auth:google-auth-library-oauth2-http:1.23.0")
+    // RFC 3161 timestamps for audit checkpoints.
+    implementation("org.bouncycastle:bcpkix-jdk18on:1.86")
 
     testImplementation(testFixtures(project(":backend")))
     testImplementation("io.ktor:ktor-server-test-host-jvm:$ktorVersion")
@@ -61,15 +63,26 @@ val generateDevCertificate by tasks.registering {
         // The operator token for the /admin routes, kept beside the TLS secrets and never committed.
         File(dir, "admin-token").takeUnless { it.exists() }
             ?.writeText(Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(32).also(SecureRandom()::nextBytes)))
-        if (File(dir, "server.p12").exists()) return@doLast
-        val password = Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(24).also(SecureRandom()::nextBytes))
-        File(dir, "password").writeText(password)
         val keytool = File(System.getProperty("java.home"), "bin/keytool").path
         fun run(vararg command: String) {
             val process = ProcessBuilder(*command).directory(dir).redirectErrorStream(true).start()
             val output = process.inputStream.bufferedReader().readText()
             check(process.waitFor() == 0) { "keytool failed: $output" }
         }
+        // The key that signs audit checkpoints; in production it belongs somewhere the database's owner can't reach.
+        if (!File(dir, "audit-anchor.p12").exists()) {
+            File(dir, "anchor-password").takeUnless { it.exists() }
+                ?.writeText(Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(24).also(SecureRandom()::nextBytes)))
+            val anchorPassword = File(dir, "anchor-password").readText()
+            run(
+                keytool, "-genkeypair", "-alias", "audit-anchor", "-keyalg", "EC", "-groupname", "secp256r1",
+                "-sigalg", "SHA256withECDSA", "-dname", "CN=TrustGate audit anchor", "-validity", "3650",
+                "-keystore", "audit-anchor.p12", "-storetype", "PKCS12", "-storepass", anchorPassword, "-keypass", anchorPassword,
+            )
+        }
+        if (File(dir, "server.p12").exists()) return@doLast
+        val password = Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(24).also(SecureRandom()::nextBytes))
+        File(dir, "password").writeText(password)
         run(
             keytool, "-genkeypair", "-alias", "trustgate", "-keyalg", "EC", "-groupname", "secp256r1",
             "-sigalg", "SHA256withECDSA", "-dname", "CN=TrustGate development server",
@@ -131,6 +144,9 @@ tasks.named<JavaExec>("run") {
     environment("TRUSTGATE_TLS_KEYSTORE", File(dir, "server.p12").path)
     environment("TRUSTGATE_TLS_PASSWORD_FILE", File(dir, "password").path)
     environment("TRUSTGATE_ADMIN_TOKEN_FILE", File(dir, "admin-token").path)
+    environment("TRUSTGATE_ANCHOR_KEYSTORE", File(dir, "audit-anchor.p12").path)
+    environment("TRUSTGATE_ANCHOR_PASSWORD_FILE", File(dir, "anchor-password").path)
+    environment("TRUSTGATE_CHECKPOINTS", layout.buildDirectory.file("audit-checkpoints.jsonl").get().asFile.path)
     environment("TRUSTGATE_DATABASE", layout.buildDirectory.file("trustgate.db").get().asFile.path)
     environment("TRUSTGATE_POLICY", providers.gradleProperty("trustgate.policy").getOrElse("development"))
     environment("TRUSTGATE_PACKAGE", "id.fatarc.trustgate")

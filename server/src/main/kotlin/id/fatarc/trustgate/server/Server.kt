@@ -1,6 +1,7 @@
 package id.fatarc.trustgate.server
 
 import id.fatarc.trustgate.backend.ReferenceBackend
+import id.fatarc.trustgate.backend.audit.AuditAnchoring
 import id.fatarc.trustgate.backend.integrity.DeviceRecallWriter
 import id.fatarc.trustgate.domain.api.ServerHealth
 import io.ktor.server.engine.applicationEngineEnvironment
@@ -9,6 +10,10 @@ import io.ktor.server.engine.sslConnector
 import io.ktor.server.netty.Netty
 import java.io.File
 import java.security.KeyStore
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import org.slf4j.LoggerFactory
 
 fun main() {
@@ -25,6 +30,16 @@ fun main() {
         store = store,
         recallWriter = recallWriter,
     )
+    val anchoring = config.anchorKeystore?.let { keystore ->
+        val key = loadAnchorKey(keystore, checkNotNull(config.anchorPassword))
+        AuditAnchoring(
+            store = store,
+            anchorKey = key.private,
+            anchorPublicKey = key.public,
+            sink = FileCheckpointSink(config.checkpointFile ?: File(config.database.absoluteFile.parentFile, "audit-checkpoints.jsonl")),
+            timestamper = config.timestampUrl?.let { Rfc3161Timestamper.overHttp(it, config.timestampCertificates) },
+        )
+    }
     val password = config.keystorePassword.toCharArray()
     val keyStore = KeyStore.getInstance(config.keystore, password)
     val log = LoggerFactory.getLogger("trustgate")
@@ -32,14 +47,15 @@ fun main() {
     if (config.policyName == ServerConfig.STRICT && integrity == null) {
         log.warn("No Play Integrity credentials: every integrity token will count as unverifiable.")
     }
-    // The head hash goes to the server's own log, outside the database, so a rewrite of the whole
-    // audit table would no longer match what was logged here.
-    val audit = backend.auditStatus()
-    if (audit.intact) {
-        log.info("Audit log intact: {} entries, head {}.", audit.entries, audit.headHash ?: "none")
-    } else {
-        log.error("Audit log broken at entry {}: an entry was changed, removed, or reordered.", audit.brokenAt)
+    // The head hash goes to the server's own log too, outside the database, so a rewrite of the
+    // whole audit table would no longer match what was logged here.
+    val audit = anchoring?.status() ?: backend.auditStatus()
+    when {
+        audit.intact -> log.info("Audit log intact: {} entries, head {}, {} checkpoints.", audit.entries, audit.headHash ?: "none", audit.checkpoints)
+        audit.checkpointProblem != null -> log.error("Audit log doesn't match its checkpoints. {}", audit.checkpointProblem)
+        else -> log.error("Audit log broken at entry {}: an entry was changed, removed, or reordered.", audit.brokenAt)
     }
+    if (anchoring == null) log.warn("No audit anchor key: the audit log isn't checkpointed outside the database.")
     if (config.adminToken == null) log.info("No admin token: the /admin routes are off.")
 
     val environment = applicationEngineEnvironment {
@@ -52,7 +68,17 @@ fun main() {
         }
         module {
             revocations.startRefreshing(this)
-            trustGateModule(backend, ServerHealth(status = "ok", policy = config.policyName), adminToken = config.adminToken)
+            anchoring?.let { anchors ->
+                launch(Dispatchers.IO) {
+                    while (isActive) {
+                        runCatching { anchors.checkpoint() }
+                            .onSuccess { made -> made?.let { log.info("Checkpointed the audit log at entry {}.", it.sequence) } }
+                            .onFailure { log.warn("Couldn't checkpoint the audit log: {}", it.message) }
+                        delay(config.checkpointEvery.toMillis())
+                    }
+                }
+            }
+            trustGateModule(backend, ServerHealth(status = "ok", policy = config.policyName), adminToken = config.adminToken, anchoring = anchoring)
         }
     }
     embeddedServer(Netty, environment).start(wait = true)

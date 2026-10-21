@@ -28,6 +28,15 @@ class ServerConfig(
     val adminToken: String? = null,
     /** Write device recall bits; needs Play Integrity credentials and device recall turned on in Play Console. */
     val deviceRecall: Boolean = false,
+    /** The PKCS#12 key that signs audit checkpoints, and its password; without it there are no checkpoints. */
+    val anchorKeystore: File? = null,
+    val anchorPassword: String? = null,
+    /** Where checkpoints are appended; somewhere the database's owner can't rewrite. */
+    val checkpointFile: File? = null,
+    val checkpointEvery: java.time.Duration = java.time.Duration.ofMinutes(10),
+    /** An RFC 3161 timestamping authority for checkpoints, and the SHA-256 of each signing certificate of its to trust. */
+    val timestampUrl: String? = null,
+    val timestampCertificates: Set<String> = emptySet(),
 ) {
     fun policy(integrity: IntegrityVerifier?): BackendPolicy = when (policyName) {
         STRICT -> BackendPolicy.strict(
@@ -65,10 +74,21 @@ class ServerConfig(
                 revocationUrl = env["TRUSTGATE_REVOCATION_URL"].let { if (it == "off") null else it ?: RevocationList.URL },
                 playIntegrityCredentials = env["TRUSTGATE_PLAY_INTEGRITY_CREDENTIALS"]?.let(::File),
                 deviceRecall = env["TRUSTGATE_DEVICE_RECALL"] == "on",
+                anchorKeystore = env["TRUSTGATE_ANCHOR_KEYSTORE"]?.let(::File),
+                anchorPassword = env["TRUSTGATE_ANCHOR_PASSWORD_FILE"]?.let { File(it).readText().trim() },
+                checkpointFile = env["TRUSTGATE_CHECKPOINTS"]?.let(::File),
+                checkpointEvery = env["TRUSTGATE_CHECKPOINT_MINUTES"]?.toLong()?.let(java.time.Duration::ofMinutes) ?: java.time.Duration.ofMinutes(10),
+                timestampUrl = env["TRUSTGATE_TSA_URL"],
+                timestampCertificates = env["TRUSTGATE_TSA_CERT_SHA256"].orEmpty()
+                    .split(',').map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet(),
                 adminToken = env["TRUSTGATE_ADMIN_TOKEN_FILE"]?.let { File(it).readText().trim() }?.also { token ->
                     require(token.length >= 32) { "The admin token must be at least 32 characters." }
                 },
-            )
+            ).also {
+                // Without a pinned certificate, anyone could make a timestamp that verifies.
+                require(it.timestampUrl == null || it.timestampCertificates.isNotEmpty()) { "TRUSTGATE_TSA_CERT_SHA256 must be set with TRUSTGATE_TSA_URL." }
+                require(it.anchorKeystore == null || it.anchorPassword != null) { "TRUSTGATE_ANCHOR_PASSWORD_FILE must be set with TRUSTGATE_ANCHOR_KEYSTORE." }
+            }
         }
     }
 }

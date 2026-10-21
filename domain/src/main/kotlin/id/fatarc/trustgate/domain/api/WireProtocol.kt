@@ -24,6 +24,7 @@ object TrustGateRoutes {
     /** Operator routes, served only when the server has an admin token set. */
     const val ADMIN_REVOKE = "/admin/keys/revoke"
     const val ADMIN_AUDIT = "/admin/audit"
+    const val ADMIN_AUDIT_CHECKPOINT = "/admin/audit/checkpoint"
     const val VERIFICATION_CHALLENGE = "/v1/verification/challenge"
     const val AUTHORIZE_PAYMENT = "/v1/payments/authorize"
     const val PAYMENT = ReferenceSigningScheme.PATH
@@ -107,14 +108,20 @@ data class DeviceRemoval(val removed: Boolean)
 @Serializable
 data class AdminRevocationRequest(val keyId: String, val reason: String)
 
-/** Whether the server's audit log is unbroken from its first entry to [headHash]. */
+/**
+ * Whether the server's audit log is unbroken from its first entry to [headHash], and, when the
+ * server keeps checkpoints, still matches every one of them.
+ */
 @Serializable
 data class AuditStatus(
     val intact: Boolean,
     val entries: Long,
     val headHash: String?,
-    /** The first entry whose hash doesn't follow from the one before, when there is one. */
+    /** The first entry whose hash doesn't follow from the one before, or the first checkpoint the log contradicts. */
     val brokenAt: Long? = null,
+    /** Checkpoints of the head kept outside the database, and whether the log still matches them all. */
+    val checkpoints: Int = 0,
+    val checkpointProblem: String? = null,
 )
 
 @Serializable

@@ -1,6 +1,7 @@
 package id.fatarc.trustgate.server
 
 import id.fatarc.trustgate.backend.audit.AuditEntry
+import id.fatarc.trustgate.backend.audit.AuditLog
 import id.fatarc.trustgate.backend.store.BackendStore
 import id.fatarc.trustgate.backend.store.ChallengePurpose
 import id.fatarc.trustgate.backend.store.LedgerEntry
@@ -301,6 +302,16 @@ class SqliteBackendStore(file: File) : BackendStore, AutoCloseable {
 
     /** Lets a test change a stored entry the way someone with database access could. */
     internal fun overwriteAuditDetail(sequence: Long, detail: String) = update("UPDATE audit_log SET detail = ? WHERE sequence = ?", detail, sequence)
+
+    /** Lets a test rebuild the whole chain to match, the way someone covering up an edit would. */
+    internal fun rehashAuditChain() {
+        var previous = AuditLog.GENESIS
+        auditEntries().toList().forEach { entry ->
+            val hash = AuditLog.hashOf(entry.sequence, entry.at, entry.event, entry.subject, entry.detail, previous)
+            update("UPDATE audit_log SET previous_hash = ?, hash = ? WHERE sequence = ?", previous, hash, entry.sequence)
+            previous = hash
+        }
+    }
 
     override fun close() = connection.close()
 

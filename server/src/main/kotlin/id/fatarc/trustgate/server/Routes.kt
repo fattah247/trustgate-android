@@ -1,6 +1,7 @@
 package id.fatarc.trustgate.server
 
 import id.fatarc.trustgate.backend.ReferenceBackend
+import id.fatarc.trustgate.backend.audit.AuditAnchoring
 import id.fatarc.trustgate.domain.api.AdminRevocationRequest
 import id.fatarc.trustgate.domain.api.DecisionChallengeRequest
 import id.fatarc.trustgate.domain.api.DeviceRemoval
@@ -70,6 +71,7 @@ fun Application.trustGateModule(
     health: ServerHealth,
     limits: RequestLimits = RequestLimits(),
     adminToken: String? = null,
+    anchoring: AuditAnchoring? = null,
 ) {
     install(ContentNegotiation) { json(TrustGateJson) }
     install(RateLimit) {
@@ -99,14 +101,14 @@ fun Application.trustGateModule(
 
         rateLimit(KEYS) {
             keyRoutes(backend)
-            if (adminToken != null) adminRoutes(backend, adminToken)
+            if (adminToken != null) adminRoutes(backend, adminToken, anchoring)
         }
         rateLimit(PAYMENTS) { paymentRoutes(backend) }
     }
 }
 
-/** For the people running the server: revoke a phone, and check the audit log's chain. */
-private fun Route.adminRoutes(backend: ReferenceBackend, adminToken: String) {
+/** For the people running the server: revoke a phone, check the audit log, and checkpoint it now. */
+private fun Route.adminRoutes(backend: ReferenceBackend, adminToken: String, anchoring: AuditAnchoring?) {
     val expected = "Bearer $adminToken".toByteArray()
     suspend fun ApplicationCall.authorized(): Boolean {
         val presented = request.headers[HttpHeaders.Authorization].orEmpty().toByteArray()
@@ -124,7 +126,14 @@ private fun Route.adminRoutes(backend: ReferenceBackend, adminToken: String) {
 
     get(TrustGateRoutes.ADMIN_AUDIT) {
         if (!call.authorized()) return@get
-        call.respond(backend.auditStatus())
+        call.respond(anchoring?.status() ?: backend.auditStatus())
+    }
+
+    post(TrustGateRoutes.ADMIN_AUDIT_CHECKPOINT) {
+        if (!call.authorized()) return@post
+        if (anchoring == null) return@post call.respond(HttpStatusCode.NotFound, ErrorResponse("This server keeps no checkpoints."))
+        anchoring.checkpoint()
+        call.respond(anchoring.status())
     }
 }
 
