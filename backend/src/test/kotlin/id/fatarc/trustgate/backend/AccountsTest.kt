@@ -2,13 +2,10 @@ package id.fatarc.trustgate.backend
 
 import com.google.common.truth.Truth.assertThat
 import id.fatarc.trustgate.domain.actiongate.SensitiveActionDecision
-import id.fatarc.trustgate.domain.api.DecisionChallengeRequest
 import id.fatarc.trustgate.domain.api.PaymentAuthorization
 import id.fatarc.trustgate.domain.api.PaymentResponse
-import id.fatarc.trustgate.domain.api.PhoneDecision
 import id.fatarc.trustgate.domain.api.PhoneStatus
 import id.fatarc.trustgate.domain.api.RegistrationResult
-import id.fatarc.trustgate.domain.api.SignedAction
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.domain.signing.PaymentRequestPayload
@@ -20,8 +17,10 @@ import id.fatarc.trustgate.testing.MutableClock
 import id.fatarc.trustgate.testing.TEST_PAYMENT
 import id.fatarc.trustgate.testing.TestKey
 import id.fatarc.trustgate.testing.authorize
+import id.fatarc.trustgate.testing.decideAbout
 import id.fatarc.trustgate.testing.developmentPolicy
 import id.fatarc.trustgate.testing.selfSignedChain
+import id.fatarc.trustgate.testing.signedAction
 import java.time.Duration
 import org.junit.Test
 
@@ -46,30 +45,11 @@ class AccountsTest {
         check(registerKey(KeyRole.STEP_UP, stepUp.encodedPublicKey, selfSignedChain(stepUp), challenge, device.keyId, proof) is RegistrationResult.Registered)
     }
 
-    private fun ReferenceBackend.signed(key: TestKey, action: String, subject: String = ""): SignedAction {
-        val challenge = issueRegistrationChallenge(key.keyId)
-        val proof = key.sign(ReferenceSigningScheme.keyBindingInput(action, challenge, subject))
-        return SignedAction(key.keyId, ReferenceSigningScheme.encode(challenge), ReferenceSigningScheme.encode(proof), subject)
-    }
+    private fun ReferenceBackend.linkCode(key: TestKey): String? = createLinkCode(signedAction(key, ReferenceSigningScheme.ACTION_LINK_CODE))?.code
 
-    private fun ReferenceBackend.linkCode(key: TestKey): String? = createLinkCode(signed(key, ReferenceSigningScheme.ACTION_LINK_CODE))?.code
+    private fun ReferenceBackend.join(key: TestKey, code: String) = joinAccount(signedAction(key, ReferenceSigningScheme.ACTION_JOIN_ACCOUNT, code))
 
-    private fun ReferenceBackend.join(key: TestKey, code: String) = joinAccount(signed(key, ReferenceSigningScheme.ACTION_JOIN_ACCOUNT, code))
-
-    private fun ReferenceBackend.view(key: TestKey) = checkNotNull(accountView(signed(key, ReferenceSigningScheme.ACTION_VIEW_ACCOUNT)))
-
-    /** [decider] decides [action] about [phone]'s phone, signing with [signingKey], by tap when [tap]. */
-    private fun ReferenceBackend.decideAbout(
-        decider: TestKey,
-        phone: TestKey,
-        action: String,
-        signingKey: TestKey = decider,
-        tap: Boolean = true,
-    ): Boolean {
-        val challenge = decisionChallenge(DecisionChallengeRequest(decider.keyId, phone.keyId, action)) ?: return false
-        val signature = signingKey.sign(ReferenceSigningScheme.decisionInput(action, challenge.nonce, phone.keyId, tap))
-        return decide(PhoneDecision(signingKey.keyId, phone.keyId, action, challenge.nonce, ReferenceSigningScheme.encode(signature), tap)).done
-    }
+    private fun ReferenceBackend.view(key: TestKey) = checkNotNull(accountView(signedAction(key, ReferenceSigningScheme.ACTION_VIEW_ACCOUNT)))
 
     private fun ReferenceBackend.pay(key: TestKey): PaymentResponse {
         val payment = PaymentRequestPayload(125_000, "IDR", "REF-${++paymentsSent}")

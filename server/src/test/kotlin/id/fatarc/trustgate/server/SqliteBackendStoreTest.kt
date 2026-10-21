@@ -13,13 +13,16 @@ import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.domain.signing.ReferencePayment
 import id.fatarc.trustgate.domain.signing.ReferenceRequestSigner
+import id.fatarc.trustgate.domain.signing.ReferenceSigningScheme
 import id.fatarc.trustgate.domain.signing.RejectionReason
 import id.fatarc.trustgate.domain.signing.asReceived
 import id.fatarc.trustgate.testing.MutableClock
 import id.fatarc.trustgate.testing.TestKey
 import id.fatarc.trustgate.testing.authorize
+import id.fatarc.trustgate.testing.decideAbout
 import id.fatarc.trustgate.testing.developmentPolicy
 import id.fatarc.trustgate.testing.selfSignedChain
+import id.fatarc.trustgate.testing.signedAction
 import java.io.File
 import java.sql.DriverManager
 import org.junit.After
@@ -133,6 +136,28 @@ class SqliteBackendStoreTest {
         assertThat(intact.entries).isEqualTo(2)
         assertThat(edited.intact).isFalse()
         assertThat(edited.brokenAt).isEqualTo(1)
+    }
+
+    @Test
+    fun `a link code, a phone waiting to join, and the approval each survive a restart`() {
+        val second = TestKey()
+        val first = backend()
+        listOf(device, second).forEach { key ->
+            first.registerKey(KeyRole.DEVICE, key.encodedPublicKey, selfSignedChain(key), first.issueRegistrationChallenge())
+        }
+        val code = checkNotNull(first.createLinkCode(first.signedAction(device, ReferenceSigningScheme.ACTION_LINK_CODE))).code
+
+        val afterCode = backend()
+        val joined = afterCode.joinAccount(afterCode.signedAction(second, ReferenceSigningScheme.ACTION_JOIN_ACCOUNT, code))
+        val afterJoin = backend()
+        val approved = afterJoin.decideAbout(device, second, ReferenceSigningScheme.DECISION_APPROVE)
+        val afterApproval = backend()
+        val view = checkNotNull(afterApproval.accountView(afterApproval.signedAction(second, ReferenceSigningScheme.ACTION_VIEW_ACCOUNT)))
+
+        assertThat(joined.waitingForApproval).isTrue()
+        assertThat(approved).isTrue()
+        assertThat(view.phones.map { it.phoneId }).containsExactly(device.keyId, second.keyId)
+        assertThat(afterApproval.auditStatus().intact).isTrue()
     }
 
     @Test

@@ -3,17 +3,25 @@ package id.fatarc.trustgate.server
 import id.fatarc.trustgate.testing.TEST_PAYMENT
 import com.google.common.truth.Truth.assertThat
 import id.fatarc.trustgate.backend.ReferenceBackend
+import id.fatarc.trustgate.domain.api.AccountView
 import id.fatarc.trustgate.domain.api.AdminRevocationRequest
 import id.fatarc.trustgate.domain.api.AuditStatus
+import id.fatarc.trustgate.domain.api.DecisionChallenge
+import id.fatarc.trustgate.domain.api.DecisionChallengeRequest
+import id.fatarc.trustgate.domain.api.DecisionResult
 import id.fatarc.trustgate.domain.api.DeviceRemoval
+import id.fatarc.trustgate.domain.api.JoinResult
 import id.fatarc.trustgate.domain.api.KeyRegistrationRequest
+import id.fatarc.trustgate.domain.api.LinkCode
 import id.fatarc.trustgate.domain.api.PaymentAuthorization
 import id.fatarc.trustgate.domain.api.PaymentAuthorizationRequest
 import id.fatarc.trustgate.domain.api.PaymentResponse
+import id.fatarc.trustgate.domain.api.PhoneDecision
 import id.fatarc.trustgate.domain.api.RegistrationChallenge
 import id.fatarc.trustgate.domain.api.RegistrationChallengeRequest
 import id.fatarc.trustgate.domain.api.RegistrationResult
 import id.fatarc.trustgate.domain.api.ServerHealth
+import id.fatarc.trustgate.domain.api.SignedAction
 import id.fatarc.trustgate.domain.api.TrustGateJson
 import id.fatarc.trustgate.domain.api.TrustGateRoutes
 import id.fatarc.trustgate.domain.api.VerificationChallenge
@@ -22,6 +30,7 @@ import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.domain.signing.ReferencePayment
 import id.fatarc.trustgate.domain.signing.ReferenceRequestSigner
+import id.fatarc.trustgate.domain.signing.ReferenceSigningScheme
 import id.fatarc.trustgate.domain.signing.RejectionReason
 import id.fatarc.trustgate.domain.signing.SignedRequest
 import id.fatarc.trustgate.domain.signing.VerificationResult
@@ -76,18 +85,25 @@ class ServerRoutesTest {
         return TrustGateJson.decodeFromString(response.bodyAsText())
     }
 
-    private suspend fun HttpClient.registerDevice() {
+    private suspend fun HttpClient.registerDevice(key: TestKey = device) {
         val challenge = call<RegistrationChallengeRequest, RegistrationChallenge>(TrustGateRoutes.REGISTRATION_CHALLENGE, RegistrationChallengeRequest()).challenge
         val result = call<KeyRegistrationRequest, RegistrationResult>(
             TrustGateRoutes.KEYS,
             KeyRegistrationRequest(
                 role = KeyRole.DEVICE,
-                publicKey = base64(device.encodedPublicKey),
-                certificateChain = selfSignedChain(device).map(::base64),
+                publicKey = base64(key.encodedPublicKey),
+                certificateChain = selfSignedChain(key).map(::base64),
                 challenge = challenge,
             ),
         )
         assertThat(result).isInstanceOf(RegistrationResult.Registered::class.java)
+    }
+
+    /** [action] about [subject], signed by [key] over a challenge fetched over HTTP. */
+    private suspend fun HttpClient.signedAction(key: TestKey, action: String, subject: String = ""): SignedAction {
+        val challenge = call<RegistrationChallengeRequest, RegistrationChallenge>(TrustGateRoutes.REGISTRATION_CHALLENGE, RegistrationChallengeRequest(key.keyId)).challenge
+        val proof = key.sign(ReferenceSigningScheme.keyBindingInput(action, Base64.getDecoder().decode(challenge), subject))
+        return SignedAction(key.keyId, challenge, base64(proof), subject)
     }
 
     private suspend fun HttpClient.signedPayment(): SignedRequest {
@@ -114,6 +130,32 @@ class ServerRoutesTest {
         assertThat(repeat.replayed).isTrue()
         assertThat(repeat.payment.id).isEqualTo(first.payment.id)
         assertThat(backend.chargedPayments).isEqualTo(1)
+    }
+
+    @Test
+    fun `a second phone joins an account over HTTP once the first approves it`() = serve {
+        val second = TestKey()
+        client.registerDevice()
+        client.registerDevice(second)
+
+        val code = client.call<SignedAction, LinkCode>(TrustGateRoutes.LINK_CODE, client.signedAction(device, ReferenceSigningScheme.ACTION_LINK_CODE)).code
+        val joined = client.call<SignedAction, JoinResult>(TrustGateRoutes.JOIN_ACCOUNT, client.signedAction(second, ReferenceSigningScheme.ACTION_JOIN_ACCOUNT, code))
+        val challenge = client.call<DecisionChallengeRequest, DecisionChallenge>(
+            TrustGateRoutes.DECISION_CHALLENGE,
+            DecisionChallengeRequest(device.keyId, second.keyId, ReferenceSigningScheme.DECISION_APPROVE),
+        )
+        // No step-up key on this phone, so the server asks for a signed tap.
+        val signature = device.sign(ReferenceSigningScheme.decisionInput(ReferenceSigningScheme.DECISION_APPROVE, challenge.nonce, second.keyId, true))
+        val decided = client.call<PhoneDecision, DecisionResult>(
+            TrustGateRoutes.DECIDE,
+            PhoneDecision(device.keyId, second.keyId, ReferenceSigningScheme.DECISION_APPROVE, challenge.nonce, base64(signature), tapConfirmed = true),
+        )
+        val view = client.call<SignedAction, AccountView>(TrustGateRoutes.ACCOUNT, client.signedAction(second, ReferenceSigningScheme.ACTION_VIEW_ACCOUNT))
+
+        assertThat(joined.waitingForApproval).isTrue()
+        assertThat(challenge.signWith).isEqualTo(KeyRole.DEVICE)
+        assertThat(decided.done).isTrue()
+        assertThat(view.phones.map { it.phoneId }).containsExactly(device.keyId, second.keyId)
     }
 
     @Test

@@ -10,9 +10,9 @@ import id.fatarc.trustgate.core.integrity.PretendVerdict
 import id.fatarc.trustgate.core.keys.KeyRegistrar
 import id.fatarc.trustgate.core.security.ConfirmationMethod
 import id.fatarc.trustgate.core.security.TrustGateSecurityService
+import id.fatarc.trustgate.domain.api.PaymentAuthorization
 import id.fatarc.trustgate.domain.api.PhoneStatus
 import id.fatarc.trustgate.domain.api.Remedy
-import id.fatarc.trustgate.domain.api.SignedAction
 import id.fatarc.trustgate.domain.events.SecurityEventType
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.risk.RiskScorer
@@ -29,9 +29,12 @@ import id.fatarc.trustgate.testing.InMemorySecurityEventRepository
 import id.fatarc.trustgate.testing.MutableSignalCollector
 import id.fatarc.trustgate.testing.SoftwareKeyProvider
 import id.fatarc.trustgate.testing.TestKey
+import id.fatarc.trustgate.testing.authorize
+import id.fatarc.trustgate.testing.decideAbout
 import id.fatarc.trustgate.testing.developmentPolicy
 import id.fatarc.trustgate.testing.riskSignal
 import id.fatarc.trustgate.testing.selfSignedChain
+import id.fatarc.trustgate.testing.signedAction
 import java.security.KeyStoreException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -391,33 +394,171 @@ class TrustGateViewModelTest {
         assertThat(signed.payload.amountMinor).isEqualTo(ReferencePayment.AMOUNTS_MINOR[1])
     }
 
-    @Test
-    fun `a phone asking to join is approved from this phone, which confirms with its screen lock`() = runTest(dispatcher) {
-        val viewModel = start()
+    /** Another phone, set up on its own as if on a second device. */
+    private fun otherPhone(): TestKey = TestKey().also { other ->
+        backend.registerKey(KeyRole.DEVICE, other.encodedPublicKey, selfSignedChain(other), backend.issueRegistrationChallenge(), phoneLabel = "Other phone")
+    }
+
+    /** This phone makes a code, [other] asks to join with it, and this phone sees the request. */
+    private fun TestScope.letAskToJoin(viewModel: TrustGateViewModel, other: TestKey) {
         viewModel.createLinkCode()
         advanceUntilIdle()
         val code = requireNotNull(viewModel.uiState.value.account.linkCode).code
-        // Another phone, registered on its own, asks to join with the code.
-        val other = TestKey()
-        val registration = backend.issueRegistrationChallenge()
-        backend.registerKey(KeyRole.DEVICE, other.encodedPublicKey, selfSignedChain(other), registration, phoneLabel = "Other phone")
-        val challenge = backend.issueRegistrationChallenge(other.keyId)
-        val proof = other.sign(ReferenceSigningScheme.keyBindingInput(ReferenceSigningScheme.ACTION_JOIN_ACCOUNT, challenge, code))
-        backend.joinAccount(SignedAction(other.keyId, ReferenceSigningScheme.encode(challenge), ReferenceSigningScheme.encode(proof), code))
-
+        backend.joinAccount(backend.signedAction(other, ReferenceSigningScheme.ACTION_JOIN_ACCOUNT, code))
         viewModel.refreshAccount()
         advanceUntilIdle()
-        val waiting = viewModel.uiState.value.account.view?.phones?.single { !it.thisPhone }
+    }
+
+    /** Decides [action] about [other] from this phone, confirming with the screen lock. */
+    private fun TestScope.decide(viewModel: TrustGateViewModel, other: TestKey, action: String) {
+        viewModel.decideAboutPhone(other.keyId, action)
+        advanceUntilIdle()
+        viewModel.completeDecision(requireNotNull(viewModel.decisionSignatureForPrompt()))
+        advanceUntilIdle()
+    }
+
+    private fun TrustGateViewModel.statusOf(other: TestKey): PhoneStatus? =
+        uiState.value.account.view?.phones?.firstOrNull { it.phoneId == other.keyId }?.status
+
+    @Test
+    fun `a phone asking to join is approved from this phone, which confirms with its screen lock`() = runTest(dispatcher) {
+        val viewModel = start()
+        val other = otherPhone()
+        letAskToJoin(viewModel, other)
+        val waiting = viewModel.statusOf(other)
+
         viewModel.decideAboutPhone(other.keyId, ReferenceSigningScheme.DECISION_APPROVE)
         advanceUntilIdle()
         val asked = viewModel.uiState.value.account.deciding
         viewModel.completeDecision(requireNotNull(viewModel.decisionSignatureForPrompt()))
         advanceUntilIdle()
 
-        assertThat(waiting?.status).isEqualTo(PhoneStatus.WAITING_FOR_APPROVAL)
+        assertThat(waiting).isEqualTo(PhoneStatus.WAITING_FOR_APPROVAL)
         assertThat(asked?.method).isEqualTo(ConfirmationMethod.DEVICE_CREDENTIAL)
-        assertThat(viewModel.uiState.value.account.view?.phones?.single { !it.thisPhone }?.status).isEqualTo(PhoneStatus.ACTIVE)
+        assertThat(viewModel.statusOf(other)).isEqualTo(PhoneStatus.ACTIVE)
         assertThat(keys.stepUpSignaturesHandedOut).isEqualTo(1)
+    }
+
+    @Test
+    fun `without a screen lock, approving a phone is confirmed with a signed tap`() = runTest(dispatcher) {
+        keys.screenLockSet = false
+        val viewModel = start()
+        val other = otherPhone()
+        letAskToJoin(viewModel, other)
+
+        viewModel.decideAboutPhone(other.keyId, ReferenceSigningScheme.DECISION_APPROVE)
+        advanceUntilIdle()
+        val asked = viewModel.uiState.value.account.deciding
+        val prompt = viewModel.decisionSignatureForPrompt()
+        viewModel.confirmDecisionWithTap()
+        advanceUntilIdle()
+
+        assertThat(asked?.method).isEqualTo(ConfirmationMethod.TAP)
+        assertThat(prompt).isNull()
+        assertThat(viewModel.statusOf(other)).isEqualTo(PhoneStatus.ACTIVE)
+    }
+
+    @Test
+    fun `cancelling the prompt leaves the phone waiting, and declining keeps it off the account`() = runTest(dispatcher) {
+        val viewModel = start()
+        val other = otherPhone()
+        letAskToJoin(viewModel, other)
+
+        viewModel.decideAboutPhone(other.keyId, ReferenceSigningScheme.DECISION_APPROVE)
+        advanceUntilIdle()
+        viewModel.dismissDecision()
+        viewModel.refreshAccount()
+        advanceUntilIdle()
+        val afterCancelling = viewModel.statusOf(other)
+        decide(viewModel, other, ReferenceSigningScheme.DECISION_DECLINE)
+
+        assertThat(afterCancelling).isEqualTo(PhoneStatus.WAITING_FOR_APPROVAL)
+        assertThat(viewModel.statusOf(other)).isNull()
+        assertThat(backend.accountView(backend.signedAction(other, ReferenceSigningScheme.ACTION_VIEW_ACCOUNT))?.waitingToJoin).isFalse()
+    }
+
+    @Test
+    fun `a lost phone removed from the account can't pay from it any more`() = runTest(dispatcher) {
+        val viewModel = start()
+        val other = otherPhone()
+        letAskToJoin(viewModel, other)
+        decide(viewModel, other, ReferenceSigningScheme.DECISION_APPROVE)
+
+        decide(viewModel, other, ReferenceSigningScheme.DECISION_REMOVE)
+
+        val thisPhone = viewModel.uiState.value.keys.keys?.device?.keyId
+        assertThat(viewModel.uiState.value.account.view?.phones?.map { it.phoneId }).containsExactly(thisPhone)
+        assertThat((backend.authorize(other, DeviceRiskLevel.LOW) as PaymentAuthorization.Blocked).keyRejected).isTrue()
+        assertThat(events.events.value.count { it.type == SecurityEventType.ACCOUNT_CHANGED }).isAtLeast(3)
+    }
+
+    @Test
+    fun `this phone joins another account with the code from it, and pays from it once approved`() = runTest(dispatcher) {
+        val viewModel = start()
+        val other = otherPhone()
+        val code = requireNotNull(backend.createLinkCode(backend.signedAction(other, ReferenceSigningScheme.ACTION_LINK_CODE))).code
+        val thisPhone = requireNotNull(viewModel.uiState.value.keys.keys?.device?.keyId)
+
+        // Typed the way a person might: lower case, in two groups.
+        viewModel.joinAccount(code.lowercase().chunked(4).joinToString(" "))
+        advanceUntilIdle()
+        val waiting = viewModel.uiState.value.account.view?.waitingToJoin
+        backend.decideAbout(other, thisPhone, ReferenceSigningScheme.DECISION_APPROVE)
+        viewModel.refreshAccount()
+        advanceUntilIdle()
+        viewModel.attemptPayment()
+        advanceUntilIdle()
+
+        assertThat(waiting).isTrue()
+        assertThat(viewModel.uiState.value.account.view?.phones?.map { it.phoneId }).containsExactly(other.keyId, thisPhone)
+        assertThat(payment.submission).isInstanceOf(Submission.Charged::class.java)
+    }
+
+    @Test
+    fun `a code that doesn't work says so, and this phone stays where it was`() = runTest(dispatcher) {
+        val viewModel = start()
+
+        viewModel.joinAccount("ABCD2345")
+        advanceUntilIdle()
+
+        assertThat(viewModel.uiState.value.userMessage?.text).contains("isn't valid")
+        assertThat(viewModel.uiState.value.account.view?.waitingToJoin).isFalse()
+        assertThat(viewModel.uiState.value.account.view?.phones).hasSize(1)
+    }
+
+    @Test
+    fun `the first payment to someone this account hasn't paid asks for confirmation`() = runTest(dispatcher) {
+        val viewModel = start()
+        viewModel.attemptPayment()
+        advanceUntilIdle()
+
+        viewModel.setCheckout(ReferencePayment.PAYEES[2], ReferencePayment.AMOUNTS_MINOR[0])
+        viewModel.attemptPayment()
+        advanceUntilIdle()
+
+        assertThat(payment.latestDecision).isEqualTo(
+            PaymentDecisionState.ConfirmationRequired(DeviceRiskLevel.MEDIUM, ConfirmationMethod.DEVICE_CREDENTIAL),
+        )
+        assertThat(payment.reasons.filter { it.isProblem }.map { it.text }).containsExactly("First payment to this payee")
+    }
+
+    @Test
+    fun `a phone Play remembers as blocked is blocked again, and one set up again must confirm`() = runTest(dispatcher) {
+        val viewModel = start()
+
+        viewModel.setPretendVerdict(PretendVerdict.BLOCKED_BEFORE)
+        viewModel.attemptPayment()
+        advanceUntilIdle()
+        val blocked = payment
+        viewModel.setPretendVerdict(PretendVerdict.SET_UP_BEFORE)
+        viewModel.attemptPayment()
+        advanceUntilIdle()
+
+        assertThat(blocked.latestDecision).isInstanceOf(PaymentDecisionState.Blocked::class.java)
+        assertThat(blocked.reasons.map { it.text }).contains("This phone was blocked before")
+        assertThat(payment.latestDecision).isInstanceOf(PaymentDecisionState.ConfirmationRequired::class.java)
+        assertThat(payment.reasons.filter { it.isProblem }.map { it.text }).containsExactly("Set up again on this phone")
+        assertThat(backend.chargedPayments).isEqualTo(0)
     }
 
     @Test
