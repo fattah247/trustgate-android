@@ -80,12 +80,17 @@ Real screenshots from the emulator, the test run, the attack lab, and GitHub are
   <tr>
     <td><img src="docs/screenshots/07-what-was-sent.png" width="260" alt="The signed request field by field" /><br />What was signed and sent</td>
     <td><img src="docs/screenshots/08-phone-key.png" width="260" alt="The phone key's attestation and the button to replace it" /><br />The phone key, and replacing it</td>
-    <td><img src="docs/screenshots/11-activity.png" width="260" alt="Activity log" /><br />Activity</td>
+    <td><img src="docs/screenshots/11-activity.png" width="260" alt="Activity log, with the phone approved onto the account" /><br />Activity</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/14-checkout-payees.png" width="260" alt="Checkout: choosing who to pay" /><br />Choosing who to pay</td>
+    <td><img src="docs/screenshots/15-new-payee-confirm.png" width="260" alt="The server asks for an OK on the first payment to a payee" /><br />A first payment to someone new</td>
+    <td><img src="docs/screenshots/16-phone-asks-to-join.png" width="260" alt="A second phone waits for this phone's approval to join the account" /><br />A new phone waits for approval</td>
   </tr>
 </table>
 
 <p><img src="docs/screenshots/13-attack-lab.png" alt="Attack lab: 18 of 18 attacks stopped by the running server" /></p>
-<p><img src="docs/screenshots/12-tests-passing.png" width="720" alt="211 tests passing" /></p>
+<p><img src="docs/screenshots/12-tests-passing.png" width="720" alt="220 tests passing" /></p>
 
 | | |
 | --- | --- |
@@ -165,7 +170,7 @@ curl --cacert server/build/dev-tls/server.pem \
 ## Tests
 
 ```bash
-./gradlew test       # 211 tests across every module
+./gradlew test       # 220 tests across every module
 ./gradlew lint
 ./gradlew assembleRelease
 ```
@@ -174,7 +179,7 @@ curl --cacert server/build/dev-tls/server.pem \
 - **Decisions:** scoring from the catalog, every Play Integrity verdict and its fix, device recall, scam signals, habit checks, demo phones, mock verdicts.
 - **Payments:** bound to what was approved, so a changed payee or amount is refused.
 - **Limits:** authorizations collected in advance, the payment window, the daily amount, new phones, and phones sharing an account.
-- **Accounts:** joining with a code, approval by a phone on the account and by its screen-lock key, reused, guessed, and expired codes, and removing a lost phone.
+- **Accounts:** joining with a code, approval by a phone on the account and by its screen-lock key or a tap, reused, guessed, and expired codes, and removing a lost phone, in the backend, over HTTP, across SQLite restarts, and in the app.
 - **Key lifecycle:** step-up keys vouched for by the device key, rotation, removal, operator revocation, and limits surviving rotation.
 - **Audit log:** an intact chain, an edited entry caught from that entry on, and a log rewritten with every hash recomputed caught against signed checkpoints, with a real RFC 3161 authority run in the test.
 - **Parsers:** a Jazzer fuzz test for each, replaying its saved inputs on every run.
