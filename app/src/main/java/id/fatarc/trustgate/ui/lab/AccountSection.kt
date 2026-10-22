@@ -5,9 +5,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Login
 import androidx.compose.material.icons.outlined.AddLink
 import androidx.compose.material.icons.outlined.HourglassTop
-import androidx.compose.material.icons.outlined.Login
 import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.PhonelinkErase
 import androidx.compose.material3.AlertDialog
@@ -101,7 +101,7 @@ fun AccountSection(
         ListRow(
             headline = "Join another account",
             supporting = "Enter the code from your other phone",
-            leadingIcon = Icons.Outlined.Login,
+            leadingIcon = Icons.AutoMirrored.Outlined.Login,
             onClickLabel = "Enter a code",
             onClick = { joining = true },
         )
@@ -135,7 +135,7 @@ fun AccountSection(
         var code by rememberSaveable { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { joining = false },
-            icon = { Icon(Icons.Outlined.Login, contentDescription = null) },
+            icon = { Icon(Icons.AutoMirrored.Outlined.Login, contentDescription = null) },
             title = { Text("Join another account") },
             text = {
                 OutlinedTextField(
