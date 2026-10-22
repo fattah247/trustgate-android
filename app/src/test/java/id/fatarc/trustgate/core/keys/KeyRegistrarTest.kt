@@ -1,24 +1,27 @@
 package id.fatarc.trustgate.core.keys
 
 import com.google.common.truth.Truth.assertThat
-import id.fatarc.trustgate.core.backend.PaymentAuthorization
-import id.fatarc.trustgate.core.backend.ReferenceBackend
-import id.fatarc.trustgate.core.backend.RequiredConfirmation
+import id.fatarc.trustgate.backend.ReferenceBackend
+import id.fatarc.trustgate.core.backend.InProcessTrustGateApi
+import id.fatarc.trustgate.domain.api.PaymentAuthorization
+import id.fatarc.trustgate.domain.api.RequiredConfirmation
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.testing.SoftwareKeyProvider
+import id.fatarc.trustgate.testing.authorize
+import id.fatarc.trustgate.testing.developmentPolicy
+import java.security.KeyStoreException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
-import java.security.KeyStoreException
 
 class KeyRegistrarTest {
     private val keys = SoftwareKeyProvider()
-    private val backend = ReferenceBackend()
-    private val registrar = KeyRegistrar(keys, backend, Dispatchers.Unconfined)
+    private val backend = ReferenceBackend(developmentPolicy)
+    private val registrar = KeyRegistrar(keys, InProcessTrustGateApi(backend), Dispatchers.Unconfined)
 
     private fun mediumRiskConfirmation(deviceKeyId: String): RequiredConfirmation =
-        (backend.beginPayment(deviceKeyId, DeviceRiskLevel.MEDIUM) as PaymentAuthorization.Proceed).confirmation
+        (backend.authorize(deviceKeyId, keys::signWithDeviceKey, DeviceRiskLevel.MEDIUM) as PaymentAuthorization.Proceed).confirmation
 
     @Test
     fun `both keys are registered when a screen lock is set`() = runTest {
@@ -64,5 +67,27 @@ class KeyRegistrarTest {
         assertThat(failure).isInstanceOf(KeyStoreException::class.java)
         assertThat(recovered.keys).isEqualTo(first)
         assertThat(recovered.newlyRegistered).isEmpty()
+    }
+
+    @Test
+    fun `a registrar started again keeps the phone's registered keys instead of enrolling it anew`() = runTest {
+        val remembered = InMemoryRegisteredKeyStore()
+        val first = KeyRegistrar(keys, InProcessTrustGateApi(backend), Dispatchers.Unconfined, remembered).ensure()
+
+        val again = KeyRegistrar(keys, InProcessTrustGateApi(backend), Dispatchers.Unconfined, remembered).ensure()
+
+        assertThat(again.newlyRegistered).isEmpty()
+        assertThat(again.keys.device.keyId).isEqualTo(first.keys.device.keyId)
+    }
+
+    @Test
+    fun `rotating hands the phone to a new key and the server refuses the old one`() = runTest {
+        val before = registrar.ensure().keys.device.keyId
+
+        val after = registrar.rotate()
+
+        assertThat(after.keys.device.keyId).isNotEqualTo(before)
+        assertThat(after.keys.stepUp).isNotNull()
+        assertThat((backend.authorize(before, { ByteArray(0) }, DeviceRiskLevel.LOW) as PaymentAuthorization.Blocked).keyRejected).isTrue()
     }
 }

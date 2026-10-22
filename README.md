@@ -1,196 +1,198 @@
-# TrustGate Android
+# TrustGate
 
-I built TrustGate Android to show how a mobile client can treat device integrity as a risk signal before allowing sensitive actions, and how the pieces around that decision fit together: hardware-backed keys, step-up confirmation, signed requests, and payments that stay correct when the network misbehaves.
+I built TrustGate to show how a mobile payment can be protected end to end: an Android app that checks the phone it runs on and holds hardware-backed keys, and a server that decides whether each payment goes through, asks for confirmation, or is blocked.
 
-It is not a banking app and it is not bypass-proof security. It is a public-safe Android security lab. Everything runs on the device, including a reference backend that plays the server's part, so the whole flow can be explored without accounts or a network.
+The phone only gathers evidence. The server decides, from the phone's hardware attestation, Google Play Integrity, the phone's own report, and the account's payment history. Nothing secret ships in the app, so taking the app apart gets an attacker nothing the server will accept.
 
-<p align="center"><img src="docs/demo.gif" width="300" alt="A protected payment: the gate opens, the request is signed and verified, and a lost response is retried without charging twice" /></p>
+It isn't a banking app, and no client-side check is bypass-proof. [LIMITATIONS.md](docs/LIMITATIONS.md) says where the edges are.
 
-## What It Proves
+<p align="center"><img src="docs/demo.gif" width="300" alt="A payment on a safe demo phone goes through, then the signed request is shown field by field" /></p>
 
-- **Device-risk signals** from root, emulator, debugger, and installer-source checks
-- **Explainable scoring**: every verdict shows the rule that produced it and the points behind it
-- **A server-side decision**: the reference backend, not the UI, decides allow, step-up, or block, and says which key must sign
-- **Hardware-backed keys**: P-256 keys generated in Android Keystore (StrongBox when available) sign every request; the private keys never leave the device
-- **Key attestation**: the backend reads each key's attestation certificate chain, checks it certifies that key and a one-time challenge, and reports where the key lives, verified boot state, and bootloader lock
-- **Cryptographic step-up**: medium risk requires a signature from a key that only signs after biometrics or the screen lock, unlocked through `BiometricPrompt` with a `CryptoObject`. Faking the prompt's callback produces nothing the backend accepts
-- **Replay protection**: server-issued one-time challenges, a five-minute timestamp window, and constant-time signature checks
-- **Payment reliability**: idempotency keys, retries with exponential backoff and jitter, and a switch that loses responses on purpose to show a retried payment is charged once
-- **Hardened storage**: AES-256-GCM under a Keystore key, each value bound to its name, migrated from the deprecated `EncryptedSharedPreferences`, and kept out of backups and device transfers
-- **Hardened screens**: release builds block screenshots and screen recording on sensitive screens, and taps through overlays are ignored
-- **An audit log** that explains every decision, exportable as a JSON file
-- **R8** shrinking and obfuscation for release builds
-- **Tests**: unit tests for the scorer, signer, attestation parser, backend, payment client, storage sealing, and the ViewModel's flows and race conditions
+## What it does
 
-## How a Protected Payment Works
+**The server decides**
+- Registers each key from its **hardware attestation**: pinned Google roots, the revocation list, verified boot, a locked bootloader, and the app's own package and signing certificate.
+- Weighs **Play Integrity**, bound to the exact report the phone signed. That includes the optional verdicts: apps that can see or control the screen, Play Protect, licensing, and token farming.
+- Scores the phone's report from its **own catalog**, so a tampered app can't lower a severity.
+- **Binds each payment to what it approved**: the payee, amount, and currency it weighed are the only ones it will charge.
+- Notices payments **unlike the account's habits**, such as a first payment to a payee, an amount far above the usual, or an hour it never pays at, and asks for confirmation.
+- Puts phones on **accounts**. A new phone joins with a one-time code and gets in only when a phone already on the account approves it with its screen lock.
+- Remembers **blocked and returning phones** through Play Integrity's device recall, so wiping a phone doesn't wipe its record.
+- **Limits** how much and how fast one account can pay, and keeps new phones to small amounts. The limits are enforced when charging and hold across phones and key rotations.
+- Refuses **replayed, edited, late, and foreign** requests through one-time challenges, signatures over every field, and a five-minute window.
+- Charges **exactly once** per idempotency key, whatever the network does.
+- **Rotates and revokes** keys: a key vouches for its successor, a phone can remove itself, and operators can revoke one.
+- Keeps a **hash-chained audit log**, written with each change, checked at startup, and **checkpointed outside the database**: signed by a separate key and, optionally, timestamped by an outside authority.
+- Serves **HTTPS only**, pinned by the app, with per-client rate limits.
+
+**The phone helps**
+- Keeps a **P-256 device key** and a **step-up key** in Keystore. The step-up key only signs after biometrics or the screen lock, through `BiometricPrompt` with a `CryptoObject`.
+- Checks for **root, emulators, and debugging**, and for the signs of a **scam in progress**: an active call, an app reading the screen, the screen being recorded.
+- **Warns** when what the server found looks like someone talking the person into paying, and offers **Google Play's own fix** where there is one.
+- **Hides overlays** on payment screens, ignores taps through them, and blocks capture in release builds.
+- **Seals stored values** with AES-GCM under a Keystore key, and keeps them out of backups.
+
+**The repository is guarded too**
+- Gradle **verifies the checksum of every dependency**, and every CI action is **pinned to a commit**.
+- **CodeQL**, **mobsfscan**, dependency review, Dependabot, and OpenSSF **Scorecard** run in CI.
+- **Jazzer fuzzes** the hand-written parsers for attestation chains, the revocation list, and integrity tokens, nightly.
+- Release builds carry **signed build provenance**, checkable with `gh attestation verify`.
+- An **attack lab** throws 18 attacks at the running server, and the same attacks run in the tests.
+
+## How a payment works
 
 ```mermaid
 sequenceDiagram
     participant App
     participant Keystore
-    participant Backend as Reference backend
-    App->>App: Re-check device signals
-    App->>Backend: Risk evidence
-    Backend-->>App: Decision + one-time challenge + required key
-    alt Blocked
-        App->>App: Nothing is signed
-    else Step-up required
-        App->>Keystore: Unlock step-up key (biometrics or screen lock)
-        Keystore-->>App: Signature over challenge, body hash, idempotency key
-    else Allowed
-        Keystore-->>App: Signature from device key
+    participant Play as Google Play
+    participant Server
+    App->>App: Check the phone
+    App->>Keystore: Sign the report and the payment it's for (device key)
+    App->>Play: Integrity token for the report's hash
+    App->>Server: Signed report + token
+    Server->>Server: Check signature, freshness, verdict, habits, limits
+    Server-->>App: Allow / confirm / block, with reasons and a challenge bound to this payment
+    alt Confirm
+        App->>Keystore: Unlock the step-up key (biometrics or screen lock)
     end
-    App->>Backend: Signed payment
-    Backend->>Backend: Verify key, signature, time window, challenge
-    Backend-->>App: Payment (or the original one, if this is a retry)
+    Keystore-->>App: Signature over the payment and the challenge
+    App->>Server: Signed payment
+    Server->>Server: Verify, match the approved payment, enforce limits, charge once, log it
+    Server-->>App: Payment (or the original one, if this is a retry)
 ```
 
 ## Screenshots
 
-Real screenshots for the app, tests, CI, and repository are committed under [`docs/screenshots`](docs/screenshots). The full capture notes live in [docs/SCREENSHOT_GUIDE.md](docs/SCREENSHOT_GUIDE.md).
+Real screenshots from the emulator, the test run, the attack lab, and GitHub are in [`docs/screenshots`](docs/screenshots); [SCREENSHOT_GUIDE.md](docs/SCREENSHOT_GUIDE.md) says how each was taken.
 
 <table>
   <tr>
-    <td><img src="docs/screenshots/01-app-overview.png" width="320" alt="Trust overview" /><br />Trust overview</td>
-    <td><img src="docs/screenshots/02-device-risk-details.png" width="320" alt="Risk signals with the reason for the verdict" /><br />Risk signals and why they add up</td>
+    <td><img src="docs/screenshots/01-home.png" width="260" alt="Home: this phone's checks block payments, with the checkout card below" /><br />This phone, checked</td>
+    <td><img src="docs/screenshots/02-checks.png" width="260" alt="Checks: three found, the rest passed" /><br />What was found, what passed</td>
+    <td><img src="docs/screenshots/03-paid-after-lost-reply.png" width="260" alt="Paid once after the first reply was lost" /><br />Charged once after a lost reply</td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/03-sensitive-action-allowed.png" width="320" alt="Sensitive action allowed and its payment charged once after a lost response" /><br />Allowed, and charged once after a lost response</td>
-    <td><img src="docs/screenshots/04-sensitive-action-blocked.png" width="320" alt="Sensitive action blocked" /><br />Blocked, nothing signed</td>
+    <td><img src="docs/screenshots/04-confirm-payment.png" width="260" alt="The server asks for the person's OK and says why" /><br />The server asks for your OK</td>
+    <td><img src="docs/screenshots/05-blocked-scam-warning.png" width="260" alt="Blocked while a remote-control app runs, with a scam warning and the fix" /><br />Blocked during a likely scam</td>
+    <td><img src="docs/screenshots/06-lab-attacks-stopped.png" width="260" alt="Lab: replay, edit, late delivery, and rapid payments all stopped" /><br />Attacks from the app, stopped</td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/11-device-keys.png" width="320" alt="Device key and step-up key with their verified attestation" /><br />Device and step-up keys with their attestation</td>
-    <td><img src="docs/screenshots/05-request-signing-reference.png" width="320" alt="Backend accepting a signed request and rejecting replayed, edited, and late ones" /><br />Backend responses to genuine and tampered requests</td>
+    <td><img src="docs/screenshots/07-what-was-sent.png" width="260" alt="The signed request field by field" /><br />What was signed and sent</td>
+    <td><img src="docs/screenshots/08-phone-key.png" width="260" alt="The phone key's attestation and the button to replace it" /><br />The phone key, and replacing it</td>
+    <td><img src="docs/screenshots/11-activity.png" width="260" alt="Activity log, with the phone approved onto the account" /><br />Activity</td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/06-secure-storage-reference.png" width="320" alt="Secure storage reference values" /><br />Secure storage reference values</td>
-    <td><img src="docs/screenshots/07-security-event-log.png" width="320" alt="Activity log" /><br />Activity log</td>
-  </tr>
-  <tr>
-    <td><img src="docs/screenshots/08-tests-passing.png" width="320" alt="Tests passing" /><br />Fresh <code>./gradlew test</code> output</td>
-    <td><img src="docs/screenshots/09-ci-passing.png" width="320" alt="CI passing" /><br />GitHub Actions run summary on <code>main</code></td>
-  </tr>
-  <tr>
-    <td><img src="docs/screenshots/10-repo-overview.png" width="320" alt="Repository overview" /><br />GitHub branch overview</td>
-    <td></td>
+    <td><img src="docs/screenshots/14-checkout-payees.png" width="260" alt="Checkout: choosing who to pay" /><br />Choosing who to pay</td>
+    <td><img src="docs/screenshots/15-new-payee-confirm.png" width="260" alt="The server asks for an OK on the first payment to a payee" /><br />A first payment to someone new</td>
+    <td><img src="docs/screenshots/16-phone-asks-to-join.png" width="260" alt="A second phone waits for this phone's approval to join the account" /><br />A new phone waits for approval</td>
   </tr>
 </table>
 
-## Production Architecture
+<p><img src="docs/screenshots/13-attack-lab.png" alt="Attack lab: 18 of 18 attacks stopped by the running server" /></p>
+<p><img src="docs/screenshots/12-tests-passing.png" width="720" alt="220 tests passing" /></p>
 
-TrustGate runs its backend in-process so the flow is inspectable without infrastructure. This is where each part would live in a real deployment, and what this repo does in its place.
+| | |
+| --- | --- |
+| <img src="docs/screenshots/09-ci-passing.png" width="400" alt="CI passing" /><br />GitHub Actions on `main` | <img src="docs/screenshots/10-repo-overview.png" width="400" alt="Repository overview" /><br />The repository |
+
+## Architecture
 
 ```mermaid
 flowchart LR
-    subgraph Device
+    subgraph Phone
         A[App] --> K[Android Keystore<br/>device key, step-up key]
         A --> PI[Play Integrity API]
     end
-    subgraph Server
-        V[Verdict check] --> D[Risk decision]
-        R[Key registry<br/>attestation check] --> S[Signature + challenge check]
-        S --> P[Idempotent payment ledger]
+    subgraph Server["Server (Ktor, HTTPS)"]
+        R[Phones and keys<br/>attestation, accounts, rotation, revocation] --> D[Decision<br/>risk policy, habits, limits]
+        D --> P[Idempotent ledger]
+        R & D & P --> L[Hash-chained audit log]
     end
-    PI -- integrity token --> V
+    L -- signed checkpoints --> C[(Checkpoints<br/>outside the database)]
+    G[Google<br/>attestation roots, revocation list,<br/>Play Integrity, device recall] --> Server
     K -- attestation chain --> R
-    A -- signed request --> S
+    A -- signed report + token --> D
+    A -- signed payment --> P
 ```
 
-| Concern | In this repo | In production |
-| --- | --- | --- |
-| Device integrity | On-device heuristic checks | Play Integrity verdict, decrypted and checked on the server, bound to the action with a request hash |
-| Gate decision | `ReferenceBackend` in the app process | A server service; the app only sends evidence |
-| Request signing | Keystore P-256 keys, registered with their attestation | Same, with the registry persisted server-side |
-| Attestation trust | Chain must verify, certify the key, and carry the challenge | Also pin Google's attestation roots and check the revocation list |
-| Step-up | Keystore key bound to biometrics or the screen lock, unlocked through `BiometricPrompt` | Same, optionally plus server-driven step-up such as one-time codes |
-| Replay protection | One-time challenges and nonces held in memory | The same checks backed by a shared store with expiry |
-| Retries | Idempotency keys and an in-memory ledger | A durable ledger, with reconciliation for outcomes the client never learned |
-| Transport | No network | TLS with certificate pinning (`PinnedHttpClientFactory`, off by default here) and backup pins |
+| Module | What it holds |
+| --- | --- |
+| `domain` | The protocol both ends share: signing scheme, wire messages, signal catalog, scoring |
+| `backend` | The server's rules: attestation and risk policies, habit checks, limits, accounts, key lifecycle, the audit log and its checkpoints, with an in-memory store for tests |
+| `server` | The HTTPS server, SQLite store with migrations, Play Integrity decoding and device recall, revocation list, rate limits, admin routes, the checkpoint file and timestamps, and the attack lab |
+| `app` | The Android app: checks, Keystore keys, integrity tokens, the payment flow, and the UI |
 
-## Security Model
+## Run it
 
-The app treats client-side checks as risk signals. A rooted, emulated, or debug-exposed environment does not prove malicious behavior, but it does justify more caution before allowing a sensitive action.
-
-Every verdict carries the rule that produced it: a single high-severity signal, a score at or above a threshold, or nothing strong enough. The Signals tab shows that rule with a point-by-point breakdown.
-
-The backend makes the gate decision and binds it to a one-time challenge. For medium risk it requires the step-up key's signature. It only accepts a step-up key that the device key vouched for, and refuses one whose attestation shows it signs without authentication. A device with no screen lock has nothing to step up to, so it falls back to a tap confirmation that is signed into the request, and the audit log records which method was used.
-
-See [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) and [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) for the details.
-
-## Run Locally
-
-1. Install Android Studio with Android SDK Platform 35 and Build Tools 35.0.1.
-2. Create a local `local.properties` or export `ANDROID_HOME` / `ANDROID_SDK_ROOT`.
-3. Run:
+You need Android Studio with SDK Platform 35, an emulator, and JDK 17 or later.
 
 ```bash
-./gradlew test
-./gradlew assembleDebug
+./gradlew :server:run      # the server, on https://127.0.0.1:8443, development policy
+./gradlew installDebug     # the app, which reaches the server as 10.0.2.2
 ```
 
-To try the step-up key on an emulator, set a screen lock PIN in Settings, then return to the app; it registers the step-up key automatically.
+The first run generates the server's TLS key, certificate, operator token, and audit anchor key into `server/build/dev-tls`; the debug app trusts only that certificate. To try the step-up key on an emulator, set a screen lock PIN, then return to the app.
+
+```bash
+./gradlew :server:run -Ptrustgate.policy=strict   # production rules
+./gradlew :server:attackLab                       # attack the running server
+```
+
+The operator routes take the token from `server/build/dev-tls/admin-token`:
+
+```bash
+curl --cacert server/build/dev-tls/server.pem \
+  -H "Authorization: Bearer $(cat server/build/dev-tls/admin-token)" \
+  https://127.0.0.1:8443/admin/audit
+```
+
+`POST /admin/audit/checkpoint` checkpoints the log right away; `/admin/audit` reports whether the log still matches every checkpoint in `server/build/audit-checkpoints.jsonl`.
+
+### Configuration
+
+| Where | Setting | What it does |
+| --- | --- | --- |
+| App (Gradle property) | `trustgate.cloudProjectNumber` | Google Cloud project linked to Play Integrity; without it, debug builds make up their answers |
+| App | `trustgate.serverUrl`, `trustgate.serverPins` | Release server and its key pins |
+| Server (environment) | `TRUSTGATE_POLICY` | `strict` (default) or `development` |
+| Server | `TRUSTGATE_PACKAGE`, `TRUSTGATE_SIGNING_DIGESTS` | The app's package and signing certificate digests |
+| Server | `TRUSTGATE_PLAY_INTEGRITY_CREDENTIALS` | Service account that may decode the app's integrity tokens |
+| Server | `TRUSTGATE_MIN_PATCH_LEVEL`, `TRUSTGATE_MIN_APP_VERSION` | Oldest security patch (YYYYMM) and app version code accepted |
+| Server | `TRUSTGATE_REQUIRE_STRONG_INTEGRITY` | Whether phones without strong integrity must confirm (default `true`) |
+| Server | `TRUSTGATE_DEVICE_RECALL` | `on` to mark blocked and enrolled phones through device recall; needs the Play Integrity credentials and device recall turned on in Play Console |
+| Server | `TRUSTGATE_ADMIN_TOKEN_FILE` | Operator token; without one, the admin routes are off |
+| Server | `TRUSTGATE_ANCHOR_KEYSTORE`, `TRUSTGATE_ANCHOR_PASSWORD_FILE` | PKCS#12 key that signs audit checkpoints; without one, there are no checkpoints |
+| Server | `TRUSTGATE_CHECKPOINTS`, `TRUSTGATE_CHECKPOINT_MINUTES` | Where checkpoints are appended (default: next to the database) and how often (default: every 10 minutes) |
+| Server | `TRUSTGATE_TSA_URL`, `TRUSTGATE_TSA_CERT_SHA256` | An RFC 3161 timestamping authority for checkpoints, and the SHA-256 of each of its certificates to trust; off by default |
+| Server | `TRUSTGATE_TLS_KEYSTORE`, `TRUSTGATE_TLS_PASSWORD_FILE`, `TRUSTGATE_DATABASE`, `TRUSTGATE_HOST`, `TRUSTGATE_PORT` | TLS, storage, and where it listens |
 
 ## Tests
 
-Unit tests run on the JVM, using software keys where the app uses Keystore:
-
-- Risk scoring to `LOW`, `MEDIUM`, and `HIGH`, with the reason recorded for each path, and simulated profiles scored through the real scorer
-- Request preparation: every signed field changes the bytes to sign, and canonical bodies escape correctly
-- Attestation: KeyDescription parsing, security levels, root of trust, and whether a key requires authentication, checked against certificate chains the tests build and sign
-- Backend: registration and attestation policy, step-up keys vouched for by the device key, one-time challenges bound to their purpose, replay, edited and unusable bodies, foreign keys and challenges, expired challenges, time windows, step-up enforcement, tap confirmation, and idempotency keys scoped per device
-- Payment client: a lost response is retried and charged once, retries back off exponentially, and when every response is lost the outcome is reported as unknown
-- Key registration: both keys at launch, a step-up key the system deleted replaced, and a removed screen lock downgrading the device at the backend
-- Storage sealing: values round-trip, and moved, altered, or foreign-key values don't open
-- ViewModel: each protected-action path, the step-up key actually signing, a device turning high risk mid-confirmation, a profile switch mid-payment, and step-up key invalidation
-
 ```bash
-./gradlew test
+./gradlew test       # 220 tests across every module
 ./gradlew lint
 ./gradlew assembleRelease
 ```
 
-## Project Structure
-
-```text
-app/src/main/java/id/fatarc/trustgate/
-├── MainActivity.kt
-├── core/
-│   ├── attestation/   Key attestation parsing and checks
-│   ├── backend/       Reference backend, transport, payment client
-│   ├── crypto/        Certificate pinning example
-│   ├── keys/          Keystore keys and their registration
-│   ├── security/      Device signals and the audit trail
-│   └── storage/       Keystore-sealed values
-├── data/
-│   └── securityevent/
-├── domain/
-│   ├── actiongate/
-│   ├── events/
-│   ├── risk/
-│   └── signing/       Signing protocol and request model
-└── ui/
-    ├── about/
-    ├── events/
-    ├── gate/
-    ├── home/
-    ├── payment/
-    ├── risk/
-    ├── signing/
-    └── storage/
-```
-
-## Limitations
-
-- Client-side checks are not bypass-proof
-- The reference backend runs inside the app, so it shows what a server checks but isn't an independent authority
-- No Play Integrity verdict, payment processor, or fraud engine
-- Attestation isn't checked against Google's roots or revocation list
-- Certificate pinning is educational and off by default
-- No commercial obfuscation or anti-tamper tooling beyond R8
+- **Attestation:** parsing, Google roots, revocation, app identity, origin, boot state, patch level, minimum app version.
+- **Decisions:** scoring from the catalog, every Play Integrity verdict and its fix, device recall, scam signals, habit checks, demo phones, mock verdicts.
+- **Payments:** bound to what was approved, so a changed payee or amount is refused.
+- **Limits:** authorizations collected in advance, the payment window, the daily amount, new phones, and phones sharing an account.
+- **Accounts:** joining with a code, approval by a phone on the account and by its screen-lock key or a tap, reused, guessed, and expired codes, and removing a lost phone, in the backend, over HTTP, across SQLite restarts, and in the app.
+- **Key lifecycle:** step-up keys vouched for by the device key, rotation, removal, operator revocation, and limits surviving rotation.
+- **Audit log:** an intact chain, an edited entry caught from that entry on, and a log rewritten with every hash recomputed caught against signed checkpoints, with a real RFC 3161 authority run in the test.
+- **Parsers:** a Jazzer fuzz test for each, replaying its saved inputs on every run.
+- **Server:** every route over HTTP, rate limits, admin authentication, and SQLite migrations from older databases.
+- **The attack lab**, run against the routes.
+- **The app:** payment client retries, key registration and rotation, storage sealing, and the ViewModel's payment, confirmation, Lab, and recovery flows.
 
 ## Docs
 
-- [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)
-- [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md)
-- [docs/SCREENSHOT_GUIDE.md](docs/SCREENSHOT_GUIDE.md)
-- [docs/LIMITATIONS.md](docs/LIMITATIONS.md)
+- [SECURITY_MODEL.md](docs/SECURITY_MODEL.md): what each part enforces
+- [THREAT_MODEL.md](docs/THREAT_MODEL.md): who attacks, how, and what stops them
+- [ATTACK_LAB.md](docs/ATTACK_LAB.md): attacking it yourself
+- [MASVS.md](docs/MASVS.md): the OWASP MASVS controls, one by one
+- [SUPPLY_CHAIN.md](docs/SUPPLY_CHAIN.md): dependencies, CI, fuzzing, build provenance, and secrets
+- [LIMITATIONS.md](docs/LIMITATIONS.md): what it doesn't do
+- [SECURITY.md](SECURITY.md): reporting a vulnerability

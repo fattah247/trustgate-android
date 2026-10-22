@@ -23,7 +23,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -36,11 +35,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ContentCopy
-import androidx.compose.material.icons.outlined.GppBad
-import androidx.compose.material.icons.outlined.GppGood
-import androidx.compose.material.icons.outlined.GppMaybe
-import androidx.compose.material.icons.outlined.Science
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -54,7 +48,6 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -65,8 +58,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -75,7 +68,6 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
@@ -86,22 +78,15 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.constrainHeight
-import androidx.compose.ui.unit.constrainWidth
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.max
 import androidx.compose.ui.unit.sp
 import androidx.core.os.ConfigurationCompat
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.risk.DeviceRiskReport
-import id.fatarc.trustgate.domain.risk.RiskReason
-import id.fatarc.trustgate.domain.risk.RiskScorer
 import id.fatarc.trustgate.domain.risk.RiskSignal
-import id.fatarc.trustgate.domain.risk.SignalCategory
 import id.fatarc.trustgate.domain.risk.SignalSeverity
 import id.fatarc.trustgate.ui.theme.CodeFontFamily
 import id.fatarc.trustgate.ui.theme.TrustGateTheme
@@ -184,30 +169,10 @@ fun DeviceRiskLevel.label(): String = when (this) {
     DeviceRiskLevel.HIGH -> "High risk"
 }
 
-fun DeviceRiskLevel.verdict(): String = when (this) {
-    DeviceRiskLevel.LOW -> "Trusted"
-    DeviceRiskLevel.MEDIUM -> "Needs review"
-    DeviceRiskLevel.HIGH -> "Not trusted"
-}
-
 fun DeviceRiskLevel.tone(): Tone = when (this) {
     DeviceRiskLevel.LOW -> Tone.POSITIVE
     DeviceRiskLevel.MEDIUM -> Tone.CAUTION
     DeviceRiskLevel.HIGH -> Tone.CRITICAL
-}
-
-val DeviceRiskLevel.icon: ImageVector
-    get() = when (this) {
-        DeviceRiskLevel.LOW -> Icons.Outlined.GppGood
-        DeviceRiskLevel.MEDIUM -> Icons.Outlined.GppMaybe
-        DeviceRiskLevel.HIGH -> Icons.Outlined.GppBad
-    }
-
-/** What the gate does with a protected action at this level. */
-fun DeviceRiskLevel.policyLabel(): String = when (this) {
-    DeviceRiskLevel.LOW -> "Allow"
-    DeviceRiskLevel.MEDIUM -> "Ask to confirm"
-    DeviceRiskLevel.HIGH -> "Block"
 }
 
 fun SignalSeverity.label(): String = when (this) {
@@ -222,39 +187,14 @@ fun SignalSeverity.tone(): Tone = when (this) {
     SignalSeverity.HIGH -> Tone.CRITICAL
 }
 
-fun SignalCategory.label(): String = when (this) {
-    SignalCategory.ROOT -> "Root"
-    SignalCategory.EMULATOR -> "Emulator"
-    SignalCategory.DEBUGGER -> "Debugging"
-    SignalCategory.INSTALLER -> "Install source"
-}
-
-/** One plain sentence on why the scorer chose this report's level. */
-fun DeviceRiskReport.reasonSentence(): String = when (val why = reason) {
-    is RiskReason.SevereSignal -> {
-        val names = signals.filter { it.id in why.signalIds }.map { it.name }
-        when (names.size) {
-            0 -> "A high-severity signal was found, which is high risk on its own."
-            1 -> "${names.single()} is a high-severity signal, which is high risk on its own."
-            else -> "${names.dropLast(1).joinToString(", ")} and ${names.last()} are high-severity signals, each high risk on its own."
-        }
-    }
-
-    is RiskReason.ScoreThreshold ->
-        "Signals add up to ${why.score.points()}, reaching the ${level.name.lowercase()}-risk threshold of ${why.threshold}."
-
-    is RiskReason.BelowThresholds -> when (why.score) {
-        0 -> "No signals were found."
-        else -> "Weak signals add up to ${why.score.points()}, below the medium-risk threshold of ${RiskScorer.MEDIUM_SCORE_THRESHOLD}."
-    }
-}
-
-fun Int.points(): String = if (this == 1) "1 point" else "$this points"
-
 /** The reference payment as people read amounts, for example "IDR 1,250.00" or "Rp 1.250,00". */
-fun formatMinorAmount(amountMinor: Long, currencyCode: String, locale: Locale): String {
+fun formatMinorAmount(amountMinor: Long, currencyCode: String, locale: Locale, wholeUnits: Boolean = false): String {
     val currency = Currency.getInstance(currencyCode)
-    val format = NumberFormat.getCurrencyInstance(locale).apply { this.currency = currency }
+    val format = NumberFormat.getCurrencyInstance(locale).apply {
+        this.currency = currency
+        // For short labels such as amount choices, where the cents add nothing.
+        if (wholeUnits) maximumFractionDigits = 0
+    }
     return format.format(BigDecimal.valueOf(amountMinor, currency.defaultFractionDigits.coerceAtLeast(0)))
 }
 
@@ -525,81 +465,6 @@ fun ListRow(
     )
 }
 
-/** Label on the leading edge, short value on the trailing edge. */
-@Composable
-fun InfoRow(
-    label: String,
-    value: String,
-    modifier: Modifier = Modifier,
-    valueColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
-    trailing: (@Composable () -> Unit)? = null,
-) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .heightIn(min = 56.dp)
-            .padding(start = 16.dp, end = if (trailing != null) 4.dp else 16.dp)
-            .semantics(mergeDescendants = true) {},
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        LabelAndValue(
-            label = label,
-            value = value,
-            valueColor = valueColor,
-            modifier = Modifier
-                .weight(1f)
-                .padding(vertical = 12.dp),
-        )
-        trailing?.invoke()
-    }
-}
-
-/**
- * Puts both on one line when they fit. Otherwise the value keeps up to 60% of the row and the label
- * wraps, so a short value like "+2" never forces a long label onto two lines.
- */
-@Composable
-private fun LabelAndValue(
-    label: String,
-    value: String,
-    valueColor: Color,
-    modifier: Modifier = Modifier,
-) {
-    Layout(
-        modifier = modifier,
-        content = {
-            Text(text = label, style = MaterialTheme.typography.bodyLarge)
-            Text(
-                text = value,
-                style = MaterialTheme.typography.bodyLarge,
-                color = valueColor,
-                textAlign = TextAlign.End,
-            )
-        },
-    ) { measurables, constraints ->
-        val (labelText, valueText) = measurables
-        val gap = 16.dp.roundToPx()
-        val labelWanted = labelText.maxIntrinsicWidth(Constraints.Infinity)
-        val valueWanted = valueText.maxIntrinsicWidth(Constraints.Infinity)
-        // Under unbounded width (an intrinsic query or a horizontal scroller) both simply take their natural size.
-        val rowWidth = if (constraints.hasBoundedWidth) constraints.maxWidth else labelWanted + gap + valueWanted
-        val available = (rowWidth - gap).coerceAtLeast(0)
-        val valueWidth = if (labelWanted + valueWanted <= available) {
-            valueWanted
-        } else {
-            minOf(valueWanted, (available * 0.6f).toInt())
-        }
-        val labelPlaceable = labelText.measure(Constraints(maxWidth = (available - valueWidth).coerceAtLeast(0)))
-        val valuePlaceable = valueText.measure(Constraints(minWidth = valueWidth, maxWidth = valueWidth))
-        val width = constraints.constrainWidth(rowWidth)
-        val height = constraints.constrainHeight(maxOf(labelPlaceable.height, valuePlaceable.height))
-        layout(width, height) {
-            labelPlaceable.placeRelative(0, (height - labelPlaceable.height) / 2)
-            valuePlaceable.placeRelative(width - valueWidth, (height - valuePlaceable.height) / 2)
-        }
-    }
-}
-
 /** Label above a value that may be long, such as a hash or header. */
 @Composable
 fun ValueRow(
@@ -721,104 +586,6 @@ fun BulletItem(
             modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.bodyLarge,
         )
-    }
-}
-
-// endregion
-
-// region Notices
-
-/** Tinted card for an outcome or a problem the person should notice. */
-@Composable
-fun NoticeCard(
-    title: String,
-    body: String,
-    tone: Tone,
-    icon: ImageVector,
-    modifier: Modifier = Modifier,
-    caption: String? = null,
-    action: NoticeAction? = null,
-) {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.medium,
-        color = tone.containerColor(),
-        contentColor = tone.onContainerColor(),
-    ) {
-        Row(
-            modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = if (action != null) 4.dp else 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            Icon(imageVector = icon, contentDescription = null)
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Text(text = title, style = MaterialTheme.typography.titleSmall)
-                Text(text = body, style = MaterialTheme.typography.bodyMedium)
-                if (caption != null) {
-                    Text(text = caption, style = MaterialTheme.typography.bodySmall)
-                }
-                if (action != null) {
-                    TextButton(
-                        onClick = action.onClick,
-                        // Line the label up with the text above instead of the button's padding.
-                        modifier = Modifier.offset(x = (-12).dp),
-                        colors = ButtonDefaults.textButtonColors(contentColor = tone.onContainerColor()),
-                    ) {
-                        Text(action.label)
-                    }
-                }
-            }
-        }
-    }
-}
-
-data class NoticeAction(
-    val label: String,
-    val onClick: () -> Unit,
-)
-
-/** Shown wherever results come from a simulated profile instead of the real device. */
-@Composable
-fun SimulationBanner(
-    level: DeviceRiskLevel,
-    onResumeLiveChecks: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.tertiaryContainer,
-        contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
-    ) {
-        Row(
-            modifier = Modifier.padding(start = 16.dp, top = 8.dp, end = 8.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            Icon(imageVector = Icons.Outlined.Science, contentDescription = null)
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(vertical = 4.dp),
-            ) {
-                Text(
-                    text = "Simulating ${level.label().lowercase()}",
-                    style = MaterialTheme.typography.titleSmall,
-                )
-                Text(
-                    text = "Live device checks are paused.",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
-            TextButton(
-                onClick = onResumeLiveChecks,
-                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.tertiary),
-            ) {
-                Text("Resume")
-            }
-        }
     }
 }
 

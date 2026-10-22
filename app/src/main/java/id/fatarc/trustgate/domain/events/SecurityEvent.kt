@@ -1,10 +1,10 @@
 package id.fatarc.trustgate.domain.events
 
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.serialization.Serializable
 import java.time.Instant
 import java.util.UUID
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.serialization.Serializable
 
 /** Number of events kept on the device; older entries are dropped first. */
 const val SECURITY_EVENT_LIMIT = 150
@@ -25,6 +25,9 @@ enum class SecurityEventType {
     SECURE_VALUE_STORED,
     KEY_REGISTERED,
     PAYMENT_SUBMITTED,
+    KEY_ROTATED,
+    PHONE_REMOVED,
+    ACCOUNT_CHANGED,
 }
 
 @Serializable

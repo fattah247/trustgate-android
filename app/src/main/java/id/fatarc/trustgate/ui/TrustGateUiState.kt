@@ -1,13 +1,19 @@
 package id.fatarc.trustgate.ui
 
-import id.fatarc.trustgate.core.crypto.PinningConfig
+import id.fatarc.trustgate.core.integrity.PretendVerdict
 import id.fatarc.trustgate.core.keys.KeySet
 import id.fatarc.trustgate.core.security.ConfirmationMethod
 import id.fatarc.trustgate.core.storage.SecurityStorageSnapshot
+import id.fatarc.trustgate.domain.api.AccountView
+import id.fatarc.trustgate.domain.api.DecisionReason
+import id.fatarc.trustgate.domain.api.LinkCode
+import id.fatarc.trustgate.domain.api.Remedy
 import id.fatarc.trustgate.domain.events.SecurityEvent
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.risk.DeviceRiskReport
 import id.fatarc.trustgate.domain.signing.KeyRole
+import id.fatarc.trustgate.domain.signing.Payee
+import id.fatarc.trustgate.domain.signing.ReferencePayment
 import id.fatarc.trustgate.domain.signing.RejectionReason
 import id.fatarc.trustgate.domain.signing.SignedRequest
 import id.fatarc.trustgate.domain.signing.VerificationResult
@@ -17,13 +23,41 @@ data class TrustGateUiState(
     val risk: RiskUiState = RiskUiState(),
     val securityEvents: List<SecurityEvent> = emptyList(),
     val payment: PaymentUiState = PaymentUiState(),
-    val signing: SigningUiState = SigningUiState(),
+    /** The request signed last, by a payment or a Lab test, for anyone who wants to see what was sent. */
+    val lastRequest: SignedRequest? = null,
+    val lab: LabUiState = LabUiState(),
     val storage: StorageUiState = StorageUiState(),
     val keys: KeysUiState = KeysUiState(),
+    /** The payment the Pay button makes. */
+    val checkout: Checkout = Checkout(),
+    val account: AccountUiState = AccountUiState(),
     /** Drop the first response to each payment, as a timeout would, to show retries are safe. */
     val simulateLostResponse: Boolean = false,
-    val pinning: PinningConfig = PinningConfig(),
+    /** What the made-up integrity token claims; null when the build asks Google Play for real ones. */
+    val pretendVerdict: PretendVerdict? = null,
     val userMessage: UserMessage? = null,
+)
+
+data class AccountUiState(
+    val view: AccountView? = null,
+    val loading: Boolean = false,
+    val problem: String? = null,
+    /** A code this phone made for another one to join with. */
+    val linkCode: LinkCode? = null,
+    /** A decision about another phone waiting for this phone's confirmation. */
+    val deciding: DecisionUiState? = null,
+)
+
+data class DecisionUiState(
+    val action: String,
+    val phoneLabel: String,
+    val method: ConfirmationMethod,
+    val requestedAt: Instant,
+)
+
+data class Checkout(
+    val payee: Payee = ReferencePayment.STORE,
+    val amountMinor: Long = ReferencePayment.AMOUNT_MINOR,
 )
 
 data class KeysUiState(
@@ -45,17 +79,35 @@ enum class RiskReportSource {
     SCENARIO,
 }
 
+/** The steps a payment goes through, in order. */
+enum class PaymentStage {
+    CHECKING_DEVICE,
+    ASKING_SERVER,
+    CONFIRMING,
+    PAYING,
+    DONE,
+}
+
 data class PaymentUiState(
+    /** Null until a payment is started. */
+    val stage: PaymentStage? = null,
     val latestDecision: PaymentDecisionState = PaymentDecisionState.Idle,
     /** When [latestDecision] was reached, so repeating the same outcome is still visible. */
     val decidedAt: Instant? = null,
     /** What happened to the request once the gate let the action through. */
     val submission: Submission? = null,
+    /** Why the backend decided as it did. */
+    val reasons: List<DecisionReason> = emptyList(),
+    /** What the person can do about the worst problem the server found. */
+    val remedy: Remedy? = null,
+    /** Whether Google Play can walk the person through [remedy]. */
+    val canShowFix: Boolean = false,
+    /** The server saw signs of someone talking the person into paying. */
+    val scamWarning: Boolean = false,
+    /** Why the payment stopped at [stage] before an outcome, such as the server being unreachable. */
+    val problem: String? = null,
 ) {
-    /** The gate let the action through and the payment hasn't come back yet. */
-    val isSending: Boolean
-        get() = submission == null &&
-            (latestDecision is PaymentDecisionState.Allowed || latestDecision is PaymentDecisionState.Confirmed)
+    val isRunning: Boolean get() = stage != null && stage != PaymentStage.DONE && problem == null
 }
 
 /** What happened to the payment a permitted action sent. */
@@ -85,7 +137,7 @@ sealed interface PaymentDecisionState {
         val method: ConfirmationMethod,
     ) : PaymentDecisionState
 
-    data class Confirmed(val riskLevel: DeviceRiskLevel) : PaymentDecisionState
+    data class Confirmed(val riskLevel: DeviceRiskLevel, val method: ConfirmationMethod) : PaymentDecisionState
 
     data class Blocked(val riskLevel: DeviceRiskLevel) : PaymentDecisionState
 
@@ -93,36 +145,25 @@ sealed interface PaymentDecisionState {
     data class Cancelled(val riskLevel: DeviceRiskLevel, val problem: String? = null) : PaymentDecisionState
 }
 
-data class SigningUiState(
-    val signedRequest: SignedRequest? = null,
-    val status: SigningStatus = SigningStatus.Idle,
-    /** Attempts to get [signedRequest] past the verifier, newest first. */
-    val verifications: List<VerificationRecord> = emptyList(),
-)
-
-/** Ways to send the latest request, from honest to deliberately broken. */
-enum class VerificationAttempt(val metadataValue: String) {
-    AS_SIGNED("as-signed"),
+/** Attacks the Lab runs against the real server. */
+enum class LabTest(val metadataValue: String) {
+    REPLAY("replay"),
     CHANGED_AMOUNT("changed-amount"),
-    DELIVERED_LATE("delivered-late"),
+    SENT_LATE("delivered-late"),
+    RAPID_PAYMENTS("rapid-payments"),
 }
 
-data class VerificationRecord(
-    val attempt: VerificationAttempt,
-    val result: VerificationResult,
-    val at: Instant,
-    val sentByProtectedAction: Boolean = false,
-    /** Responses lost before this one arrived; the backend charged once regardless. */
-    val lostResponses: Int = 0,
+/** How a Lab attack ended: [stopped] when the server refused it. [sends] holds each answer to a request attack. */
+data class LabResult(
+    val stopped: Boolean,
+    val summary: String,
+    val sends: List<VerificationResult> = emptyList(),
 )
 
-sealed interface SigningStatus {
-    data object Idle : SigningStatus
-
-    data class Signed(val merchantReference: String) : SigningStatus
-
-    data class Failed(val message: String) : SigningStatus
-}
+data class LabUiState(
+    val running: LabTest? = null,
+    val results: Map<LabTest, LabResult> = emptyMap(),
+)
 
 data class StorageUiState(
     val snapshot: SecurityStorageSnapshot = SecurityStorageSnapshot(),

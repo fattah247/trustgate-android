@@ -51,7 +51,6 @@ class KeystoreSecureValueStore(
         return SecurityStorageSnapshot(
             sessionToken = read(SecureValueNames.SESSION_TOKEN),
             lastRiskLevel = read(SecureValueNames.LAST_RISK_LEVEL)?.let { name -> DeviceRiskLevel.entries.firstOrNull { it.name == name } },
-            showSignalsOnHome = read(SecureValueNames.SHOW_SIGNALS_ON_HOME)?.toBooleanStrictOrNull() ?: true,
             unreadableValuesCleared = cleared,
         )
     }
@@ -61,9 +60,6 @@ class KeystoreSecureValueStore(
 
     @Synchronized
     override fun storeLastRiskLevel(level: DeviceRiskLevel) = put(SecureValueNames.LAST_RISK_LEVEL, level.name)
-
-    @Synchronized
-    override fun storeShowSignalsOnHome(enabled: Boolean) = put(SecureValueNames.SHOW_SIGNALS_ON_HOME, enabled.toString())
 
     private fun put(name: String, value: String) {
         // commit, not apply: the caller reads back right away and must see the write or its failure.
@@ -101,9 +97,6 @@ class KeystoreSecureValueStore(
             buildMap {
                 legacy.getString(SecureValueNames.SESSION_TOKEN, null)?.let { put(SecureValueNames.SESSION_TOKEN, it) }
                 legacy.getString(SecureValueNames.LAST_RISK_LEVEL, null)?.let { put(SecureValueNames.LAST_RISK_LEVEL, it) }
-                if (legacy.contains(SecureValueNames.SHOW_SIGNALS_ON_HOME)) {
-                    put(SecureValueNames.SHOW_SIGNALS_ON_HOME, legacy.getBoolean(SecureValueNames.SHOW_SIGNALS_ON_HOME, true).toString())
-                }
             }
         }.getOrElse {
             // A file the old library can't read now never will be.

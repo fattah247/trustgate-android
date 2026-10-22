@@ -10,57 +10,33 @@ fun scenarioRiskReport(
 ): DeviceRiskReport {
     val signals = when (level) {
         DeviceRiskLevel.LOW -> listOf(
-            scenarioSignal(
-                id = "installer_source_unknown",
-                name = "Installer source unknown",
-                category = SignalCategory.INSTALLER,
-                severity = SignalSeverity.LOW,
+            SignalCatalog.INSTALLER_SOURCE_UNKNOWN.observed(
                 detected = false,
                 explanation = "This scenario profile keeps the gate open to show the allowed path.",
             ),
-            scenarioSignal(
-                id = "debugger_connected",
-                name = "Debugger attached",
-                category = SignalCategory.DEBUGGER,
-                severity = SignalSeverity.HIGH,
+            SignalCatalog.DEBUGGER_CONNECTED.observed(
                 detected = false,
                 explanation = "No debugger signal is active in the low-risk scenario profile.",
             ),
         )
 
         DeviceRiskLevel.MEDIUM -> listOf(
-            scenarioSignal(
-                id = "test_keys",
-                name = "Test-keys build tags",
-                category = SignalCategory.ROOT,
-                severity = SignalSeverity.MEDIUM,
+            SignalCatalog.TEST_KEYS.observed(
                 detected = true,
                 explanation = "This scenario profile shows a moderate trust decision without a hard block.",
             ),
-            scenarioSignal(
-                id = "installer_source_unknown",
-                name = "Installer source unknown",
-                category = SignalCategory.INSTALLER,
-                severity = SignalSeverity.LOW,
+            SignalCatalog.INSTALLER_SOURCE_UNKNOWN.observed(
                 detected = true,
                 explanation = "Unknown installer source is a signal to review, not a guaranteed block.",
             ),
         )
 
         DeviceRiskLevel.HIGH -> listOf(
-            scenarioSignal(
-                id = "root_package",
-                name = "Root management package",
-                category = SignalCategory.ROOT,
-                severity = SignalSeverity.HIGH,
+            SignalCatalog.ROOT_PACKAGE.observed(
                 detected = true,
                 explanation = "This scenario profile shows how the app blocks a sensitive action on high risk.",
             ),
-            scenarioSignal(
-                id = "debugger_connected",
-                name = "Debugger attached",
-                category = SignalCategory.DEBUGGER,
-                severity = SignalSeverity.HIGH,
+            SignalCatalog.DEBUGGER_CONNECTED.observed(
                 detected = true,
                 explanation = "A connected debugger is treated as a strong signal in the blocked path scenario.",
             ),
@@ -70,20 +46,3 @@ fun scenarioRiskReport(
         check(report.level == level) { "Scenario signals for $level scored ${report.level}." }
     }
 }
-
-/** Uses the live collector's ids and categories, so a simulated signal reads like the real one. */
-private fun scenarioSignal(
-    id: String,
-    name: String,
-    category: SignalCategory,
-    severity: SignalSeverity,
-    detected: Boolean,
-    explanation: String,
-): RiskSignal = RiskSignal(
-    id = id,
-    name = name,
-    category = category,
-    severity = severity,
-    detected = detected,
-    explanation = explanation,
-)

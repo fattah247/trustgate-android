@@ -1,5 +1,6 @@
 package id.fatarc.trustgate.core.backend
 
+import id.fatarc.trustgate.domain.api.PaymentResponse
 import id.fatarc.trustgate.domain.signing.ReceivedRequest
 import id.fatarc.trustgate.domain.signing.ReferenceSigningScheme
 import kotlinx.coroutines.delay
@@ -14,11 +15,11 @@ fun interface PaymentTransport {
 }
 
 /**
- * Carries requests to the [ReferenceBackend]. With [loseFirstResponse] on, the first response for
- * each idempotency key is dropped after the backend has processed it, the way a timeout would.
+ * Carries payments to the backend. With [loseFirstResponse] on, the first response for each
+ * idempotency key is dropped after the backend has processed it, the way a timeout would.
  */
-class ReferenceTransport(
-    private val backend: ReferenceBackend,
+class BackendTransport(
+    private val api: TrustGateApi,
 ) : PaymentTransport {
     @Volatile
     var loseFirstResponse: Boolean = false
@@ -26,7 +27,7 @@ class ReferenceTransport(
     private val lostFor = HashSet<String>()
 
     override suspend fun submit(request: ReceivedRequest): PaymentResponse {
-        val response = backend.submitPayment(request)
+        val response = api.submitPayment(request)
         val key = request.header(ReferenceSigningScheme.HEADER_IDEMPOTENCY_KEY)
         if (loseFirstResponse && key != null && synchronized(lostFor) { lostFor.add(key) }) {
             throw ResponseLostException()

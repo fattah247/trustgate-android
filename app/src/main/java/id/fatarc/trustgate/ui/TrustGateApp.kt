@@ -19,14 +19,14 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.GppGood
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Radar
-import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Science
+import androidx.compose.material.icons.outlined.GppGood
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.Radar
-import androidx.compose.material.icons.outlined.Shield
+import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -57,27 +57,32 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.navigation
 import androidx.navigation.compose.rememberNavController
+import id.fatarc.trustgate.core.integrity.PretendVerdict
+import id.fatarc.trustgate.domain.api.Remedy
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
+import id.fatarc.trustgate.domain.signing.Payee
+import id.fatarc.trustgate.domain.signing.ReferenceSigningScheme
 import id.fatarc.trustgate.ui.about.AboutScreen
 import id.fatarc.trustgate.ui.events.SecurityEventLogScreen
-import id.fatarc.trustgate.ui.gate.GateHubScreen
 import id.fatarc.trustgate.ui.home.HomeScreen
-import id.fatarc.trustgate.ui.payment.PaymentActionScreen
+import id.fatarc.trustgate.ui.lab.AccountActions
+import id.fatarc.trustgate.ui.lab.LabScreen
+import id.fatarc.trustgate.ui.lab.RequestDetailsScreen
+import id.fatarc.trustgate.ui.payment.PayScreen
 import id.fatarc.trustgate.ui.payment.StepUpConfirmation
-import id.fatarc.trustgate.ui.risk.DeviceRiskDetailsScreen
-import id.fatarc.trustgate.ui.signing.RequestSigningScreen
-import id.fatarc.trustgate.ui.storage.SecureStorageScreen
+import id.fatarc.trustgate.ui.risk.ChecksScreen
 import java.security.Signature
 
 private object Routes {
-    const val OVERVIEW = "overview"
-    const val ABOUT = "overview/about"
-    const val SIGNALS = "signals"
-    const val GATE = "gate"
-    const val SENSITIVE_ACTION = "gate/sensitive-action"
-    const val SIGNING = "gate/signing"
-    const val STORAGE = "gate/storage"
-    const val GATE_SIGNALS = "gate/signals"
+    const val HOME = "home"
+    const val PAY = "home/pay"
+    const val PAY_CHECKS = "home/pay/checks"
+    const val PAY_REQUEST = "home/pay/request"
+    const val ABOUT = "home/about"
+    const val CHECKS = "checks"
+    const val LAB = "lab"
+    const val LAB_REQUEST = "lab/request"
+    const val LAB_ABOUT = "lab/about"
     const val ACTIVITY = "activity"
 }
 
@@ -89,9 +94,9 @@ private enum class Tab(
     val selectedIcon: ImageVector,
     val unselectedIcon: ImageVector,
 ) {
-    Overview("overview-tab", Routes.OVERVIEW, "Overview", Icons.Filled.Home, Icons.Outlined.Home),
-    Signals("signals-tab", Routes.SIGNALS, "Signals", Icons.Filled.Radar, Icons.Outlined.Radar),
-    Gate("gate-tab", Routes.GATE, "Gate", Icons.Filled.Shield, Icons.Outlined.Shield),
+    Home("home-tab", Routes.HOME, "Home", Icons.Filled.Home, Icons.Outlined.Home),
+    Checks("checks-tab", Routes.CHECKS, "Checks", Icons.Filled.GppGood, Icons.Outlined.GppGood),
+    Lab("lab-tab", Routes.LAB, "Lab", Icons.Filled.Science, Icons.Outlined.Science),
     Activity("activity-tab", Routes.ACTIVITY, "Activity", Icons.Filled.History, Icons.Outlined.History),
 }
 
@@ -105,20 +110,27 @@ fun TrustGateApp(
     onConfirmWithTap: () -> Unit,
     onDismissConfirmation: (problem: String?) -> Unit,
     onSetSimulateLostResponse: (Boolean) -> Unit,
-    onSignReferenceRequest: () -> Unit,
+    onRunLabTest: (LabTest) -> Unit,
+    onSetPretendVerdict: (PretendVerdict) -> Unit,
+    onFixWithPlay: (Remedy) -> Unit,
+    onRotateKey: () -> Unit,
+    onRemovePhone: () -> Unit,
+    accountActions: AccountActions,
+    onDecisionSignature: () -> Signature?,
+    onDecisionAuthenticated: (Signature) -> Unit,
+    onConfirmDecisionWithTap: () -> Unit,
+    onDismissDecision: (problem: String?) -> Unit,
     onStoreReferenceValues: () -> Unit,
-    onRefreshStorage: () -> Unit,
-    onToggleShowSignalsOnHome: (Boolean) -> Unit,
     onSetScenarioRiskLevel: (DeviceRiskLevel?) -> Unit,
+    onSetCheckout: (Payee, Long) -> Unit,
     onClearEvents: () -> Unit,
-    onVerifyRequest: (VerificationAttempt) -> Unit,
     onExportEvents: () -> String,
     onAppResumed: () -> Unit,
     onUserMessageShown: (Long) -> Unit,
 ) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
-    val selectedTab = backStackEntry?.tab() ?: Tab.Overview
+    val selectedTab = backStackEntry?.tab() ?: Tab.Home
     val snackbarHostState = remember { SnackbarHostState() }
 
     uiState.userMessage?.let { message ->
@@ -142,7 +154,7 @@ fun TrustGateApp(
             navController.navigateToTab(tab)
         }
     }
-    val resumeLiveChecks: () -> Unit = { onSetScenarioRiskLevel(null) }
+    val useThisPhone: () -> Unit = { onSetScenarioRiskLevel(null) }
 
     CompositionLocalProvider(LocalSnackbarHostState provides snackbarHostState) {
         Surface(
@@ -199,7 +211,7 @@ fun TrustGateApp(
                     ) { innerPadding ->
                         NavHost(
                             navController = navController,
-                            startDestination = Tab.Overview.graphRoute,
+                            startDestination = Tab.Home.graphRoute,
                             modifier = Modifier
                                 .padding(innerPadding)
                                 .consumeWindowInsets(innerPadding),
@@ -208,79 +220,73 @@ fun TrustGateApp(
                             popEnterTransition = { if (isTabSwitch()) FadeThroughIn else pushEnter(SlideDirection.End) },
                             popExitTransition = { if (isTabSwitch()) FadeThroughOut else pushExit(SlideDirection.End) },
                         ) {
-                            navigation(startDestination = Routes.OVERVIEW, route = Tab.Overview.graphRoute) {
-                                composable(Routes.OVERVIEW) {
+                            val navigateUp = { navController.navigateUp(); Unit }
+                            navigation(startDestination = Routes.HOME, route = Tab.Home.graphRoute) {
+                                composable(Routes.HOME) {
                                     HomeScreen(
                                         uiState = uiState,
                                         onRefreshRisk = onRefreshRisk,
-                                        onResumeLiveChecks = resumeLiveChecks,
-                                        onOpenSignals = dropUnlessResumed { navController.navigateToTab(Tab.Signals) },
+                                        onPay = dropUnlessResumed {
+                                            onAttemptPayment()
+                                            navController.navigate(Routes.PAY)
+                                        },
+                                        onSelectDemoPhone = onSetScenarioRiskLevel,
+                                        onSetCheckout = onSetCheckout,
                                         onOpenActivity = dropUnlessResumed { navController.navigateToTab(Tab.Activity) },
                                         onOpenAbout = dropUnlessResumed { navController.navigate(Routes.ABOUT) },
                                     )
                                 }
+                                composable(Routes.PAY) {
+                                    PayScreen(
+                                        uiState = uiState,
+                                        onNavigateUp = dropUnlessResumed(block = navigateUp),
+                                        onPay = onAttemptPayment,
+                                        // Pushed within Home so back returns to the payment.
+                                        onOpenChecks = dropUnlessResumed { navController.navigate(Routes.PAY_CHECKS) },
+                                        onOpenRequest = dropUnlessResumed { navController.navigate(Routes.PAY_REQUEST) },
+                                        onFix = onFixWithPlay,
+                                    )
+                                }
+                                composable(Routes.PAY_CHECKS) {
+                                    ChecksScreen(
+                                        uiState = uiState,
+                                        onRefreshRisk = onRefreshRisk,
+                                        onUseThisPhone = useThisPhone,
+                                        onNavigateUp = dropUnlessResumed(block = navigateUp),
+                                    )
+                                }
+                                composable(Routes.PAY_REQUEST) {
+                                    RequestDetailsScreen(request = uiState.lastRequest, onNavigateUp = dropUnlessResumed(block = navigateUp))
+                                }
                                 composable(Routes.ABOUT) {
-                                    AboutScreen(
-                                        uiState = uiState,
-                                        onNavigateUp = dropUnlessResumed { navController.navigateUp() },
-                                    )
+                                    AboutScreen(onNavigateUp = dropUnlessResumed(block = navigateUp))
                                 }
                             }
-                            navigation(startDestination = Routes.SIGNALS, route = Tab.Signals.graphRoute) {
-                                composable(Routes.SIGNALS) {
-                                    DeviceRiskDetailsScreen(
-                                        uiState = uiState,
-                                        onRefreshRisk = onRefreshRisk,
-                                        onResumeLiveChecks = resumeLiveChecks,
-                                    )
+                            navigation(startDestination = Routes.CHECKS, route = Tab.Checks.graphRoute) {
+                                composable(Routes.CHECKS) {
+                                    ChecksScreen(uiState = uiState, onRefreshRisk = onRefreshRisk, onUseThisPhone = useThisPhone)
                                 }
                             }
-                            navigation(startDestination = Routes.GATE, route = Tab.Gate.graphRoute) {
-                                composable(Routes.GATE) {
-                                    GateHubScreen(
+                            navigation(startDestination = Routes.LAB, route = Tab.Lab.graphRoute) {
+                                composable(Routes.LAB) {
+                                    LabScreen(
                                         uiState = uiState,
-                                        onResumeLiveChecks = resumeLiveChecks,
-                                        onOpenPaymentAction = dropUnlessResumed { navController.navigate(Routes.SENSITIVE_ACTION) },
-                                        onOpenSigning = dropUnlessResumed { navController.navigate(Routes.SIGNING) },
-                                        onOpenStorage = dropUnlessResumed { navController.navigate(Routes.STORAGE) },
-                                    )
-                                }
-                                composable(Routes.SENSITIVE_ACTION) {
-                                    PaymentActionScreen(
-                                        uiState = uiState,
-                                        onNavigateUp = dropUnlessResumed { navController.navigateUp() },
-                                        onAttemptPayment = onAttemptPayment,
-                                        onSetScenarioRiskLevel = onSetScenarioRiskLevel,
+                                        onRunTest = onRunLabTest,
                                         onSetSimulateLostResponse = onSetSimulateLostResponse,
-                                        // Pushed within Gate so back returns to the action, not Overview.
-                                        onOpenSignals = dropUnlessResumed { navController.navigate(Routes.GATE_SIGNALS) },
-                                        onInspectRequest = dropUnlessResumed { navController.navigate(Routes.SIGNING) },
+                                        onSetPretendVerdict = onSetPretendVerdict,
+                                        onRotateKey = onRotateKey,
+                                        onRemovePhone = onRemovePhone,
+                                        account = accountActions,
+                                        onStoreTestValues = onStoreReferenceValues,
+                                        onOpenRequest = dropUnlessResumed { navController.navigate(Routes.LAB_REQUEST) },
+                                        onOpenAbout = dropUnlessResumed { navController.navigate(Routes.LAB_ABOUT) },
                                     )
                                 }
-                                composable(Routes.GATE_SIGNALS) {
-                                    DeviceRiskDetailsScreen(
-                                        uiState = uiState,
-                                        onRefreshRisk = onRefreshRisk,
-                                        onResumeLiveChecks = resumeLiveChecks,
-                                        onNavigateUp = dropUnlessResumed { navController.navigateUp() },
-                                    )
+                                composable(Routes.LAB_REQUEST) {
+                                    RequestDetailsScreen(request = uiState.lastRequest, onNavigateUp = dropUnlessResumed(block = navigateUp))
                                 }
-                                composable(Routes.SIGNING) {
-                                    RequestSigningScreen(
-                                        uiState = uiState,
-                                        onNavigateUp = dropUnlessResumed { navController.navigateUp() },
-                                        onSignReferenceRequest = onSignReferenceRequest,
-                                        onVerifyRequest = onVerifyRequest,
-                                    )
-                                }
-                                composable(Routes.STORAGE) {
-                                    SecureStorageScreen(
-                                        uiState = uiState,
-                                        onNavigateUp = dropUnlessResumed { navController.navigateUp() },
-                                        onStoreReferenceValues = onStoreReferenceValues,
-                                        onRefreshStorage = onRefreshStorage,
-                                        onToggleShowSignalsOnHome = onToggleShowSignalsOnHome,
-                                    )
+                                composable(Routes.LAB_ABOUT) {
+                                    AboutScreen(onNavigateUp = dropUnlessResumed(block = navigateUp))
                                 }
                             }
                             navigation(startDestination = Routes.ACTIVITY, route = Tab.Activity.graphRoute) {
@@ -304,11 +310,36 @@ fun TrustGateApp(
             StepUpConfirmation(
                 method = pendingConfirmation.method,
                 requestedAt = uiState.payment.decidedAt,
-                signalNames = uiState.risk.report?.flaggedSignals().orEmpty().map { it.name },
+                problems = uiState.payment.reasons.filter { it.isProblem }.map { it.text },
+                scamWarning = uiState.payment.scamWarning,
                 onRequestSignature = onStepUpSignature,
                 onAuthenticated = onStepUpAuthenticated,
                 onConfirmTap = onConfirmWithTap,
                 onDismiss = onDismissConfirmation,
+            )
+        }
+        uiState.account.deciding?.let { deciding ->
+            val (title, verb) = when (deciding.action) {
+                ReferenceSigningScheme.DECISION_APPROVE -> "Let ${deciding.phoneLabel} in" to "Approve"
+                ReferenceSigningScheme.DECISION_DECLINE -> "Keep ${deciding.phoneLabel} out" to "Decline"
+                else -> "Remove ${deciding.phoneLabel}" to "Remove"
+            }
+            StepUpConfirmation(
+                method = deciding.method,
+                requestedAt = deciding.requestedAt,
+                problems = emptyList(),
+                scamWarning = false,
+                onRequestSignature = onDecisionSignature,
+                onAuthenticated = onDecisionAuthenticated,
+                onConfirmTap = onConfirmDecisionWithTap,
+                onDismiss = onDismissDecision,
+                title = title,
+                confirmLabel = verb,
+                message = if (deciding.action == ReferenceSigningScheme.DECISION_APPROVE) {
+                    "Only approve a phone you're holding yourself. A phone you let in can pay from this account."
+                } else {
+                    "Confirm it's you."
+                },
             )
         }
     }

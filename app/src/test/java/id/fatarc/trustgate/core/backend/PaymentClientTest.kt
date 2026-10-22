@@ -1,6 +1,10 @@
 package id.fatarc.trustgate.core.backend
 
+import id.fatarc.trustgate.testing.TEST_PAYMENT
 import com.google.common.truth.Truth.assertThat
+import id.fatarc.trustgate.backend.ReferenceBackend
+import id.fatarc.trustgate.domain.api.PaymentAuthorization
+import id.fatarc.trustgate.domain.api.PaymentResponse
 import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.signing.KeyRole
 import id.fatarc.trustgate.domain.signing.PaymentRequestPayload
@@ -9,29 +13,28 @@ import id.fatarc.trustgate.domain.signing.ReferenceRequestSigner
 import id.fatarc.trustgate.domain.signing.asReceived
 import id.fatarc.trustgate.testing.MutableClock
 import id.fatarc.trustgate.testing.TestKey
+import id.fatarc.trustgate.testing.authorize
+import id.fatarc.trustgate.testing.developmentPolicy
 import id.fatarc.trustgate.testing.selfSignedChain
+import kotlin.random.Random
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
-import kotlin.random.Random
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class PaymentClientTest {
     private val clock = MutableClock()
-    private val backend = ReferenceBackend(clock = clock)
-    private val transport = ReferenceTransport(backend)
+    private val backend = ReferenceBackend(developmentPolicy, clock)
+    private val transport = BackendTransport(InProcessTrustGateApi(backend))
     private val device = TestKey()
 
     private fun signedPayment(): ReceivedRequest {
         backend.registerKey(KeyRole.DEVICE, device.encodedPublicKey, selfSignedChain(device), backend.issueRegistrationChallenge())
-        val authorization = backend.beginPayment(
-            device.keyId,
-            DeviceRiskLevel.LOW,
-        ) as PaymentAuthorization.Proceed
+        val authorization = backend.authorize(device, DeviceRiskLevel.LOW, clock.now) as PaymentAuthorization.Proceed
         return device.sign(
             ReferenceRequestSigner().prepare(
-                payload = PaymentRequestPayload(125_000, "IDR", "REF-1"),
+                payload = TEST_PAYMENT,
                 nonce = authorization.nonce,
                 keyId = device.keyId,
                 timestamp = clock.now.toString(),

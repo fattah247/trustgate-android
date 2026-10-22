@@ -1,12 +1,14 @@
 package id.fatarc.trustgate.core.security
 
-import id.fatarc.trustgate.core.backend.PaymentResponse
 import id.fatarc.trustgate.core.backend.SubmitOutcome
 import id.fatarc.trustgate.core.keys.RegisteredKey
 import id.fatarc.trustgate.domain.actiongate.SensitiveActionDecision
+import id.fatarc.trustgate.domain.api.DecisionReason
+import id.fatarc.trustgate.domain.api.PaymentResponse
 import id.fatarc.trustgate.domain.events.SecurityEvent
 import id.fatarc.trustgate.domain.events.SecurityEventRepository
 import id.fatarc.trustgate.domain.events.SecurityEventType
+import id.fatarc.trustgate.domain.risk.DeviceRiskLevel
 import id.fatarc.trustgate.domain.risk.DeviceRiskReport
 import id.fatarc.trustgate.domain.risk.DeviceSignalCollector
 import id.fatarc.trustgate.domain.risk.RiskScorer
@@ -47,26 +49,26 @@ class TrustGateSecurityService(
         previous: DeviceRiskReport? = null,
     ): DeviceRiskReport {
         val report = riskScorer.score(signalCollector.collectSignals())
-        val activeSignals = report.signals.count { it.detected }
+        val found = problemsFound(report.signals.count { it.detected })
         when (trigger) {
             AssessmentTrigger.LAUNCH,
             AssessmentTrigger.MANUAL,
             -> {
-                recordAssessment(report, trigger, "Device risk assessed with $activeSignals active signals.")
+                recordAssessment(report, trigger, found)
                 recordDetectedSignals(report)
             }
 
             AssessmentTrigger.BEFORE_ACTION -> recordAssessment(
                 report = report,
                 trigger = trigger,
-                message = "Checked again before a protected action: $activeSignals active signals.",
+                message = "Checked again before paying. $found",
             )
 
             AssessmentTrigger.RESUME -> if (previous == null || report.differsFrom(previous)) {
                 val message = if (previous != null && previous.level != report.level) {
-                    "Risk changed from ${previous.level.name.lowercase()} to ${report.level.name.lowercase()} since the last check."
+                    "Went from ${previous.level.name.lowercase()} to ${report.level.name.lowercase()} risk while you were away."
                 } else {
-                    "Detected signals changed since the last check: $activeSignals active."
+                    "Changed while you were away. $found"
                 }
                 recordAssessment(
                     report = report,
@@ -80,14 +82,17 @@ class TrustGateSecurityService(
         return report
     }
 
-    /** Logs the gate decision the backend made for this report. */
-    suspend fun recordGateDecision(report: DeviceRiskReport, decision: SensitiveActionDecision) {
+    /** Logs the gate decision the backend made, at the risk level it assessed, and why. */
+    suspend fun recordGateDecision(level: DeviceRiskLevel, decision: SensitiveActionDecision, reasons: List<DecisionReason>) {
         eventRepository.record(
             SecurityEvent(
                 type = decision.toSecurityEventType(),
-                riskLevel = report.level,
+                riskLevel = level,
                 message = decision.toAuditMessage(),
-                metadata = mapOf("decidedBy" to "reference-backend"),
+                metadata = buildMap {
+                    put("decidedBy", "reference-backend")
+                    if (reasons.isNotEmpty()) put("reasons", reasons.joinToString("; ") { it.text })
+                },
             ),
         )
     }
@@ -98,7 +103,7 @@ class TrustGateSecurityService(
             SecurityEvent(
                 type = SecurityEventType.SENSITIVE_ACTION_BLOCKED,
                 riskLevel = report.level,
-                message = "Sensitive action blocked after confirmation: the device turned high risk while it waited.",
+                message = "Stopped: the phone turned high risk while you were confirming.",
                 metadata = mapOf("decidedBy" to "app"),
             ),
         )
@@ -107,34 +112,58 @@ class TrustGateSecurityService(
     suspend fun recordKeyRegistered(key: RegisteredKey) {
         val attestation = key.attestation
         val (status, summary) = when {
-            attestation.isVerified -> "verified" to ", with a verified attestation."
-            attestation.isAttested -> "unverified" to ", but its attestation didn't fully verify."
-            else -> "none" to " without attestation."
+            attestation.verified -> "verified" to "Keystore vouched for it."
+            attestation.attested -> "unverified" to "Keystore's proof didn't check out."
+            else -> "none" to "No proof from Keystore."
         }
         eventRepository.record(
             SecurityEvent(
                 type = SecurityEventType.KEY_REGISTERED,
-                message = buildString {
-                    append(
-                        when (key.role) {
-                            KeyRole.DEVICE -> "Device signing key registered"
-                            KeyRole.STEP_UP -> "Step-up key registered; it signs only after the person authenticates"
-                        },
-                    )
-                    append(summary)
+                message = when (key.role) {
+                    KeyRole.DEVICE -> "Signs every payment. $summary"
+                    KeyRole.STEP_UP -> "Signs only after your screen lock. $summary"
                 },
                 metadata = buildMap {
                     put("keyId", key.keyId)
                     put("role", key.role.name.lowercase())
                     put("protection", key.protection.name.lowercase())
                     put("attestation", status)
-                    attestation.description?.rootOfTrust?.let { root ->
-                        put("verifiedBoot", root.verifiedBootState.name.lowercase())
-                        put("bootloaderLocked", root.deviceLocked.toString())
-                    }
+                    attestation.verifiedBootState?.let { put("verifiedBoot", it.name.lowercase()) }
+                    attestation.deviceLocked?.let { put("bootloaderLocked", it.toString()) }
                 },
             ),
         )
+    }
+
+    /** The device key was replaced by [newKey]; the old one, and its step-up key, are revoked. */
+    suspend fun recordKeyRotated(newKey: RegisteredKey) {
+        eventRepository.record(
+            SecurityEvent(
+                type = SecurityEventType.KEY_ROTATED,
+                message = "The old key vouched for this one, and the server no longer accepts the old one.",
+                metadata = mapOf("keyId" to newKey.keyId, "protection" to newKey.protection.name.lowercase()),
+            ),
+        )
+    }
+
+    /** The phone's keys were dropped: [byServer] when the server stopped accepting them, else at the person's request. */
+    suspend fun recordPhoneRemoved(byServer: Boolean) {
+        eventRepository.record(
+            SecurityEvent(
+                type = SecurityEventType.PHONE_REMOVED,
+                message = if (byServer) {
+                    "The server no longer accepts this phone's key, so it was set up again as a new phone."
+                } else {
+                    "You removed this phone, so it was set up again as a new phone."
+                },
+                metadata = mapOf("decidedBy" to if (byServer) "reference-backend" else "app"),
+            ),
+        )
+    }
+
+    /** Something changed about which phones can use the account; [action] says what. */
+    suspend fun recordAccountChange(action: String, message: String) {
+        eventRepository.record(SecurityEvent(type = SecurityEventType.ACCOUNT_CHANGED, message = message, metadata = mapOf("action" to action)))
     }
 
     suspend fun recordPayment(request: SignedRequest, outcome: SubmitOutcome) {
@@ -143,12 +172,12 @@ class TrustGateSecurityService(
             SecurityEvent(
                 type = SecurityEventType.PAYMENT_SUBMITTED,
                 message = when (response) {
-                    null -> "No response after ${outcome.attempts} attempts; the payment's outcome is unknown."
-                    is PaymentResponse.Rejected -> "The backend refused the payment: ${response.reason.auditPhrase()}."
+                    null -> "No answer after ${outcome.attempts} tries. Paying again can't charge twice."
+                    is PaymentResponse.Rejected -> "Refused because ${response.reason.auditPhrase()}."
                     is PaymentResponse.Processed -> if (outcome.lostResponses > 0) {
-                        "Payment ${response.payment.id} charged once; a lost response was retried and returned the same payment."
+                        "A reply was lost and the app tried again. Charged once: ${response.payment.id}."
                     } else {
-                        "Payment ${response.payment.id} charged for ${request.payload.merchantReference}."
+                        "Charged once: ${response.payment.id}."
                     }
                 },
                 metadata = buildMap {
@@ -170,8 +199,8 @@ class TrustGateSecurityService(
                 type = SecurityEventType.SENSITIVE_ACTION_ALLOWED_AFTER_CONFIRMATION,
                 riskLevel = report.level,
                 message = when (method) {
-                    ConfirmationMethod.DEVICE_CREDENTIAL -> "Sensitive action allowed after the user confirmed with their screen lock or biometrics."
-                    ConfirmationMethod.TAP -> "Sensitive action allowed after an explicit tap; the device has no screen lock to step up to."
+                    ConfirmationMethod.DEVICE_CREDENTIAL -> "Confirmed with your screen lock."
+                    ConfirmationMethod.TAP -> "Confirmed with a tap, since this phone has no screen lock."
                 },
                 metadata = mapOf("method" to method.metadataValue),
             ),
@@ -183,7 +212,7 @@ class TrustGateSecurityService(
             SecurityEvent(
                 type = SecurityEventType.SENSITIVE_ACTION_CANCELLED,
                 riskLevel = report.level,
-                message = "Sensitive action cancelled at the confirmation step.",
+                message = "You cancelled when asked to confirm.",
             ),
         )
     }
@@ -193,7 +222,7 @@ class TrustGateSecurityService(
             SecurityEvent(
                 type = SecurityEventType.DEVICE_RISK_ASSESSED,
                 riskLevel = report.level,
-                message = "Simulated ${report.level.name.lowercase()}-risk profile applied.",
+                message = "Showing a ${report.level.demoPhone()} phone. Payments still go to the real server.",
                 metadata = mapOf(
                     "score" to report.score.toString(),
                     "source" to SCENARIO_SOURCE,
@@ -207,9 +236,9 @@ class TrustGateSecurityService(
             SecurityEvent(
                 type = SecurityEventType.REQUEST_SIGNED,
                 message = if (forProtectedAction) {
-                    "Signed the payment request for ${request.payload.merchantReference} after the gate allowed it."
+                    "Signed order ${request.payload.merchantReference} with this phone's key."
                 } else {
-                    "Signed payment-like request for ${request.payload.merchantReference}."
+                    "Signed a Lab test request with this phone's key."
                 },
                 metadata = mapOf(
                     "nonce" to request.nonce,
@@ -226,11 +255,8 @@ class TrustGateSecurityService(
             SecurityEvent(
                 type = SecurityEventType.REQUEST_VERIFIED,
                 message = when (result) {
-                    VerificationResult.Accepted ->
-                        "Reference backend accepted the request for ${request.payload.merchantReference}."
-
-                    is VerificationResult.Rejected ->
-                        "Reference backend rejected the request: ${result.reason.auditPhrase()}."
+                    VerificationResult.Accepted -> "The server accepted it."
+                    is VerificationResult.Rejected -> "The server refused it because ${result.reason.auditPhrase()}."
                 },
                 metadata = buildMap {
                     put("nonce", request.nonce)
@@ -246,7 +272,7 @@ class TrustGateSecurityService(
         eventRepository.record(
             SecurityEvent(
                 type = SecurityEventType.SECURE_VALUE_STORED,
-                message = "Stored reference values in encrypted local storage.",
+                message = "Saved encrypted, with a key only this app can use.",
                 metadata = mapOf("keys" to keys.joinToString(",")),
             ),
         )
@@ -297,7 +323,7 @@ class TrustGateSecurityService(
         SignalCategory.ROOT -> SecurityEventType.ROOT_SIGNAL_FOUND
         SignalCategory.EMULATOR -> SecurityEventType.EMULATOR_SIGNAL_FOUND
         SignalCategory.DEBUGGER -> SecurityEventType.DEBUGGER_ATTACHED
-        SignalCategory.INSTALLER -> null
+        SignalCategory.INSTALLER, SignalCategory.SCAM -> null
     }
 
     private fun SensitiveActionDecision.toSecurityEventType(): SecurityEventType = when (this) {
@@ -307,21 +333,37 @@ class TrustGateSecurityService(
     }
 
     private fun SensitiveActionDecision.toAuditMessage(): String = when (this) {
-        SensitiveActionDecision.ALLOW -> "Sensitive action allowed for low-risk device state."
-        SensitiveActionDecision.REQUIRE_CONFIRMATION -> "Sensitive action requires confirmation because of medium-risk signals."
-        SensitiveActionDecision.BLOCK -> "Sensitive action blocked because the device is high risk."
+        SensitiveActionDecision.ALLOW -> "The server let the payment through."
+        SensitiveActionDecision.REQUIRE_CONFIRMATION -> "The server wants you to confirm first."
+        SensitiveActionDecision.BLOCK -> "The server stopped the payment."
     }
 
     private fun RejectionReason.auditPhrase(): String = when (this) {
-        RejectionReason.MISSING_HEADERS -> "signing headers missing or malformed"
-        RejectionReason.MALFORMED_TIMESTAMP -> "timestamp malformed"
-        RejectionReason.OUTSIDE_TIME_WINDOW -> "outside the time window"
-        RejectionReason.UNKNOWN_KEY -> "signed by a key it doesn't know"
-        RejectionReason.SIGNATURE_MISMATCH -> "signature doesn't match the request"
-        RejectionReason.UNKNOWN_CHALLENGE -> "challenge not issued to this device or expired"
-        RejectionReason.CHALLENGE_REUSED -> "challenge already used"
-        RejectionReason.CONFIRMATION_REQUIRED -> "required confirmation missing"
-        RejectionReason.IDEMPOTENCY_CONFLICT -> "idempotency key reused for a different payment"
-        RejectionReason.MALFORMED_BODY -> "payment body unreadable"
+        RejectionReason.MISSING_HEADERS -> "parts of it were missing"
+        RejectionReason.MALFORMED_TIMESTAMP -> "its time couldn't be read"
+        RejectionReason.OUTSIDE_TIME_WINDOW -> "it arrived too late"
+        RejectionReason.UNKNOWN_KEY -> "it doesn't know this phone's key"
+        RejectionReason.SIGNATURE_MISMATCH -> "it was changed after signing"
+        RejectionReason.UNKNOWN_CHALLENGE -> "its one-time code wasn't issued or has expired"
+        RejectionReason.CHALLENGE_REUSED -> "its one-time code was already used"
+        RejectionReason.CONFIRMATION_REQUIRED -> "you didn't confirm it"
+        RejectionReason.IDEMPOTENCY_CONFLICT -> "its charge-once key belongs to a different payment"
+        RejectionReason.MALFORMED_BODY -> "it couldn't be read"
+        RejectionReason.TOO_MANY_PAYMENTS -> "this phone made too many payments in a short time"
+        RejectionReason.OVER_LIMIT -> "it would go over this phone's limit"
+        RejectionReason.KEY_REVOKED -> "the key that signed it was replaced or removed"
+        RejectionReason.PAYMENT_CHANGED -> "it isn't the payment that was approved"
+    }
+
+    private fun DeviceRiskLevel.demoPhone(): String = when (this) {
+        DeviceRiskLevel.LOW -> "safe"
+        DeviceRiskLevel.MEDIUM -> "risky"
+        DeviceRiskLevel.HIGH -> "compromised"
+    }
+
+    private fun problemsFound(count: Int): String = when (count) {
+        0 -> "No problems found."
+        1 -> "1 problem found."
+        else -> "$count problems found."
     }
 }

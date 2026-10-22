@@ -1,0 +1,94 @@
+name: Supply chain and mobile checks
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+      - dev
+  schedule:
+    - cron: "41 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  # Android-specific static checks (manifest, crypto, storage, WebView, logging), shown as code
+  # scanning alerts next to CodeQL's.
+  mobsfscan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install mobsfscan
+        run: python -m pip install mobsfscan==1.0.1
+
+      - name: Scan the app
+        # Findings go to code scanning instead of failing the job, where each can be fixed or dismissed with a reason.
+        run: mobsfscan --type android --sarif --output mobsfscan.sarif --no-fail app/src/main
+
+      - name: Upload results
+        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        with:
+          sarif_file: mobsfscan.sarif
+          category: mobsfscan
+
+  # Sends the resolved Gradle dependency graph to GitHub, which drives Dependabot alerts and the
+  # SBOM GitHub can export for the repository.
+  dependency-submission:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: platform-tools
+
+      - name: Submit the dependency graph
+        uses: gradle/actions/dependency-submission@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          # The graph plugin this action adds isn't in the project's verification metadata.
+          additional-arguments: --dependency-verification=lenient
+
+  # Stops a pull request that adds a dependency with a known vulnerability.
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate
+          comment-summary-in-pr: on-failure

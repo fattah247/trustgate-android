@@ -1,0 +1,25 @@
+version: 2
+updates:
+  # A dependency update also needs its checksums added to gradle/verification-metadata.xml; see
+  # docs/SUPPLY_CHAIN.md for the command.
+  - package-ecosystem: gradle
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      androidx:
+        patterns:
+          - "androidx.*"
+      ktor:
+        patterns:
+          - "io.ktor*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - "*"

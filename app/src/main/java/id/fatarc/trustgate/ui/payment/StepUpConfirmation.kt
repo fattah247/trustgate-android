@@ -39,19 +39,24 @@ import java.time.Instant
 fun StepUpConfirmation(
     method: ConfirmationMethod,
     requestedAt: Instant?,
-    signalNames: List<String>,
+    problems: List<String>,
+    scamWarning: Boolean,
     onRequestSignature: () -> Signature?,
     onAuthenticated: (Signature) -> Unit,
     onConfirmTap: () -> Unit,
     onDismiss: (problem: String?) -> Unit,
+    title: String = "Confirm this payment",
+    confirmLabel: String = "Pay",
+    /** Overrides the reason built from [problems], for confirmations that aren't payments. */
+    message: String? = null,
 ) {
-    val reason = signalSummary(signalNames)
+    val reason = message ?: confirmationReason(problems, scamWarning)
     val activity = LocalContext.current.findFragmentActivity()
 
     when {
-        method == ConfirmationMethod.TAP -> TapConfirmationDialog(reason, onConfirmTap, onDismiss)
+        method == ConfirmationMethod.TAP -> TapConfirmationDialog(title, confirmLabel, reason, onConfirmTap, onDismiss)
         activity == null -> LaunchedEffect(Unit) { onDismiss("The confirmation prompt couldn't be shown.") }
-        else -> CryptoPrompt(activity, requestedAt, reason, onRequestSignature, onAuthenticated, onDismiss)
+        else -> CryptoPrompt(activity, requestedAt, title, reason, onRequestSignature, onAuthenticated, onDismiss)
     }
 }
 
@@ -59,6 +64,7 @@ fun StepUpConfirmation(
 private fun CryptoPrompt(
     activity: FragmentActivity,
     requestedAt: Instant?,
+    title: String,
     reason: String,
     onRequestSignature: () -> Signature?,
     onAuthenticated: (Signature) -> Unit,
@@ -105,12 +111,14 @@ private fun CryptoPrompt(
         if (promptedFor == key) return@LaunchedEffect
         promptedFor = key
         val signature = onRequestSignature() ?: return@LaunchedEffect
-        prompt.authenticate(stepUpPromptInfo(reason), BiometricPrompt.CryptoObject(signature))
+        prompt.authenticate(stepUpPromptInfo(title, reason), BiometricPrompt.CryptoObject(signature))
     }
 }
 
 @Composable
 private fun TapConfirmationDialog(
+    title: String,
+    confirmLabel: String,
     reason: String,
     onConfirmTap: () -> Unit,
     onDismiss: (problem: String?) -> Unit,
@@ -118,16 +126,13 @@ private fun TapConfirmationDialog(
     AlertDialog(
         onDismissRequest = { onDismiss(null) },
         icon = { Icon(Icons.Outlined.GppMaybe, contentDescription = null) },
-        title = { Text("Continue on this device?") },
+        title = { Text("$title?") },
         text = {
             FilterObscuredTouches()
-            Text(
-                "$reason Continue only if you trust it.\n\nThis device has no screen lock, so TrustGate can't ask " +
-                    "you to confirm with a PIN or fingerprint. Your tap is signed into the request instead.",
-            )
+            Text(reason)
         },
         confirmButton = {
-            TextButton(onClick = onConfirmTap) { Text("Continue") }
+            TextButton(onClick = onConfirmTap) { Text(confirmLabel) }
         },
         dismissButton = {
             TextButton(onClick = { onDismiss(null) }) { Text("Cancel") }
@@ -139,11 +144,10 @@ private fun TapConfirmationDialog(
  * A key-bound prompt needs strong biometrics. From Android 11 the screen lock can unlock the key
  * too; before that the key only accepts biometrics, so the prompt needs its own cancel button.
  */
-private fun stepUpPromptInfo(reason: String): BiometricPrompt.PromptInfo =
+private fun stepUpPromptInfo(title: String, reason: String): BiometricPrompt.PromptInfo =
     BiometricPrompt.PromptInfo.Builder()
-        .setTitle("Confirm it's you")
-        .setSubtitle("This device needs review")
-        .setDescription("$reason Confirm to sign and send the payment.")
+        .setTitle(title)
+        .setDescription(reason)
         .apply {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 setAllowedAuthenticators(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)
@@ -154,10 +158,13 @@ private fun stepUpPromptInfo(reason: String): BiometricPrompt.PromptInfo =
         }
         .build()
 
-private fun signalSummary(signalNames: List<String>): String = if (signalNames.isEmpty()) {
-    "This device needs review."
-} else {
-    "Signals found: ${signalNames.take(3).joinToString(", ")}."
+private fun confirmationReason(problems: List<String>, scamWarning: Boolean): String = buildString {
+    if (problems.isEmpty()) {
+        append("The server wants your OK first.")
+    } else {
+        append("The server wants your OK because it found: ${problems.take(2).joinToString(" and ")}.")
+    }
+    if (scamWarning) append(" If someone asked you to pay, stop: it's almost certainly a scam.")
 }
 
 private tailrec fun Context.findFragmentActivity(): FragmentActivity? = when (this) {
