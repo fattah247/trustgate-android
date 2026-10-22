@@ -25,7 +25,7 @@ application {
     mainClass.set("id.fatarc.trustgate.server.ServerKt")
 }
 
-val ktorVersion = "2.3.12"
+val ktorVersion = "3.6.0"
 
 dependencies {
     implementation(project(":backend"))
