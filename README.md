@@ -94,7 +94,7 @@ Real screenshots from the emulator, the test run, the attack lab, and GitHub are
 
 | | |
 | --- | --- |
-| <img src="docs/screenshots/09-ci-passing.png" width="400" alt="CI passing" /><br />GitHub Actions on `main` | <img src="docs/screenshots/10-repo-overview.png" width="400" alt="Repository overview" /><br />The repository |
+| <img src="docs/screenshots/09-ci-passing.png" width="400" alt="CI passing" /><br />GitHub Actions on `main` | <img src="docs/screenshots/10-repo-overview.png" width="400" alt="The repository on GitHub, with every check on main passing" /><br />The repository |
 
 ## Architecture
 

@@ -14,8 +14,8 @@ Phone screenshots come from the emulator in light theme at font scale 1.0, with 
 | `06-lab-attacks-stopped.png` | Lab | Each attack refused by the server | Run all four tests in Try to break it. |
 | `07-what-was-sent.png` | What was sent | The last signed request, field by field | Lab, What was sent last. |
 | `08-phone-key.png` | Phone key | The key's attestation as the server registered it, and Replace this key | Lab, Phone key; scroll the sheet to the button. |
-| `09-ci-passing.png` | GitHub Actions | CI green on `main` | The run summary for the latest push to `main`, with the branch, status, and jobs visible. |
-| `10-repo-overview.png` | GitHub | The repository and its README | The branch tree view with the README preview. Check the contributor list and latest-commit row. |
+| `09-ci-passing.png` | GitHub Actions | CI green on `main` | The run summary for the latest push to `main`, with the branch, status, and jobs visible. Headless Edge in light mode, 1600×2000 at 1.8×. |
+| `10-repo-overview.png` | GitHub | The repository's front page: files, description, and topics | Captured like `09` once every check on `main` is green, and cropped above the sidebar's contributor list. |
 | `11-activity.png` | Activity | The log of checks, payments, account changes, and Lab tests | Open the Activity tab after the steps above. |
 | `12-tests-passing.png` | `./gradlew test --no-build-cache --console=plain` | Every module's tests passing | Run `cleanTest`, `:app:cleanTestDebugUnitTest`, and `:app:cleanTestReleaseUnitTest` first so every test runs. Rendered from the command's output, with the test count from the JUnit reports, counting the app's tests once although they run for debug and release. |
 | `13-attack-lab.png` | `./gradlew :server:attackLab` | The harness's attacks against the running server | Run against `./gradlew :server:run`, rendered from the command's output. |
