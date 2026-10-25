@@ -37,7 +37,7 @@ dependencies {
     implementation("io.ktor:ktor-server-call-logging-jvm:$ktorVersion")
     implementation("io.ktor:ktor-server-rate-limit-jvm:$ktorVersion")
     implementation("org.xerial:sqlite-jdbc:3.46.1.0")
-    implementation("ch.qos.logback:logback-classic:1.5.6")
+    implementation("ch.qos.logback:logback-classic:1.6.5")
     // Service-account access tokens for Google's Play Integrity API.
     implementation("com.google.auth:google-auth-library-oauth2-http:1.23.0")
     // RFC 3161 timestamps for audit checkpoints.
