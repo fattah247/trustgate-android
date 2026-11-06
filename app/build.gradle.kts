@@ -95,7 +95,7 @@ dependencies {
     implementation("com.google.android.play:integrity:1.4.0")
     implementation(project(":domain"))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     testImplementation(project(":backend"))
